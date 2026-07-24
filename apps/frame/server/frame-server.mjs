@@ -33,7 +33,9 @@ const SURFACES = "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces";
 const PTY_COPY = join(SURFACES, "pty");
 // One node for everything: homebrew node (native modules in the copies are
 // built against it). No per-service pins.
-const NODE_BIN = "/opt/homebrew/bin/node";
+// Prefer Homebrew node; fall back to the node running this server so the
+// frame works on a fresh OS before Homebrew is installed (new-world boot).
+const NODE_BIN = existsSync("/opt/homebrew/bin/node") ? "/opt/homebrew/bin/node" : process.execPath;
 const WRAPPER_DIR = join(FRAME_DIR, "server", "shells");
 mkdirSync(WRAPPER_DIR, { recursive: true });
 mkdirSync(BACKGROUNDS_DIR, { recursive: true });
