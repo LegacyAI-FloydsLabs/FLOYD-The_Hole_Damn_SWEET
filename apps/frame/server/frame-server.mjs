@@ -64,7 +64,7 @@ const PROVIDERS = [
     test: (k) => ({ url: "https://api.deepseek.com/models", headers: { authorization: `Bearer ${k}` } }) },
   { id: "groq",       name: "Groq",         env: "GROQ_API_KEY",         prefixes: ["gsk_"], url: "https://console.groq.com/keys",
     test: (k) => ({ url: "https://api.groq.com/openai/v1/models", headers: { authorization: `Bearer ${k}` } }) },
-  { id: "mistral",    name: "Mistral",      env: "MISTRAL_API_KEY",      prefixes: [], url: "https://console.mistral.ai/api-keys",
+  { id: "mistral",    name: "Mistral",      env: "MISTRAL_API_KEY",      prefixes: [], ambiguous: ["sk-"], url: "https://console.mistral.ai/api-keys",
     test: (k) => ({ url: "https://api.mistral.ai/v1/models", headers: { authorization: `Bearer ${k}` } }) },
   { id: "huggingface", name: "Hugging Face", env: "HF_TOKEN",            prefixes: ["hf_"], url: "https://huggingface.co/settings/tokens",
     test: (k) => ({ url: "https://huggingface.co/api/whoami-v2", headers: { authorization: `Bearer ${k}` } }) },
@@ -77,6 +77,13 @@ const PROVIDERS = [
     test: (k) => ({ url: "https://api.z.ai/api/coding/paas/v4/chat/completions", method: "POST",
       headers: { authorization: `Bearer ${k}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "glm-4.7", max_tokens: 1, messages: [{ role: "user", content: "ok" }] }) }) },
+  { id: "minimax",    name: "MiniMax Coding Plan", env: "MINIMAX_API_KEY", prefixes: ["sk-cp-"], url: "https://platform.minimax.io/user-center/payment/token-plan",
+    // MiniMax Coding/Token Plan subscription key: Anthropic-compatible coding endpoint.
+    test: (k) => ({ url: "https://api.minimax.io/anthropic/v1/messages", method: "POST",
+      headers: { authorization: `Bearer ${k}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "MiniMax-M3", max_tokens: 1, messages: [{ role: "user", content: "ok" }] }) }) },
+  { id: "moonshot",   name: "Kimi (Moonshot) API", env: "MOONSHOT_API_KEY", envAliases: ["KIMI_API_KEY"], prefixes: [], ambiguous: ["sk-"], url: "https://platform.moonshot.ai/console/api-keys",
+    test: (k) => ({ url: "https://api.moonshot.ai/v1/models", headers: { authorization: `Bearer ${k}` } }) },
   { id: "tavily",     name: "Tavily Search", env: "TAVILY_API_KEY",      prefixes: ["tvly-"], url: "https://app.tavily.com" },
   { id: "fal",        name: "fal.ai",       env: "FAL_KEY",              prefixes: [], url: "https://fal.ai/dashboard/keys",
     test: (k) => ({ url: "https://fal.run/health", headers: { authorization: `Key ${k}` } }) },
@@ -190,7 +197,7 @@ function defaultEndpoint(provider) {
   if (!provider.test) return null;
   const u = new URL(provider.test("x").url);
   // strip the terminal resource segment (/models, /chat/completions, /user, …)
-  return `${u.origin}${u.pathname.replace(/\/(models|chat\/completions|user|whoami-v2|health)$/, "")}`;
+  return `${u.origin}${u.pathname.replace(/\/(models|chat\/completions|messages|user|whoami-v2|health)$/, "")}`;
 }
 
 const MANAGED = {
