@@ -34,11 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         window = NSWindow(
             contentRect: NSRect(x: screen.midX - 720, y: screen.midY - 450, width: 1440, height: 900),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "FLOYD"
-        window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = false
+        // Real titlebar: a grabbable strip so the window can be moved like any app.
+        window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 720, height: 480)
         window.contentView = webView
         window.setFrameAutosaveName("FloydShellMain")        // remember size/position
