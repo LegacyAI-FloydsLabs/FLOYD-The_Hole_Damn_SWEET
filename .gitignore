@@ -32,3 +32,11 @@ apps/remote-portal/
 # Local session/planning artifacts stay out of the repo
 .planning/
 dogfood-output/
+
+# Non-runtime reports and session logs
+progress.md
+task_plan.md
+findings.md
+repository_report.md
+Issues/
+SSOT/repository_report*.json
