@@ -1,0 +1,82 @@
+{
+  "$schema": "./registry.schema.json",
+  "note": "Interchangeable app registry for the FLOYD frame. Edit freely; the frame reads this at load. kind=url mounts an iframe; kind=terminal opens TerminalOne pre-running the allowlisted command; kind=action calls a frame server action.",
+  "apps": [
+    {
+      "id": "floyd-code-cli",
+      "name": "FLOYD CODE CLI",
+      "subtitle": "Terminal · CLI · Shell",
+      "kind": "terminal",
+      "command": "ff",
+      "accent": "#22d3ee",
+      "remote_port": 8454
+    },
+    {
+      "id": "cursem-ide",
+      "name": "CURSEM-IDE",
+      "subtitle": "IDE · Code · Build",
+      "kind": "url",
+      "target": "http://127.0.0.1:13012/",
+      "health": "http://127.0.0.1:13012/",
+      "accent": "#a855f7",
+      "remote_port": 8451
+    },
+    {
+      "id": "floyd-desktop",
+      "name": "FLOYD DESKTOP",
+      "subtitle": "Assistant · Media · Desktop",
+      "kind": "url",
+      "target": "http://127.0.0.1:13010/",
+      "health": "http://127.0.0.1:13010/",
+      "accent": "#3b82f6",
+      "remote_port": 8452
+    },
+    {
+      "id": "ohmyfloyd",
+      "name": "OhMyFloyd",
+      "subtitle": "Coding Agent · floydcode",
+      "kind": "terminal",
+      "command": "floydcode",
+      "accent": "#ec4899",
+      "remote_port": 8455
+    },
+    {
+      "id": "browork",
+      "name": "BROWORK",
+      "subtitle": "Sub-agents · Multi-agent · Dispatch",
+      "kind": "url",
+      "target": "http://127.0.0.1:13010/?browork=1",
+      "health": "http://127.0.0.1:13010/",
+      "accent": "#22d3ee",
+      "remote_port": 8452
+    },
+    {
+      "id": "harness-launcher",
+      "name": "FLOYD HARNESS LAUNCHER",
+      "subtitle": "CI/CD · Pipelines · Deploy",
+      "kind": "url",
+      "target": "http://127.0.0.1:13014/",
+      "health": "http://127.0.0.1:13014/",
+      "accent": "#f59e0b",
+      "remote_port": 8453
+    },
+    {
+      "id": "terminalone",
+      "name": "TERMINALONE",
+      "subtitle": "Plain shell",
+      "kind": "url",
+      "target": "http://127.0.0.1:13013/",
+      "health": "http://127.0.0.1:13013/health",
+      "accent": "#34d399",
+      "remote_port": 8456
+    },
+    {
+      "id": "browser",
+      "name": "BROWSER",
+      "subtitle": "Chrome · TTY Bridge · Native control",
+      "kind": "action",
+      "action": "open-chrome",
+      "accent": "#ef4444"
+    }
+  ]
+}

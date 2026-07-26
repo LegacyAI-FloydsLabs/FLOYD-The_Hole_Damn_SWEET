@@ -1,0 +1,12 @@
+{
+  "name": "@floyd/cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "floyd": "./src/main.ts"
+  },
+  "dependencies": {
+    "@floyd/sdk": "*"
+  }
+}

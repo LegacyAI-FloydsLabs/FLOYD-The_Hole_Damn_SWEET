@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.floyd.surface.ide</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/node</string><string>node_modules/tsx/dist/cli.mjs</string><string>server.ts</string></array>
+  <key>WorkingDirectory</key><string>/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/ide</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>IDE_BIND</key><string>127.0.0.1</string><key>PORT</key><string>13012</string>
+    <key>FLOYD_CORE_URL</key><string>http://127.0.0.1:41414</string><key>FLOYD_RUNTIME_ROOT</key><string>/Volumes/Storage/FLOYD_RUNTIME</string>
+    <key>FLOYD_SURFACE_COMMIT</key><string>unverified</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/Users/douglastalley/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>3</integer>
+  <key>StandardOutPath</key><string>/Users/douglastalley/Library/Logs/Floyd/ide.log</string>
+  <key>StandardErrorPath</key><string>/Users/douglastalley/Library/Logs/Floyd/ide.log</string>
+</dict></plist>

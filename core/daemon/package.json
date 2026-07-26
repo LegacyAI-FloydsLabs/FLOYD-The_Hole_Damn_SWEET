@@ -1,0 +1,10 @@
+{
+  "name": "@floyd/core-daemon",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@floyd/contracts": "*",
+    "@floyd/opencode-runtime": "*"
+  }
+}

@@ -1,0 +1,1768 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Floyd Workstation</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #080a0d;
+    --surface: #0d1015;
+    --surface-2: #12161d;
+    --surface-3: #171c24;
+    --line: #252b35;
+    --line-strong: #353d49;
+    --text: #e8ecf2;
+    --muted: #8993a3;
+    --faint: #596273;
+    --accent: #d7a84a;
+    --accent-soft: rgba(215, 168, 74, .12);
+    --success: #62bd83;
+    --danger: #e26c6c;
+    --info: #78a6d8;
+    --radius: 8px;
+    --mono: "Phantasy Mono PTY", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); font: 13px/1.45 var(--sans); }
+  button, textarea, select, input { font: inherit; }
+  button { color: inherit; }
+  .topbar {
+    height: 44px; display: grid; grid-template-columns: 260px 1fr auto; align-items: center;
+    border-bottom: 1px solid var(--line); background: #0a0d11; user-select: none;
+  }
+  .brand { height: 100%; display: flex; align-items: center; gap: 11px; padding: 0 14px; border-right: 1px solid var(--line); }
+  .brand-mark { width: 18px; height: 18px; position: relative; border: 1px solid var(--accent); transform: rotate(45deg); }
+  .brand-mark::after { content: ""; position: absolute; inset: 4px; border: 1px solid var(--accent); }
+  .brand-name { font: 700 12px/1 var(--mono); letter-spacing: .18em; }
+  .command-title { justify-self: center; color: var(--muted); font: 12px var(--mono); }
+  .health { display: flex; align-items: center; gap: 8px; padding: 0 14px; color: var(--muted); font: 11px var(--mono); }
+  .health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 3px rgba(89,98,115,.12); }
+  .health.ok .health-dot { background: var(--success); box-shadow: 0 0 0 3px rgba(98,189,131,.12); }
+  .health.bad .health-dot { background: var(--danger); box-shadow: 0 0 0 3px rgba(226,108,108,.12); }
+  .workspace { height: calc(100% - 66px); display: grid; grid-template-columns: 46px 272px minmax(420px, 1fr) 310px; }
+  .rail { background: #090c10; border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 5px; }
+  .rail-button { width: 34px; height: 34px; border: 0; border-radius: 6px; background: transparent; color: var(--faint); font: 600 11px var(--mono); cursor: pointer; }
+  .rail-button:hover, .rail-button.active { color: var(--text); background: var(--surface-3); }
+  .rail-spacer { flex: 1; }
+  .sidebar { min-width: 0; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .panel-heading { height: 39px; padding: 0 13px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); color: var(--muted); font: 600 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .quiet-button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 5px; padding: 4px 8px; cursor: pointer; color: var(--muted); }
+  .quiet-button:hover { border-color: var(--line-strong); color: var(--text); }
+  .project-block { padding: 11px; border-bottom: 1px solid var(--line); }
+  select { width: 100%; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; outline: none; }
+  select:focus { border-color: var(--accent); }
+  .settings-field { display: block; margin-bottom: 10px; }
+  .settings-field span { display: block; margin-bottom: 4px; color: var(--muted); font: 10px var(--mono); }
+  .settings-field input, .settings-field select { width: 100%; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; outline: none; }
+  .settings-field input:focus, .settings-field select:focus { border-color: var(--accent); }
+  .settings-note { color: var(--faint); font-size: 10px; margin: 8px 0 12px; }
+  .run-list { flex: 1; overflow: auto; padding: 7px; }
+  .run-item { width: 100%; text-align: left; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 9px; cursor: pointer; margin-bottom: 3px; }
+  .run-item:hover { background: var(--surface-2); }
+  .run-item.active { background: var(--accent-soft); border-color: rgba(215,168,74,.28); }
+  .run-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 5px; }
+  .run-meta { display: flex; align-items: center; justify-content: space-between; color: var(--faint); font: 10px var(--mono); }
+  .status { color: var(--muted); }
+  .status.running, .status.created { color: var(--info); }
+  .status.waiting_review { color: var(--accent); }
+  .status.accepted, .status.succeeded { color: var(--success); }
+  .status.failed, .status.rejected { color: var(--danger); }
+  .conversation { min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+  .conversation-head { min-height: 56px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
+  .conversation-title { min-width: 0; flex: 1; }
+  .conversation-title strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .conversation-title span { color: var(--faint); font: 10px var(--mono); }
+  .action-button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .action-button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-3); }
+  .action-button.primary { border-color: rgba(215,168,74,.5); color: var(--accent); }
+  .action-button.danger { color: var(--danger); }
+  .action-button:disabled { opacity: .35; cursor: default; }
+  .messages { flex: 1; overflow: auto; padding: 22px max(22px, calc((100% - 820px)/2)); scroll-behavior: smooth; }
+  .empty { height: 100%; min-height: 300px; display: grid; place-content: center; text-align: center; color: var(--muted); }
+  .empty-mark { width: 42px; height: 42px; margin: 0 auto 16px; border: 1px solid var(--line-strong); transform: rotate(45deg); position: relative; }
+  .empty-mark::after { content: ""; position: absolute; inset: 9px; border: 1px solid var(--accent); }
+  .empty h2 { margin: 0 0 7px; color: var(--text); font: 600 17px var(--sans); }
+  .empty p { margin: 0; max-width: 440px; }
+  .message { display: grid; grid-template-columns: 74px minmax(0,1fr); gap: 13px; padding: 15px 0; border-bottom: 1px solid rgba(37,43,53,.75); }
+  .message-role { color: var(--muted); font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding-top: 3px; }
+  .message.user .message-role { color: var(--accent); }
+  .message.assistant .message-role { color: var(--info); }
+  .message-body { min-width: 0; white-space: pre-wrap; word-break: break-word; }
+  .message-body code { font-family: var(--mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
+  .event-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; }
+  .event-card .event-title { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font: 11px var(--mono); }
+  .event-card .event-detail { margin-top: 7px; color: var(--text); }
+  .event-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+  .event-actions button { border: 1px solid var(--line-strong); background: var(--surface-2); border-radius: 5px; padding: 5px 9px; cursor: pointer; }
+  .event-actions button:hover { border-color: var(--accent); }
+  .composer { margin: 0 max(16px, calc((100% - 850px)/2)) 16px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.25); }
+  .composer:focus-within { border-color: rgba(215,168,74,.62); box-shadow: 0 12px 30px rgba(0,0,0,.3), 0 0 0 2px rgba(215,168,74,.08); }
+  textarea { width: 100%; min-height: 78px; max-height: 220px; resize: vertical; border: 0; outline: 0; color: var(--text); background: transparent; padding: 13px 14px 8px; line-height: 1.5; }
+  textarea::placeholder { color: var(--faint); }
+  .composer-foot { display: flex; align-items: center; gap: 9px; padding: 7px 8px 8px 12px; border-top: 1px solid rgba(37,43,53,.7); }
+  .mode-button { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 4px; font: 11px var(--mono); }
+  .mode-button:hover { color: var(--text); }
+  .composer-hint { color: var(--faint); font: 10px var(--mono); }
+  .send-button { margin-left: auto; min-width: 76px; border: 1px solid rgba(215,168,74,.55); background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .send-button:hover { background: rgba(215,168,74,.18); }
+  .send-button:disabled { opacity: .35; cursor: default; }
+  .inspector { min-width: 0; background: var(--surface); border-left: 1px solid var(--line); overflow: auto; }
+  .inspect-section { border-bottom: 1px solid var(--line); padding: 11px 13px; }
+  .inspect-label { color: var(--faint); font: 600 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 7px; }
+  .inspect-row { display: grid; grid-template-columns: 82px minmax(0,1fr); gap: 8px; padding: 3px 0; font-size: 11px; }
+  .inspect-row span:first-child { color: var(--muted); }
+  .inspect-row code { font: 10px var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .artifact { border: 1px solid var(--line); border-radius: 5px; padding: 7px; margin-top: 6px; cursor: pointer; }
+  .artifact:hover { border-color: var(--line-strong); }
+  .artifact strong { display: block; font-size: 11px; }
+  .artifact span { color: var(--faint); font: 9px var(--mono); }
+  .bottom-bar { height: 22px; display: flex; align-items: center; gap: 18px; padding: 0 9px; border-top: 1px solid var(--line); background: #0a0d11; color: var(--faint); font: 9px var(--mono); }
+  .bottom-bar .right { margin-left: auto; }
+  .toast { position: fixed; right: 18px; bottom: 36px; max-width: 460px; background: var(--surface-3); border: 1px solid var(--danger); color: var(--text); border-radius: 7px; padding: 10px 12px; box-shadow: 0 12px 28px rgba(0,0,0,.35); display: none; z-index: 10; font: 11px var(--mono); }
+  .toast.show { display: block; }
+  .handoff-dialog { width: min(520px, calc(100vw - 32px)); border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--surface); color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+  .handoff-dialog::backdrop { background: rgba(0,0,0,.72); }
+  .handoff-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 15px; border-bottom: 1px solid var(--line); }
+  .handoff-head strong { font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .handoff-body { padding: 18px; }
+  .handoff-qr { width: min(320px, 100%); aspect-ratio: 1; margin: 0 auto 14px; padding: 10px; background: #fff; border-radius: 6px; }
+  .handoff-qr img { width: 100%; height: 100%; display: block; }
+  .handoff-note { margin: 10px 0 0; color: var(--faint); font-size: 11px; }
+  .surface-dialog { width: min(1320px, calc(100vw - 24px)); height: min(900px, calc(100vh - 24px)); max-width: none; max-height: none; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--surface); color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+  .surface-dialog::backdrop { background: rgba(0,0,0,.72); }
+  .surface-body { height: calc(100% - 48px); padding: 15px; overflow: auto; }
+  .surface-home { min-height: 100%; }
+  .surface-context { border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); padding: 10px 12px; margin-bottom: 12px; }
+  .surface-context strong { display: block; margin-bottom: 5px; font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .surface-context code { color: var(--muted); font: 10px/1.6 var(--mono); overflow-wrap: anywhere; }
+  .surface-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
+  .surface-card { min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); padding: 11px; }
+  .surface-card h3 { margin: 0; font-size: 12px; }
+  .surface-card p { min-height: 36px; margin: 6px 0 9px; color: var(--muted); font-size: 11px; }
+  .surface-target { display: block; min-height: 31px; margin-bottom: 9px; padding: 6px 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--faint); font: 9px/1.45 var(--mono); overflow-wrap: anywhere; }
+  .surface-actions { display: flex; gap: 7px; }
+  .surface-boundary { margin: 12px 0 0; color: var(--faint); font-size: 10px; }
+  .surface-stage { height: 100%; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0,1fr); gap: 9px; }
+  .surface-stage[hidden], .surface-home[hidden] { display: none; }
+  .surface-stage-head { display: flex; align-items: center; gap: 9px; }
+  .surface-stage-title { min-width: 0; margin-right: auto; }
+  .surface-stage-title span { display: block; color: var(--faint); font: 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .surface-stage-title strong { display: block; margin-top: 3px; font-size: 13px; }
+  .surface-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 1px; }
+  .surface-tab { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px; background: var(--surface-2); color: var(--muted); font: 10px var(--mono); cursor: pointer; }
+  .surface-tab:hover:not(:disabled), .surface-tab.active { border-color: var(--accent); color: var(--accent); }
+  .surface-tab:disabled { opacity: .38; cursor: not-allowed; }
+  .surface-frame-wrap { min-height: 0; border: 1px solid var(--line-strong); border-radius: 7px; overflow: hidden; background: #050607; }
+  .surface-frame { display: block; width: 100%; height: 100%; border: 0; background: #050607; }
+  @media (max-width: 1080px) { .workspace { grid-template-columns: 46px 240px minmax(400px,1fr); } .inspector { display: none; } }
+  @media (max-width: 760px) { .topbar { grid-template-columns: 1fr auto; } .command-title { display: none; } .workspace { grid-template-columns: 42px minmax(0,1fr); } .sidebar { display: none; } .messages { padding: 16px; } .composer { margin: 0 10px 10px; } .surface-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">FLOYD</span></div>
+  <div class="command-title" id="commandTitle">Natural-language coding partner</div>
+  <div class="health" id="health"><span class="health-dot"></span><span id="healthText">Connecting to Core</span></div>
+</header>
+<div class="workspace">
+  <nav class="rail" aria-label="Primary navigation">
+    <button class="rail-button active" title="Coding partner" aria-label="Coding partner">AI</button>
+    <button class="rail-button" title="Projects" aria-label="Projects">PR</button>
+    <button class="rail-button" title="Evidence" aria-label="Evidence">EV</button>
+    <button class="rail-button" id="surfaceHub" title="Floyd surfaces" aria-label="Floyd surfaces">SF</button>
+    <div class="rail-spacer"></div>
+    <button class="rail-button" id="connectedApps" title="Connected applications" aria-label="Connected applications">CN</button>
+    <button class="rail-button" id="modelSettings" title="Model routing settings" aria-label="Model routing settings">ST</button>
+  </nav>
+  <aside class="sidebar">
+    <div class="panel-heading"><span>Workspace</span><button class="quiet-button" id="newTask">New</button></div>
+    <div class="project-block"><select id="projectSelect" aria-label="Active project"><option value="">No projects registered</option></select></div>
+    <div class="panel-heading"><span>Runs</span><span id="runCount">0</span></div>
+    <div class="run-list" id="runList"></div>
+  </aside>
+  <main class="conversation">
+    <div class="conversation-head">
+      <div class="conversation-title"><strong id="runTitle">New coding task</strong><span id="runIdentity">Select a project and describe the outcome</span></div>
+      <button class="action-button" id="shareHandoff">Handoff</button>
+      <button class="action-button primary" id="acceptRun" disabled>Accept</button>
+      <button class="action-button danger" id="rejectRun" disabled>Reject</button>
+      <button class="action-button" id="escalateRun" disabled>Escalate</button>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty" id="emptyState"><div><div class="empty-mark" aria-hidden="true"></div><h2>Build with Floyd</h2><p>Describe a coding outcome in plain language. Floyd Core owns the run, OpenCode executes in a leased worktree, and every surface observes the same session.</p></div></div>
+    </div>
+    <div class="composer">
+      <textarea id="prompt" placeholder="Describe what you want built, fixed, or investigated…" aria-label="Coding request"></textarea>
+      <div class="composer-foot">
+        <button class="mode-button" id="modeButton" type="button">Mode: new run</button>
+        <span class="composer-hint">Command + Enter to send</span>
+        <button class="send-button" id="send" type="button">Send</button>
+      </div>
+    </div>
+  </main>
+  <aside class="inspector">
+    <div class="panel-heading"><span>Run context</span><span id="inspectStatus">Idle</span></div>
+    <div id="inspectorBody"><div class="inspect-section"><div class="inspect-label">Runtime boundary</div><div class="inspect-row"><span>Surface</span><code>@floyd/sdk</code></div><div class="inspect-row"><span>Authority</span><code>Floyd Core</code></div><div class="inspect-row"><span>Engine</span><code>OpenCode SDK</code></div></div></div>
+  </aside>
+</div>
+<footer class="bottom-bar"><span id="boundaryLabel">Loopback-only Core</span><span id="routeLabel">Route: awaiting health</span><span class="right" id="clock"></span></footer>
+<div class="toast" id="toast" role="alert"></div>
+<dialog class="handoff-dialog" id="handoffDialog">
+  <div class="handoff-head"><strong>Private continuation</strong><button class="quiet-button" id="closeHandoff" type="button">Close</button></div>
+  <div class="handoff-body">
+    <div class="handoff-qr"><img id="handoffQr" alt="Private handoff QR code"></div>
+    <button class="action-button" id="copyHandoff" type="button">Copy private link</button>
+    <p class="handoff-note">Keep this window open until the other device pairs. The Close button waits for Core to revoke the link. Page exit sends a best-effort authenticated revocation; if teardown interrupts it, the grant expires within two minutes. The receiving page removes the secret from browser history before pairing.</p>
+  </div>
+</dialog>
+<dialog class="surface-dialog" id="surfaceDialog">
+  <div class="handoff-head"><strong>Floyd unified workspace</strong><button class="quiet-button" id="closeSurfaceHub" type="button">Close</button></div>
+  <div class="surface-body">
+    <div class="surface-home" id="surfaceHome">
+      <div class="surface-context" id="surfaceContext"></div>
+      <div class="surface-grid" id="surfaceGrid"></div>
+      <p class="surface-boundary" id="surfaceBoundary"></p>
+    </div>
+    <section class="surface-stage" id="surfaceStage" hidden>
+      <div class="surface-stage-head">
+        <button class="quiet-button" id="surfaceStageBack" type="button">All surfaces</button>
+        <div class="surface-stage-title"><span>Core-connected application</span><strong id="surfaceStageTitle">Floyd surface</strong></div>
+        <button class="quiet-button" id="surfaceStageExternal" type="button">Open separate</button>
+      </div>
+      <nav class="surface-tabs" id="surfaceTabs" aria-label="Integrated Floyd applications"></nav>
+      <div class="surface-frame-wrap"><iframe class="surface-frame" id="surfaceFrame" title="Integrated Floyd application" referrerpolicy="no-referrer"></iframe></div>
+    </section>
+  </div>
+</dialog>
+
+<script type="module">
+import { FloydBrowserClient, FloydApiError } from "/floyd-sdk.js";
+
+const query = new URLSearchParams(location.search);
+const remoteMode = !["localhost", "127.0.0.1", "::1", ""].includes(location.hostname);
+const bootstrap = new URLSearchParams(location.hash.replace(/^#/, ""));
+let bootstrapToken = bootstrap.get("token");
+const handoffToken = bootstrap.get("handoff");
+if (bootstrapToken || handoffToken) history.replaceState({}, "", `${location.pathname}${location.search}`);
+const hadOAuthCallbackParams = query.has("state") || query.has("code");
+let capturedOAuthCallback = null;
+let capturedOAuthError = null;
+try { capturedOAuthCallback = oauthCallbackInput(query); }
+catch (error) { capturedOAuthError = error; }
+finally {
+  if (hadOAuthCallbackParams) {
+    query.delete("state"); query.delete("code"); query.set("settings", "model");
+    history.replaceState({}, "", `${location.pathname}?${query.toString()}`);
+  }
+}
+const token = () => bootstrapToken || "";
+const client = new FloydBrowserClient({ token });
+
+async function establishLocalBrowserSession() {
+  if (remoteMode || !bootstrapToken) return;
+  await client.request("POST", "/api/local-session");
+  bootstrapToken = null;
+}
+const actor = "douglas-cockpit";
+const surfaceId = "cockpit";
+const envelopeId = "primary";
+const FLOYD_SURFACES = Object.freeze([
+  { id: "desktop", name: "Floyd Desktop", kind: "url", target: "http://127.0.0.1:13010/", detail: "Admitted desktop copy. Open is enabled only after Core proves its source identity." },
+  { id: "ide", name: "Floyd IDE", kind: "url", target: "http://127.0.0.1:13012/", detail: "Admitted IDE copy and folder workspace. Open is provenance-gated." },
+  { id: "tui", name: "Floyd TUI continuity", kind: "command", target: "/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui", detail: "Admitted semantic TUI launch pinned to the exact Core project, session, run, and event cursor." },
+  { id: "pty", name: "TerminalOne", kind: "url", target: "http://127.0.0.1:13013/", detail: "Admitted TerminalOne copy. Its Floyd action launches the admitted semantic TUI from the Core-owned project root." },
+  { id: "launcher", name: "Harness Launcher", kind: "url", target: "http://127.0.0.1:13014/", detail: "Admitted Launcher copy with a run-scoped Core CLI attach action." },
+]);
+
+const app = {
+  state: { projects: [], sessions: [], runs: [], jobs: [], leases: [], provider_profiles: [] },
+  currentRunId: null,
+  currentRun: null,
+  currentSessionId: null,
+  mode: "new",
+  streamAbort: null,
+  transcripts: new Map(),
+  refreshTimer: null,
+  modelRoute: { provider: "opencode-go", model: "", baseUrl: "", credentialRef: null },
+  modelKey: "",
+  connectors: [],
+  connectedApps: [],
+  surfaceAvailability: new Map(),
+  surfaceAbort: null,
+  surfaceNavigation: Promise.resolve(),
+  integratedSurfaceId: null,
+  experienceReady: null,
+  envelope: null,
+  envelopeAbort: null,
+  draftTimer: null,
+  draftBase: null,
+  draftLocalValue: "",
+  draftDiverged: false,
+  cursorTimer: null,
+  cursorPending: null,
+  restoringEnvelope: false,
+  restoredArtifactId: null,
+  artifactAbort: null,
+  snapshotParts: new Map(),
+  sessionEventKeys: new Map(),
+  runSelectionGeneration: 0,
+  activeContextPublish: Promise.resolve(),
+  activeHandoffId: null,
+  activeHandoffLink: null,
+  handoffObjectUrl: null,
+};
+
+const el = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
+const shortId = (value) => String(value ?? "").length > 18 ? `${String(value).slice(0, 9)}…${String(value).slice(-6)}` : String(value ?? "");
+
+function notify(error) {
+  const toast = el("toast");
+  toast.textContent = error instanceof FloydApiError ? error.message : String(error);
+  toast.classList.add("show");
+  clearTimeout(notify.timer);
+  notify.timer = setTimeout(() => toast.classList.remove("show"), 7000);
+}
+
+function valueEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function envelopeChangeApplied(envelope, change) {
+  return Object.entries(change).every(([key, value]) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.entries(value).every(([childKey, childValue]) => valueEqual(envelope[key]?.[childKey], childValue));
+    }
+    return valueEqual(envelope[key], value);
+  });
+}
+
+function envelopeChangeConflicts(base, latest, change) {
+  return Object.entries(change).some(([key, value]) => {
+    if (key === "transcript_cursor" && Number(latest.transcript_cursor) >= Number(value)) return false;
+    if (key === "last_event_id" && change.transcript_cursor !== undefined
+      && Number(latest.transcript_cursor) >= Number(change.transcript_cursor)) return false;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.entries(value).some(([childKey, childValue]) => {
+        const before = base[key]?.[childKey];
+        const current = latest[key]?.[childKey];
+        return !valueEqual(before, current) && !valueEqual(current, childValue);
+      });
+    }
+    return !valueEqual(base[key], latest[key]) && !valueEqual(latest[key], value);
+  });
+}
+
+async function patchEnvelope(change, retry = true) {
+  if (!app.envelope) return null;
+  const base = app.envelope;
+  try {
+    app.envelope = await client.updateExperience(envelopeId, {
+      expected_revision: base.revision,
+      ...change,
+      surface: {
+        surface_id: surfaceId,
+        sdk_version: "1.0.0",
+        capabilities: ["coding-runs", "model-chat", "questions", "permissions", "artifacts", "drafts", "experience-stream"],
+        transcript_cursor: change.transcript_cursor ?? app.envelope.transcript_cursor ?? 0,
+        transcript_epoch: change.transcript_epoch ?? app.envelope.transcript_epoch ?? null,
+        last_event_id: change.last_event_id ?? app.envelope.last_event_id ?? null,
+      },
+    });
+    return app.envelope;
+  } catch (error) {
+    if (retry && error instanceof FloydApiError && error.status === 409) {
+      const latest = error.payload?.envelope || await client.experience(envelopeId);
+      app.envelope = latest;
+      const cursorOnly = Object.keys(change).every((key) => key === "transcript_cursor" || key === "last_event_id");
+      if (cursorOnly && change.transcript_cursor !== undefined
+        && Number(latest.transcript_cursor) >= Number(change.transcript_cursor)) return latest;
+      const epochResetOnly = Object.keys(change).every((key) => ["transcript_epoch", "transcript_cursor", "last_event_id"].includes(key));
+      if (epochResetOnly && change.transcript_epoch === latest.transcript_epoch
+        && Number(latest.transcript_cursor) >= Number(change.transcript_cursor ?? 0)) return latest;
+      if (envelopeChangeApplied(latest, change)) return latest;
+      if (envelopeChangeConflicts(base, latest, change)) {
+        throw new Error("Experience changed on another surface. Latest Core state was kept; review and apply your change again.");
+      }
+      return patchEnvelope(change, false);
+    }
+    throw error;
+  }
+}
+
+function queueActiveContextPublish(generation, change) {
+  const publish = async () => {
+    if (generation !== app.runSelectionGeneration) return false;
+    await patchEnvelope(change);
+    return generation === app.runSelectionGeneration;
+  };
+  const queued = app.activeContextPublish.then(publish, publish);
+  app.activeContextPublish = queued.catch(() => {});
+  return queued;
+}
+
+function draftChangeConflicts(base, latest, value) {
+  return latest.revision !== base.revision
+    && latest.composer_draft !== base.composer_draft
+    && latest.composer_draft !== value;
+}
+
+function scheduleDraftSave(value) {
+  if (!app.envelope) return;
+  if (!app.draftBase || app.draftDiverged) {
+    app.draftBase = { revision: app.envelope.revision, composer_draft: app.envelope.composer_draft };
+    app.draftDiverged = false;
+  }
+  app.draftLocalValue = value;
+  clearTimeout(app.draftTimer);
+  app.draftTimer = setTimeout(async () => {
+    app.draftTimer = null;
+    const base = app.draftBase;
+    if (!base || value !== app.draftLocalValue) return;
+    if (draftChangeConflicts(base, app.envelope, value)) {
+      app.draftDiverged = true;
+      notify(new Error("Draft changed on another surface. Your local text was kept; edit it again to explicitly replace the remote draft."));
+      return;
+    }
+    try {
+      await patchEnvelope({ composer_draft: value });
+      if (value === app.draftLocalValue) app.draftBase = null;
+    } catch (error) {
+      notify(error);
+    }
+  }, 350);
+}
+
+function clearPendingCursorSave() {
+  if (app.cursorTimer) clearTimeout(app.cursorTimer);
+  app.cursorTimer = null;
+  app.cursorPending = null;
+}
+
+function scheduleCursorSave(
+  eventId,
+  originatingRunId = app.currentRunId,
+  originatingEpoch = app.envelope?.transcript_epoch ?? null,
+) {
+  const cursor = Number(eventId);
+  if (!Number.isFinite(cursor)) return;
+  app.cursorPending = {
+    cursor,
+    eventId: String(eventId),
+    runId: originatingRunId,
+    epoch: originatingEpoch,
+  };
+  if (app.cursorTimer) return;
+  app.cursorTimer = setTimeout(() => {
+    const pending = app.cursorPending;
+    app.cursorPending = null;
+    app.cursorTimer = null;
+    if (pending && pending.runId === app.currentRunId
+      && pending.epoch === (app.envelope?.transcript_epoch ?? null)) {
+      patchEnvelope({ transcript_cursor: pending.cursor, last_event_id: pending.eventId }).catch(notify);
+    }
+  }, 500);
+}
+
+async function restoreEnvelope(envelope, { signal } = {}) {
+  if (signal?.aborted) return false;
+  app.envelope = envelope;
+  app.restoringEnvelope = true;
+  try {
+    app.modelRoute = {
+      provider: envelope.model_route?.provider || "opencode-go",
+      model: envelope.model_route?.model || "",
+      baseUrl: envelope.model_route?.base_url || "",
+      credentialRef: envelope.model_route?.credential_ref || null,
+    };
+    if (document.activeElement !== el("prompt") && !app.draftBase) {
+      app.draftLocalValue = envelope.composer_draft || "";
+      app.draftDiverged = false;
+      el("prompt").value = app.draftLocalValue;
+    }
+    const runId = envelope.active?.run_id;
+    if (runId && runId !== app.currentRunId && app.state.runs.some((run) => run.id === runId)) {
+      await selectRun(runId, { publish: false });
+    } else if (!runId && app.currentRunId && envelope.selected_view === "new-task") {
+      startNewTask({ publish: false });
+    }
+    if (envelope.selected_view === "model-settings") renderModelSettings({ publish: false });
+    if (envelope.selected_view === "connected-apps") renderConnectedAppsSettings({ publish: false });
+    if (envelope.selected_view === "artifact" && envelope.selected_artifact_id
+      && envelope.selected_artifact_id !== app.restoredArtifactId && app.currentRunId) {
+      app.artifactAbort?.abort();
+      const artifactController = new AbortController();
+      app.artifactAbort = artifactController;
+      const relayAbort = () => artifactController.abort();
+      signal?.addEventListener("abort", relayAbort, { once: true });
+      const expectedArtifactId = envelope.selected_artifact_id;
+      const expectedRunId = app.currentRunId;
+      const expectedGeneration = app.runSelectionGeneration;
+      let content;
+      try {
+        content = await client.artifactById(expectedArtifactId, artifactController.signal);
+      } catch (error) {
+        if (artifactController.signal.aborted || signal?.aborted) return false;
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort", relayAbort);
+        if (app.artifactAbort === artifactController) app.artifactAbort = null;
+      }
+      if (artifactController.signal.aborted || signal?.aborted
+        || expectedGeneration !== app.runSelectionGeneration || expectedRunId !== app.currentRunId
+        || app.envelope?.selected_artifact_id !== expectedArtifactId) return false;
+      addEntry(expectedRunId, {
+        kind: "event",
+        title: `Artifact: ${shortId(expectedArtifactId)}`,
+        text: typeof content === "string" ? content : JSON.stringify(content, null, 2),
+      });
+      app.restoredArtifactId = expectedArtifactId;
+    }
+    return true;
+  } finally {
+    app.restoringEnvelope = false;
+  }
+}
+
+function experienceRetryDelay(attempt) {
+  return Math.min(250 * (2 ** attempt), 4000);
+}
+
+function abortableDelay(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+async function watchExperienceWithReconnect(controller) {
+  let attempt = 0;
+  while (!controller.signal.aborted) {
+    try {
+      for await (const event of client.watchExperience(envelopeId, {
+        lastEventId: String(app.envelope?.revision || 0),
+        signal: controller.signal,
+      })) {
+        attempt = 0;
+        if (event.type === "experience" && event.data?.revision > (app.envelope?.revision || 0)) {
+          await restoreEnvelope(event.data, { signal: controller.signal });
+        }
+      }
+      if (!controller.signal.aborted) throw new Error("Experience stream ended");
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      notify(error);
+      await abortableDelay(experienceRetryDelay(attempt++), controller.signal);
+      if (controller.signal.aborted) return;
+      try {
+        await restoreEnvelope(await client.experience(envelopeId, controller.signal), { signal: controller.signal });
+      } catch (restoreError) {
+        if (!controller.signal.aborted) notify(restoreError);
+      }
+    }
+  }
+}
+
+async function initializeExperience() {
+  await client.negotiateExperience({
+    surface_id: surfaceId,
+    sdk_version: "1.0.0",
+    supported_envelope_versions: ["1.0.0"],
+    capabilities: ["coding-runs", "model-chat", "questions", "permissions", "artifacts", "drafts", "experience-stream"],
+  });
+  await restoreEnvelope(await client.experience(envelopeId));
+  app.envelopeAbort?.abort();
+  const controller = new AbortController();
+  app.envelopeAbort = controller;
+  void watchExperienceWithReconnect(controller);
+}
+
+function transcript(runId) {
+  if (!app.transcripts.has(runId)) app.transcripts.set(runId, []);
+  return app.transcripts.get(runId);
+}
+
+function addEntry(runId, entry) {
+  const items = transcript(runId);
+  if (entry.kind === "assistant-token" && items.at(-1)?.kind === "assistant") {
+    items.at(-1).text += entry.text;
+  } else if (entry.kind === "assistant-token") {
+    items.push({ kind: "assistant", text: entry.text });
+  } else {
+    items.push(entry);
+  }
+  if (app.currentRunId === runId) renderMessages();
+}
+
+function transcriptText(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(transcriptText).filter(Boolean).join("\n");
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.text === "string") return value.text;
+  if (value.content !== undefined) return transcriptText(value.content);
+  if (value.parts !== undefined) return transcriptText(value.parts);
+  return "";
+}
+
+function restoreTranscriptSnapshot(runId, messages) {
+  if (!Array.isArray(messages)) return;
+  const parts = new Map();
+  const visit = (value) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    const partId = value.id ?? value.part_id ?? value.partID;
+    if (partId && typeof value.text === "string") parts.set(String(partId), value.text);
+    Object.values(value).forEach(visit);
+  };
+  visit(messages);
+  app.snapshotParts.set(runId, parts);
+  const entries = [...messages]
+    .sort((left, right) => Number(left?.time?.created ?? left?.info?.time?.created ?? 0) - Number(right?.time?.created ?? right?.info?.time?.created ?? 0))
+    .map((message) => {
+      const role = message?.role ?? message?.type ?? message?.info?.role ?? message?.info?.type;
+      const text = transcriptText(message?.content ?? message?.parts ?? message?.data);
+      if (!text || !["user", "assistant", "system"].includes(role)) return null;
+      return { kind: role, text, messageId: message?.id ?? message?.info?.id ?? null };
+    })
+    .filter(Boolean);
+  if (entries.length) {
+    app.transcripts.set(runId, entries);
+    if (runId === app.currentRunId) renderMessages();
+  }
+}
+
+function deduplicatedLiveText(runId, data) {
+  const delta = String(data?.delta ?? data?.text ?? "");
+  const part = data?.part ?? data;
+  const partId = part?.id ?? part?.part_id ?? part?.partID;
+  const fullText = typeof part?.text === "string" ? part.text : null;
+  const snapshot = app.snapshotParts.get(runId);
+  if (!partId || !snapshot?.has(String(partId)) || fullText === null) return delta;
+  const prior = snapshot.get(String(partId));
+  if (fullText === prior) return "";
+  if (prior.startsWith(fullText)) return "";
+  if (fullText.startsWith(prior)) {
+    snapshot.set(String(partId), fullText);
+    return fullText.slice(prior.length);
+  }
+  snapshot.delete(String(partId));
+  return delta;
+}
+
+function sessionEventIsDuplicate(runId, event) {
+  const payload = event.data?.data ?? event.data ?? {};
+  const semanticId = payload.id ?? payload.request_id ?? payload.requestID;
+  const key = event.id ? `event:${event.id}` : semanticId ? `${event.type}:${semanticId}` : null;
+  if (!key) return false;
+  let keys = app.sessionEventKeys.get(runId);
+  if (!keys) { keys = new Set(); app.sessionEventKeys.set(runId, keys); }
+  if (keys.has(key)) return true;
+  keys.add(key);
+  if (keys.size > 2048) keys.delete(keys.values().next().value);
+  return false;
+}
+
+async function refreshHealth() {
+  try {
+    const health = await client.health();
+    el("health").className = `health ${health.ok && health.engine?.ok ? "ok" : "bad"}`;
+    el("healthText").textContent = health.engine?.ok ? "Core and engine online" : "Core online, engine unavailable";
+    el("routeLabel").textContent = `Route: Core ${health.version} / OpenCode loopback`;
+  } catch (error) {
+    el("health").className = "health bad";
+    el("healthText").textContent = token() ? "Core unreachable" : "Gateway token required";
+    el("routeLabel").textContent = "Route: disconnected";
+  }
+}
+
+async function refreshState({ preserveInspector = true } = {}) {
+  try {
+    app.state = await client.state();
+    renderProjects();
+    renderRuns();
+    if (app.currentRunId) {
+      const fresh = app.state.runs.find((run) => run.id === app.currentRunId);
+      if (fresh) {
+        app.currentRun = { ...app.currentRun, ...fresh };
+        renderHeader();
+        if (!preserveInspector) await renderInspector();
+      }
+    }
+  } catch (error) {
+    if (token()) notify(error);
+  }
+}
+
+function renderProjects() {
+  const select = el("projectSelect");
+  const prior = select.value;
+  select.innerHTML = app.state.projects.length
+    ? app.state.projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join("")
+    : '<option value="">No projects registered</option>';
+  if (app.state.projects.some((project) => project.id === prior)) select.value = prior;
+  else if (app.currentRun?.project_id) select.value = app.currentRun.project_id;
+}
+
+function renderRuns() {
+  const list = el("runList");
+  el("runCount").textContent = String(app.state.runs.length);
+  list.innerHTML = app.state.runs.map((run) => `
+    <button class="run-item ${run.id === app.currentRunId ? "active" : ""}" data-run-id="${escapeHtml(run.id)}">
+      <div class="run-title">${escapeHtml(run.goal)}</div>
+      <div class="run-meta"><span class="status ${escapeHtml(run.status)}">${escapeHtml(run.status)}</span><span>${escapeHtml(shortId(run.id))}</span></div>
+    </button>`).join("") || '<div class="inspect-section" style="color:var(--faint)">No runs yet.</div>';
+}
+
+function renderHeader() {
+  const run = app.currentRun;
+  el("runTitle").textContent = run?.goal || "New coding task";
+  el("runIdentity").textContent = run ? `${run.id} / session ${run.session_id}` : "Select a project and describe the outcome";
+  const canDecide = run?.status === "waiting_review";
+  for (const id of ["acceptRun", "rejectRun", "escalateRun"]) el(id).disabled = !canDecide;
+  el("inspectStatus").textContent = run?.status || "Idle";
+}
+
+function renderMessages() {
+  const container = el("messages");
+  if (!app.currentRunId) {
+    container.innerHTML = '<div class="empty"><div><div class="empty-mark" aria-hidden="true"></div><h2>Build with Floyd</h2><p>Describe a coding outcome in plain language. Floyd Core owns the run, OpenCode executes in a leased worktree, and every surface observes the same session.</p></div></div>';
+    return;
+  }
+  const entries = transcript(app.currentRunId);
+  container.innerHTML = entries.map((entry, index) => {
+    if (entry.kind === "user" || entry.kind === "assistant" || entry.kind === "system") {
+      return `<article class="message ${entry.kind}"><div class="message-role">${entry.kind === "user" ? "You" : entry.kind === "assistant" ? "Floyd" : "System"}</div><div class="message-body">${escapeHtml(entry.text)}</div></article>`;
+    }
+    if (entry.kind === "question") {
+      const question = entry.data.questions?.[0]?.question || "The coding engine needs your input.";
+      const options = entry.data.questions?.[0]?.options || [];
+      return `<article class="message"><div class="message-role">Input</div><div class="message-body event-card"><div class="event-title"><span>Question</span><span>${escapeHtml(entry.data.id)}</span></div><div class="event-detail">${escapeHtml(question)}</div><div class="event-actions">${options.map((option) => `<button data-question-index="${index}" data-answer="${escapeHtml(option.label)}">${escapeHtml(option.label)}</button>`).join("")}<button data-question-index="${index}" data-answer="__custom__">Custom answer</button></div></div></article>`;
+    }
+    if (entry.kind === "permission") {
+      const action = entry.data.action || entry.data.permission || "requested action";
+      const resources = entry.data.resources || entry.data.patterns || [];
+      return `<article class="message"><div class="message-role">Policy</div><div class="message-body event-card"><div class="event-title"><span>Permission request</span><span>${escapeHtml(entry.data.id)}</span></div><div class="event-detail">${escapeHtml(action)}${resources.length ? ` / ${escapeHtml(resources.join(", "))}` : ""}</div><div class="event-actions"><button data-permission-index="${index}" data-reply="once">Allow once</button><button data-permission-index="${index}" data-reply="reject">Reject</button></div></div></article>`;
+    }
+    return `<article class="message"><div class="message-role">Event</div><div class="message-body event-card"><div class="event-title"><span>${escapeHtml(entry.title || entry.kind)}</span><span>${escapeHtml(entry.id || "")}</span></div><div class="event-detail">${escapeHtml(entry.text || "")}</div></div></article>`;
+  }).join("");
+  container.scrollTop = container.scrollHeight;
+}
+
+async function renderInspector(expectedRunId = app.currentRunId, expectedGeneration = app.runSelectionGeneration) {
+  const run = app.currentRun;
+  if (!run || run.id !== expectedRunId) return false;
+  try {
+    const [detail, evidence] = await Promise.all([client.run(run.id), client.evidence(run.id)]);
+    if (expectedGeneration !== app.runSelectionGeneration || expectedRunId !== app.currentRunId) return false;
+    app.currentRun = detail;
+    const jobs = detail.jobs || [];
+    const artifacts = detail.artifacts || [];
+    el("inspectorBody").innerHTML = `
+      <div class="inspect-section"><div class="inspect-label">Identity</div>
+        <div class="inspect-row"><span>Run</span><code title="${escapeHtml(detail.id)}">${escapeHtml(shortId(detail.id))}</code></div>
+        <div class="inspect-row"><span>Project</span><code title="${escapeHtml(detail.project_id)}">${escapeHtml(shortId(detail.project_id))}</code></div>
+        <div class="inspect-row"><span>Session</span><code title="${escapeHtml(detail.session_id)}">${escapeHtml(shortId(detail.session_id))}</code></div>
+        <div class="inspect-row"><span>Evidence</span><code>${evidence.events?.length || 0} events</code></div>
+      </div>
+      <div class="inspect-section"><div class="inspect-label">Engine jobs</div>${jobs.map((job) => `
+        <div class="inspect-row"><span>${escapeHtml(job.kind)}</span><code>${escapeHtml(job.status)}</code></div>
+        <div class="inspect-row"><span>Engine ID</span><code title="${escapeHtml(job.engine_session_id || "pending")}">${escapeHtml(shortId(job.engine_session_id || "pending"))}</code></div>`).join("") || '<div class="inspect-row"><span>State</span><code>not scheduled</code></div>'}</div>
+      <div class="inspect-section"><div class="inspect-label">Artifacts</div>${artifacts.map((artifact) => `<div class="artifact" data-artifact-role="${escapeHtml(artifact.role)}"><strong>${escapeHtml(artifact.role)}</strong><span>${escapeHtml(shortId(artifact.id))} / ${artifact.bytes} bytes</span></div>`).join("") || '<div style="color:var(--faint)">No artifacts yet.</div>'}</div>
+      <div class="inspect-section"><div class="inspect-label">Runtime boundary</div><div class="inspect-row"><span>Surface</span><code>@floyd/sdk</code></div><div class="inspect-row"><span>Authority</span><code>Floyd Core</code></div><div class="inspect-row"><span>Engine</span><code>OpenCode SDK</code></div></div>`;
+    return true;
+  } catch (error) {
+    if (expectedGeneration === app.runSelectionGeneration && expectedRunId === app.currentRunId) notify(error);
+    return false;
+  }
+}
+
+function renderModelSettings({ publish = true } = {}) {
+  const route = app.modelRoute;
+  const selectedConnector = app.connectors.find((profile) => profile.credentialRef === route.credentialRef)
+    || app.connectors.find((profile) => profile.id === route.connectorId);
+  el("inspectStatus").textContent = "Model routing";
+  el("inspectorBody").innerHTML = `
+    <div class="inspect-section"><div class="inspect-label">Completion provider</div>
+      <label class="settings-field"><span>Provider</span><select id="modelProvider">
+        ${["opencode-go", "opencode-zen", "openai", "anthropic", "auto"].map((value) => `<option value="${value}" ${route.provider === value ? "selected" : ""}>${value}</option>`).join("")}
+      </select></label>
+      <label class="settings-field"><span>Model</span><input id="modelName" value="${escapeHtml(route.model || "")}" placeholder="Provider model ID" autocomplete="off"></label>
+      <label class="settings-field"><span>Base URL override</span><input id="modelBaseUrl" value="${escapeHtml(route.baseUrl || "")}" placeholder="Use provider default" autocomplete="off"></label>
+      <label class="settings-field"><span>Core connector</span><select id="modelConnector"><option value="">Ephemeral browser key</option>${app.connectors.filter((profile) => !profile.revoked).map((profile) => `<option value="${escapeHtml(profile.id)}" ${selectedConnector?.id === profile.id ? "selected" : ""}>${escapeHtml(profile.displayName)} / ${escapeHtml(profile.credentialKind || "no credential")}</option>`).join("")}</select></label>
+      <label class="settings-field"><span>API key</span><input id="modelApiKey" type="password" value="" placeholder="Enter for this chat or store in selected connector" autocomplete="off"></label>
+      <div class="settings-note">Ephemeral keys remain in page memory only. “Store in Core” sends the key once to Core encryption and retains only an opaque credential reference in this UI and the experience envelope.</div>
+      <div class="event-actions"><button class="action-button" type="button" data-connector-refresh>Refresh connectors</button><button class="action-button" type="button" data-connector-store-key ${selectedConnector ? "" : "disabled"}>Store in Core</button><button class="action-button" type="button" data-connector-oauth ${selectedConnector?.authorizationUrl ? "" : "disabled"}>Start OAuth</button><button class="action-button danger" type="button" data-connector-revoke ${selectedConnector ? "" : "disabled"}>Revoke</button></div>
+      <div class="settings-note">OpenCode Zen, OpenCode Go, OpenAI, and Anthropic normally use API keys. Provider OAuth fields are only for a custom compatible endpoint that explicitly documents OAuth; connected applications use the separate Connections authority.</div>
+      <button class="action-button primary" data-model-apply>Start model chat</button>
+    </div>
+    <div class="inspect-section"><div class="inspect-label">Create Core connector</div>
+      <label class="settings-field"><span>ID</span><input id="connectorId" placeholder="personal-openai" autocomplete="off"></label>
+      <label class="settings-field"><span>Display name</span><input id="connectorName" placeholder="Personal OpenAI" autocomplete="off"></label>
+      <label class="settings-field"><span>Provider</span><select id="connectorProvider">${["opencode-go", "opencode-zen", "openai", "anthropic"].map((value) => `<option value="${value}">${value}</option>`).join("")}</select></label>
+      <label class="settings-field"><span>Base URL</span><input id="connectorBaseUrl" placeholder="https://api.openai.com/v1" autocomplete="off"></label>
+      <label class="settings-field"><span>OAuth authorization URL (optional)</span><input id="connectorAuthorizationUrl" autocomplete="off"></label>
+      <label class="settings-field"><span>OAuth token URL (optional)</span><input id="connectorTokenUrl" autocomplete="off"></label>
+      <label class="settings-field"><span>OAuth client ID (required with OAuth URLs)</span><input id="connectorClientId" autocomplete="off"></label>
+      <label class="settings-field"><span>OAuth client secret (optional)</span><input id="connectorClientSecret" type="password" autocomplete="off"></label>
+      <label class="settings-field"><span>OAuth scopes (space separated)</span><input id="connectorScopes" autocomplete="off"></label>
+      <button class="action-button" type="button" data-connector-create>Create connector</button>
+    </div>
+    <div class="inspect-section"><div class="inspect-label">Routing boundary</div>
+      <div class="inspect-row"><span>Browser</span><code>@floyd/sdk</code></div>
+      <div class="inspect-row"><span>Relay</span><code>Core /gateway</code></div>
+      <div class="inspect-row"><span>Credential</span><code>${escapeHtml(route.credentialRef || "ephemeral")}</code></div>
+      <div class="inspect-row"><span>Stream</span><code>delta / done</code></div>
+    </div>`;
+  if (publish && !app.restoringEnvelope) patchEnvelope({ selected_view: "model-settings" }).catch(notify);
+}
+
+async function refreshConnectors(preferredCredentialRef = app.modelRoute.credentialRef) {
+  const result = await client.connectors();
+  app.connectors = Array.isArray(result.connectors) ? result.connectors : [];
+  const profile = app.connectors.find((item) => item.credentialRef === preferredCredentialRef);
+  if (profile?.credentialRef) {
+    app.modelRoute = { ...app.modelRoute, provider: profile.provider, baseUrl: profile.baseUrl, credentialRef: profile.credentialRef, connectorId: profile.id };
+  }
+  return profile || null;
+}
+
+async function selectConnector(profile, credentialRef = profile?.credentialRef || null) {
+  if (!profile || !credentialRef) throw new Error("Selected connector does not have a stored credential.");
+  app.modelKey = "";
+  app.modelRoute = { ...app.modelRoute, provider: profile.provider, baseUrl: profile.baseUrl, credentialRef, connectorId: profile.id };
+  await patchEnvelope({
+    model_route: { provider: profile.provider, model: app.modelRoute.model || null, base_url: profile.baseUrl, provider_profile_id: null, credential_ref: credentialRef },
+  });
+}
+
+async function openModelSettings({ publish = true } = {}) {
+  renderModelSettings({ publish });
+  await refreshConnectors();
+  renderModelSettings({ publish: false });
+}
+
+function oauthCallbackInput(params) {
+  const state = params.get("state");
+  const code = params.get("code");
+  if (!state && !code) return null;
+  if (!state || !code) throw new Error("OAuth callback is incomplete; both state and code are required.");
+  return { state, code };
+}
+
+function connectorProfileInput(values) {
+  const input = {
+    id: values.id.trim(), displayName: values.displayName.trim(), provider: values.provider,
+    baseUrl: values.baseUrl.trim(),
+  };
+  const authorizationUrl = values.authorizationUrl.trim();
+  const tokenUrl = values.tokenUrl.trim();
+  const clientId = values.clientId.trim();
+  const clientSecret = values.clientSecret.trim();
+  const scopes = values.scopes.trim().split(/\s+/).filter(Boolean);
+  if (authorizationUrl || tokenUrl || clientId) {
+    Object.assign(input, { authorizationUrl, tokenUrl, clientId, scopes, clientAuth: clientSecret ? "client_secret_post" : "none" });
+    if (clientSecret) input.clientSecret = clientSecret;
+  }
+  return input;
+}
+
+async function completeOAuthCallback() {
+  if (capturedOAuthError) throw capturedOAuthError;
+  const callback = capturedOAuthCallback;
+  if (!callback) return false;
+  if (remoteMode) throw new Error("Connector OAuth callback requires the local authority surface.");
+  const result = await client.completeConnectorOAuth(callback.state, callback.code);
+  const profile = await refreshConnectors(result.credentialRef);
+  if (!profile) throw new Error("Core stored the OAuth credential but its connector profile was not returned.");
+  await selectConnector(profile, result.credentialRef);
+  return true;
+}
+
+function renderConnectedAppsSettings({ publish = true } = {}) {
+  el("inspectStatus").textContent = "Connected applications";
+  const selected = new Set(app.envelope?.connected_app_ids || []);
+  const connectionRows = app.connectedApps.map((profile) => `
+    <div class="inspect-section" data-connected-app-id="${escapeHtml(profile.id)}">
+      <div class="inspect-label">${escapeHtml(profile.displayName)}</div>
+      <div class="inspect-row"><span>Status</span><code>${escapeHtml(profile.status)}</code></div>
+      <div class="inspect-row"><span>Resource</span><code title="${escapeHtml(profile.resourceUrl)}">${escapeHtml(profile.resourceUrl)}</code></div>
+      <div class="inspect-row"><span>Issuer</span><code title="${escapeHtml(profile.issuer)}">${escapeHtml(profile.issuer)}</code></div>
+      <div class="inspect-row"><span>Scopes</span><code>${escapeHtml((profile.scopesGranted.length ? profile.scopesGranted : profile.scopesRequested).join(" ") || "provider default")}</code></div>
+      <label class="settings-field"><span>Portable experience</span><input type="checkbox" data-connected-app-select="${escapeHtml(profile.id)}" ${selected.has(profile.id) ? "checked" : ""} ${remoteMode ? "disabled" : ""}></label>
+      ${remoteMode ? '<div class="settings-note">This application was selected when the handoff was issued. Remote continuation can use it but cannot expand its authority.</div>' : `<div class="event-actions">
+        <button class="action-button primary" type="button" data-connected-app-authorize="${escapeHtml(profile.id)}">${profile.status === "connected" ? "Reconnect" : "Connect"}</button>
+        <button class="action-button" type="button" data-connected-app-refresh="${escapeHtml(profile.id)}" ${profile.status === "connected" ? "" : "disabled"}>Refresh token</button>
+        <button class="action-button danger" type="button" data-connected-app-revoke="${escapeHtml(profile.id)}" ${profile.status === "connected" || profile.status === "revocation_pending" ? "" : "disabled"}>Disconnect</button>
+      </div>`}
+    </div>`).join("");
+  el("inspectorBody").innerHTML = `
+    ${connectionRows || '<div class="inspect-section"><div class="inspect-label">No connected applications</div><div class="settings-note">Add a remote MCP application below. Core performs OAuth discovery, PKCE, token refresh, and revocation; tokens never enter this page.</div></div>'}
+    ${remoteMode ? "" : `<div class="inspect-section"><div class="inspect-label">Add remote MCP application</div>
+      <label class="settings-field"><span>ID</span><input id="connectedAppId" value="notion" autocomplete="off"></label>
+      <label class="settings-field"><span>Name</span><input id="connectedAppName" value="Notion" autocomplete="off"></label>
+      <label class="settings-field"><span>MCP resource URL</span><input id="connectedAppUrl" value="https://mcp.notion.com/mcp" autocomplete="off"></label>
+      <label class="settings-field"><span>OAuth scopes (optional)</span><input id="connectedAppScopes" autocomplete="off"></label>
+      <button class="action-button" type="button" data-connected-app-create>Discover application</button>
+      <div class="settings-note">Connected-app OAuth is separate from model routing. Core discovers and pins the resource, issuer, endpoints, and client registration before authorization.</div>
+    </div>`}`;
+  if (publish && !app.restoringEnvelope) patchEnvelope({ selected_view: "connected-apps" }).catch(notify);
+}
+
+async function refreshConnectedApps() {
+  const result = await client.connectedApps();
+  app.connectedApps = Array.isArray(result.connectedApps) ? result.connectedApps : [];
+  return app.connectedApps;
+}
+
+async function openConnectedApps({ publish = true } = {}) {
+  renderConnectedAppsSettings({ publish });
+  await refreshConnectedApps();
+  renderConnectedAppsSettings({ publish: false });
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
+
+function safeSurfaceUrl(surface) {
+  const discovered = app.surfaceAvailability.get(surface.id);
+  const url = new URL(remoteMode ? discovered?.target || "about:blank" : surface.target);
+  const localTarget = url.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(url.hostname)
+    && url.href === surface.target;
+  const remoteTarget = url.protocol === "https:" && url.hostname === location.hostname
+    && discovered?.verified === true && discovered?.target === url.href;
+  if (surface.kind !== "url" || !(remoteMode ? remoteTarget : localTarget)
+    || url.username || url.password || url.search || url.hash) {
+    throw new Error(`Unsafe launch target for ${surface.id}.`);
+  }
+  return url.href;
+}
+
+function continuationCommand(project, active) {
+  if (!project?.id || !project?.root_path || !active?.session_id || !active?.run_id) return null;
+  const cursor = active.last_event_id && /^\d+$/.test(String(active.last_event_id)) ? ` --event ${shellQuote(active.last_event_id)}` : "";
+  return `cd -- ${shellQuote(project.root_path)} && ${shellQuote("/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui")} floyd --project-id ${shellQuote(project.id)} --session ${shellQuote(active.session_id)} --run ${shellQuote(active.run_id)}${cursor}`;
+}
+
+function activeSurfaceProject() {
+  const projectId = app.envelope?.active?.project_id || app.currentRun?.project_id || el("projectSelect").value;
+  return app.state.projects.find((project) => project.id === projectId) || null;
+}
+
+function surfaceLaunchTarget(surface, project, active = app.envelope?.active) {
+  if (surface.kind === "command") return continuationCommand(project, { ...active, last_event_id: app.envelope?.last_event_id });
+  if (remoteMode && app.surfaceAvailability.get(surface.id)?.verified !== true) return null;
+  return safeSurfaceUrl(surface);
+}
+
+function integratedSurfaceTarget(surface) {
+  if (surface.id === "tui") {
+    const terminal = FLOYD_SURFACES.find((candidate) => candidate.id === "pty");
+    const active = app.envelope?.active;
+    const remoteContextReady = remoteMode && active?.project_id && active?.session_id && active?.run_id;
+    if (!terminal || app.surfaceAvailability.get("pty")?.verified !== true
+      || !(remoteContextReady || surfaceLaunchTarget(surface, activeSurfaceProject()))) return null;
+    const target = new URL(safeSurfaceUrl(terminal));
+    target.searchParams.set("floyd", "continue");
+    if (remoteMode) target.searchParams.set("floyd_parent", location.origin);
+    return target.href;
+  }
+  if (surface.id === "pty" && app.surfaceAvailability.get(surface.id)?.verified === true) {
+    const target = new URL(safeSurfaceUrl(surface));
+    // This non-secret marker misses any legacy cache-first '/' app shell. The
+    // current TerminalOne removes it before opening its WebSocket and does not
+    // trigger semantic TUI continuation.
+    target.searchParams.set("floyd", "integrated");
+    if (remoteMode) target.searchParams.set("floyd_parent", location.origin);
+    return target.href;
+  }
+  if (surface.kind !== "url" || app.surfaceAvailability.get(surface.id)?.verified !== true) return null;
+  const target = new URL(safeSurfaceUrl(surface));
+  if (remoteMode && surface.id === "launcher") target.searchParams.set("floyd_parent", location.origin);
+  return target.href;
+}
+
+function renderSurfaceTabs(activeId) {
+  el("surfaceTabs").innerHTML = FLOYD_SURFACES.map((surface) => {
+    const target = integratedSurfaceTarget(surface);
+    return `<button class="surface-tab ${surface.id === activeId ? "active" : ""}" type="button" data-surface-tab="${escapeHtml(surface.id)}" ${target ? "" : "disabled"}>${escapeHtml(surface.name)}</button>`;
+  }).join("");
+}
+
+function enqueueSurfaceNavigation(operation) {
+  const pending = app.surfaceNavigation.catch(() => {}).then(operation);
+  app.surfaceNavigation = pending.catch(() => {});
+  return pending;
+}
+
+function requestIntegratedSurfaceClose(frame, childOrigin) {
+  const requestId = crypto.randomUUID();
+  return new Promise((resolve) => {
+    let timer;
+    const finish = (acknowledged) => {
+      clearTimeout(timer);
+      window.removeEventListener("message", receiveAck);
+      resolve(acknowledged);
+    };
+    const receiveAck = (event) => {
+      if (event.source !== frame.contentWindow || event.origin !== childOrigin
+        || event.data?.type !== "floyd:surface-closed" || event.data?.requestId !== requestId) return;
+      finish(true);
+    };
+    window.addEventListener("message", receiveAck);
+    timer = setTimeout(() => finish(false), 1_000);
+    try {
+      frame.contentWindow?.postMessage({ type: "floyd:surface-close", requestId }, childOrigin);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+async function unloadIntegratedSurfaceFrame() {
+  const frame = el("surfaceFrame");
+  if (!frame.src || frame.src === "about:blank") return;
+  if (["pty", "launcher", "tui"].includes(app.integratedSurfaceId)) {
+    const childOrigin = new URL(frame.src).origin;
+    // Terminal surfaces acknowledge that they issued their explicit PTY
+    // teardown before Floyd removes the browsing context. A timeout remains
+    // bounded for a frame that never finished loading; live verification
+    // separately proves that server-side session cleanup reached zero.
+    const acknowledged = await requestIntegratedSurfaceClose(frame, childOrigin);
+    if (!acknowledged) {
+      throw new Error("The terminal did not acknowledge PTY teardown; Floyd kept it visible instead of detaching a hidden session.");
+    }
+  }
+  frame.src = "about:blank";
+  app.integratedSurfaceId = null;
+}
+
+async function openIntegratedSurface(surface) {
+  const target = integratedSurfaceTarget(surface);
+  if (!target) throw new Error(surface.id === "tui"
+    ? "Select an active run and verify TerminalOne before continuing in the integrated TUI."
+    : "This admitted surface is not currently verified for integrated launch.");
+  await unloadIntegratedSurfaceFrame();
+  el("surfaceHome").hidden = true;
+  el("surfaceStage").hidden = false;
+  el("surfaceStageTitle").textContent = surface.name;
+  el("surfaceStageExternal").dataset.target = target;
+  const frame = el("surfaceFrame");
+  frame.title = `${surface.name} inside Floyd`;
+  if (remoteMode && surface.id === "tui") {
+    const active = app.envelope.active;
+    const childOrigin = new URL(target).origin;
+    frame.addEventListener("load", () => frame.contentWindow?.postMessage({
+      type: "floyd:continue-context",
+      context: { projectId: active.project_id, sessionId: active.session_id, runId: active.run_id },
+    }, childOrigin), { once: true });
+  }
+  frame.src = target;
+  app.integratedSurfaceId = surface.id;
+  renderSurfaceTabs(surface.id);
+}
+
+async function closeIntegratedSurface() {
+  await unloadIntegratedSurfaceFrame();
+  el("surfaceStageExternal").removeAttribute("data-target");
+  el("surfaceStage").hidden = true;
+  el("surfaceHome").hidden = false;
+}
+
+async function closeSurfaceWorkspace() {
+  app.surfaceAbort?.abort();
+  await closeIntegratedSurface();
+  el("surfaceDialog").close();
+}
+
+async function verifySurfaceTargets() {
+  app.surfaceAbort?.abort();
+  const controller = new AbortController();
+  app.surfaceAbort = controller;
+  const urlSurfaces = FLOYD_SURFACES.filter((surface) => surface.kind === "url");
+  try {
+    const discovery = await client.request("GET", "/api/surfaces", undefined, controller.signal);
+    if (controller.signal.aborted || app.surfaceAbort !== controller) return;
+    const results = Array.isArray(discovery?.surfaces) ? discovery.surfaces : [];
+    for (const surface of urlSurfaces) {
+      const result = results.find((entry) => entry?.id === surface.id
+        && (remoteMode || entry?.target === surface.target));
+      app.surfaceAvailability.set(surface.id, result
+        ? { verified: result.verified === true, target: String(result.target || ""), reason: String(result.reason || "Core returned no verification reason.") }
+        : { verified: false, reason: "Core did not return the fixed admitted target identity." });
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    for (const surface of urlSurfaces) app.surfaceAvailability.set(surface.id, { verified: false, reason: "Core surface discovery is unavailable." });
+    notify(error);
+  } finally {
+    if (app.surfaceAbort === controller) app.surfaceAbort = null;
+  }
+  if (el("surfaceDialog").open) renderSurfaceHub();
+}
+
+function renderSurfaceHub() {
+  const active = app.envelope?.active || {};
+  const project = activeSurfaceProject();
+  const eventPosition = app.envelope?.last_event_id || app.envelope?.transcript_cursor || "not recorded";
+  el("surfaceContext").innerHTML = `<strong>Core continuation envelope</strong><code>project ${escapeHtml(active.project_id || project?.id || "none")} / session ${escapeHtml(active.session_id || "none")} / run ${escapeHtml(active.run_id || "none")} / event ${escapeHtml(eventPosition)}</code>`;
+  el("surfaceGrid").innerHTML = FLOYD_SURFACES.map((surface) => {
+    const target = surfaceLaunchTarget(surface, project, active);
+    const unavailable = !target;
+    const availability = app.surfaceAvailability.get(surface.id);
+    const verified = surface.kind === "url" && availability?.verified === true;
+    const integrated = surface.id === "tui"
+      ? Boolean((target || (remoteMode && active.project_id && active.session_id && active.run_id))
+        && app.surfaceAvailability.get("pty")?.verified === true)
+      : verified;
+    return `<article class="surface-card" data-surface-id="${escapeHtml(surface.id)}">
+      <h3>${escapeHtml(surface.name)}</h3><p>${escapeHtml(surface.detail)}</p>
+      <code class="surface-target">${escapeHtml(target || "Select an active run before generating the exact CLI attach command.")}</code>
+      <div class="settings-note">${escapeHtml(surface.kind === "url" ? availability?.reason || "Checking admitted source identity." : "Exact semantic TUI handoff; Core validates project, session, run, and event scope before attach.")}</div>
+      <div class="surface-actions">
+        <button class="action-button primary" type="button" data-surface-open="${escapeHtml(surface.id)}" ${integrated ? "" : "disabled"}>${surface.id === "tui" ? "Continue in Floyd" : "Open in Floyd"}</button>
+        <button class="action-button" type="button" data-surface-copy="${escapeHtml(surface.id)}" ${unavailable ? "disabled" : ""}>Copy ${surface.kind === "url" ? "address" : "command"}</button>
+      </div>
+    </article>`;
+  }).join("");
+  el("surfaceBoundary").textContent = remoteMode
+    ? "Remote boundary: every application request is device-session authenticated, provenance-gated, and relayed by Floyd Core. This developer grant includes host filesystem and terminal authority; revoke the device session to cut it off."
+    : "Local boundary: donor ports are never targeted. Open stays disabled until health proves the admitted source root and commit; Floyd Core remains the continuity authority.";
+}
+
+function startModelChat() {
+  const model = el("modelName").value.trim();
+  const apiKey = el("modelApiKey").value.trim();
+  const connector = app.connectors.find((profile) => profile.id === el("modelConnector").value);
+  const provider = connector?.provider || el("modelProvider").value;
+  const baseUrl = connector?.baseUrl || el("modelBaseUrl").value.trim();
+  const credentialRef = connector?.credentialRef || app.modelRoute.credentialRef || null;
+  if (!model || (!apiKey && !credentialRef)) throw new Error("Model and either an ephemeral API key or stored Core connector are required.");
+  if (apiKey && credentialRef) throw new Error("Choose either the ephemeral API key or a stored Core connector, not both.");
+  app.modelRoute = { provider, model, baseUrl, credentialRef, connectorId: connector?.id || null };
+  app.modelKey = credentialRef ? "" : apiKey;
+  app.streamAbort?.abort();
+  clearPendingCursorSave();
+  const selectionGeneration = ++app.runSelectionGeneration;
+  app.currentRunId = `model-${Date.now()}`;
+  app.currentSessionId = null;
+  app.currentRun = { id: app.currentRunId, session_id: "ephemeral", goal: `${provider} / ${model}`, status: "model_chat" };
+  app.transcripts.set(app.currentRunId, [{ kind: "system", text: "Ephemeral model chat through Floyd Core. This is not a durable coding run and has no OpenCode tools or worktree." }]);
+  app.mode = "model";
+  el("modeButton").textContent = "Mode: model chat";
+  renderHeader(); renderMessages();
+  el("routeLabel").textContent = `Route: Core / ${provider} / ${model}`;
+  queueActiveContextPublish(selectionGeneration, {
+    active: { project_id: null, session_id: null, run_id: null },
+    transcript_cursor: 0,
+    last_event_id: null,
+    model_route: { provider, model, base_url: baseUrl || null, provider_profile_id: null, credential_ref: credentialRef },
+    selected_view: "model-chat",
+    composer_draft: "",
+  }).catch(notify);
+  el("prompt").focus();
+}
+
+async function selectRun(runId, { publish = true } = {}) {
+  const selectionGeneration = ++app.runSelectionGeneration;
+  app.streamAbort?.abort();
+  app.streamAbort = null;
+  app.artifactAbort?.abort();
+  clearPendingCursorSave();
+  app.modelKey = "";
+  app.restoredArtifactId = null;
+  const selectedRun = await client.run(runId);
+  if (selectionGeneration !== app.runSelectionGeneration) return;
+  app.currentRunId = runId;
+  app.currentRun = selectedRun;
+  app.currentSessionId = app.currentRun.session_id;
+  app.mode = "steer";
+  if (!app.transcripts.has(runId)) {
+    app.transcripts.set(runId, [
+      { kind: "user", text: app.currentRun.goal },
+      { kind: "system", text: `Run ${app.currentRun.status}. Floyd Core is the authority for this session.` },
+    ]);
+  }
+  el("modeButton").textContent = "Mode: guide active run";
+  renderRuns(); renderHeader(); renderMessages();
+  const inspectorCurrent = await renderInspector(runId, selectionGeneration);
+  if (!inspectorCurrent || selectionGeneration !== app.runSelectionGeneration || runId !== app.currentRunId) return;
+  if (publish && !app.restoringEnvelope) {
+    const published = await queueActiveContextPublish(selectionGeneration, {
+      active: { project_id: app.currentRun.project_id, session_id: app.currentRun.session_id, run_id: runId },
+      transcript_cursor: 0,
+      last_event_id: null,
+      selected_view: "run",
+      composer_draft: el("prompt").value,
+    });
+    if (!published || selectionGeneration !== app.runSelectionGeneration || runId !== app.currentRunId) return;
+  }
+  attachSession(runId, app.currentSessionId, selectionGeneration);
+}
+
+function attachmentIsCurrent(controller, runId, sessionId, selectionGeneration) {
+  return !controller.signal.aborted
+    && selectionGeneration === app.runSelectionGeneration
+    && runId === app.currentRunId
+    && sessionId === app.currentSessionId;
+}
+
+async function refreshAttachmentContext(controller, runId, sessionId, selectionGeneration) {
+  const [envelope, run] = await Promise.all([
+    client.experience(envelopeId, controller.signal),
+    client.run(runId, controller.signal),
+  ]);
+  if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return null;
+  if (envelope.active?.run_id !== runId || envelope.active?.session_id !== sessionId) {
+    await refreshState();
+    await restoreEnvelope(envelope, { signal: controller.signal });
+    return null;
+  }
+  app.currentRun = run;
+  await restoreEnvelope(envelope, { signal: controller.signal });
+  if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return null;
+  renderRuns(); renderHeader();
+  return envelope;
+}
+
+function attachSession(runId, sessionId, selectionGeneration) {
+  const controller = new AbortController();
+  app.streamAbort = controller;
+  void (async () => {
+    let attempt = 0;
+    let streamEpoch = app.envelope?.transcript_epoch ?? null;
+    let lastEventId = app.snapshotParts.has(runId) ? app.envelope?.last_event_id ?? null : null;
+    let forceFresh = !app.snapshotParts.has(runId);
+    while (attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) {
+      try {
+        const resumeId = forceFresh ? undefined : lastEventId || undefined;
+        forceFresh = false;
+        let restartFresh = false;
+        for await (const event of client.attachSession(sessionId, actor, {
+          signal: controller.signal, runId, lastEventId: resumeId,
+        })) {
+          if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return;
+          if (event.type === "hello") {
+            const epoch = event.data?.stream_epoch ?? null;
+            if (epoch && epoch !== streamEpoch) {
+              streamEpoch = epoch;
+              lastEventId = null;
+              app.snapshotParts.delete(runId);
+              app.sessionEventKeys.delete(runId);
+              app.transcripts.delete(runId);
+              await patchEnvelope({ transcript_epoch: epoch, transcript_cursor: 0, last_event_id: null });
+              if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return;
+              if (resumeId) { restartFresh = true; break; }
+            }
+            attempt = 0;
+            continue;
+          }
+          if (sessionEventIsDuplicate(runId, event)) continue;
+          if (event.id) {
+            lastEventId = String(event.id);
+            scheduleCursorSave(event.id, runId, streamEpoch);
+          }
+          if (event.type === "transcript") {
+            restoreTranscriptSnapshot(runId, event.data?.messages);
+            continue;
+          }
+          const payload = event.data || {};
+          const data = payload.data || {};
+          if (event.type === "token" && payload.channel === "text") {
+            const text = deduplicatedLiveText(runId, data);
+            if (text) addEntry(runId, { kind: "assistant-token", text });
+          } else if (event.type === "tool_call_start") {
+            addEntry(runId, { kind: "tool", title: "Tool started", text: String(data.tool ?? data.name ?? "tool"), id: event.id });
+          } else if (event.type === "tool_call_finish") {
+            addEntry(runId, { kind: "tool", title: "Tool finished", text: String(data.tool ?? data.name ?? "tool"), id: event.id });
+          } else if (event.type === "question") {
+            addEntry(runId, { kind: "question", data });
+          } else if (event.type === "permission") {
+            addEntry(runId, { kind: "permission", data });
+          } else if (["phase", "error", "done"].includes(event.type)) {
+            addEntry(runId, { kind: "event", title: event.type, text: JSON.stringify(data), id: event.id });
+          }
+        }
+        if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return;
+        if (restartFresh) { forceFresh = true; continue; }
+        throw new Error("Session stream ended");
+      } catch (error) {
+        if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return;
+        notify(error);
+        await abortableDelay(experienceRetryDelay(attempt++), controller.signal);
+        if (!attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) return;
+        try {
+          const envelope = await refreshAttachmentContext(controller, runId, sessionId, selectionGeneration);
+          if (!envelope) return;
+          if (envelope.transcript_epoch !== streamEpoch || !app.snapshotParts.has(runId)) {
+            streamEpoch = envelope.transcript_epoch ?? null;
+            lastEventId = null;
+            forceFresh = true;
+          } else {
+            lastEventId = lastEventId || envelope.last_event_id || null;
+          }
+        } catch (restoreError) {
+          if (attachmentIsCurrent(controller, runId, sessionId, selectionGeneration)) notify(restoreError);
+        }
+      }
+    }
+  })();
+}
+
+async function consumeModelStream(events, onDelta) {
+  let terminal = false;
+  for await (const event of events) {
+    if (event.type === "delta") onDelta(event.data.text || "");
+    else if (event.type === "error") {
+      terminal = true;
+      throw new Error(`Model provider stream error: ${JSON.stringify(event.data)}`);
+    } else if (event.type === "done") {
+      terminal = true;
+      break;
+    }
+  }
+  if (!terminal) throw new Error("Model provider stream ended before a terminal done or error event.");
+}
+
+async function sendPrompt() {
+  const prompt = el("prompt");
+  const text = prompt.value.trim();
+  if (!text) return;
+  el("send").disabled = true;
+  try {
+    if (app.mode === "model") {
+      if (!app.modelKey && !app.modelRoute.credentialRef) throw new Error("Open model settings and provide an ephemeral key or stored Core connector.");
+      addEntry(app.currentRunId, { kind: "user", text });
+      prompt.value = "";
+      const controller = new AbortController();
+      app.streamAbort = controller;
+      const messages = transcript(app.currentRunId)
+        .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+        .map((entry) => ({ role: entry.kind, content: entry.text }));
+      await consumeModelStream(client.modelStream({
+        provider: app.modelRoute.provider,
+        apiKey: app.modelKey || undefined,
+        credentialRef: app.modelRoute.credentialRef || undefined,
+        baseUrl: app.modelRoute.baseUrl || undefined,
+        model: app.modelRoute.model,
+        messages,
+        signal: controller.signal,
+      }), (delta) => addEntry(app.currentRunId, { kind: "assistant-token", text: delta }));
+    } else if (app.mode === "steer" && app.currentSessionId) {
+      await client.steer(app.currentSessionId, text, actor, undefined, app.currentRunId);
+      addEntry(app.currentRunId, { kind: "user", text });
+    } else {
+      const projectId = el("projectSelect").value;
+      if (!projectId) throw new Error("Register or select a project before starting a run.");
+      const created = await client.submit(projectId, text);
+      prompt.value = "";
+      await refreshState();
+      await selectRun(created.run_id);
+      return;
+    }
+    prompt.value = "";
+  } catch (error) { notify(error); }
+  finally { el("send").disabled = false; prompt.focus(); }
+}
+
+function startNewTask({ publish = true } = {}) {
+  if (remoteMode) { notify(new Error("Remote continuation cannot create a new run.")); return; }
+  app.streamAbort?.abort();
+  app.artifactAbort?.abort();
+  clearPendingCursorSave();
+  const selectionGeneration = ++app.runSelectionGeneration;
+  app.modelKey = "";
+  app.restoredArtifactId = null;
+  app.currentRunId = null;
+  app.currentRun = null;
+  app.currentSessionId = null;
+  app.mode = "new";
+  el("modeButton").textContent = "Mode: new run";
+  renderRuns(); renderHeader(); renderMessages();
+  if (publish && !app.restoringEnvelope) {
+    queueActiveContextPublish(selectionGeneration, {
+      active: { project_id: el("projectSelect").value || null, session_id: null, run_id: null },
+      transcript_cursor: 0,
+      last_event_id: null,
+      selected_artifact_id: null,
+      selected_view: "new-task",
+      composer_draft: el("prompt").value,
+    }).catch(notify);
+  }
+  el("prompt").focus();
+}
+
+async function decide(action) {
+  if (remoteMode) { notify(new Error("Run decisions require the local authority surface.")); return; }
+  if (!app.currentRunId) return;
+  try {
+    await client.decide(app.currentRunId, action, actor);
+    addEntry(app.currentRunId, { kind: "system", text: `Decision recorded: ${action}.` });
+    await refreshState({ preserveInspector: false });
+  } catch (error) { notify(error); }
+}
+
+el("runList").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-run-id]");
+  if (button) selectRun(button.dataset.runId).catch(notify);
+});
+el("messages").addEventListener("click", async (event) => {
+  const answerButton = event.target.closest("[data-question-index]");
+  const permissionButton = event.target.closest("[data-permission-index]");
+  try {
+    if (answerButton) {
+      const entry = transcript(app.currentRunId)[Number(answerButton.dataset.questionIndex)];
+      let answer = answerButton.dataset.answer;
+      if (answer === "__custom__") answer = window.prompt("Answer the agent question:")?.trim();
+      if (answer) await client.answer(app.currentSessionId, entry.data.id, [[answer]], actor, undefined, app.currentRunId);
+    } else if (permissionButton) {
+      const entry = transcript(app.currentRunId)[Number(permissionButton.dataset.permissionIndex)];
+      await client.permission(app.currentSessionId, entry.data.id, permissionButton.dataset.reply, actor, undefined, app.currentRunId);
+    }
+  } catch (error) { notify(error); }
+});
+el("inspectorBody").addEventListener("click", async (event) => {
+  const selectConnectedApp = event.target.closest("[data-connected-app-select]");
+  if (selectConnectedApp) {
+    if (remoteMode) return;
+    try {
+      const next = new Set(app.envelope?.connected_app_ids || []);
+      if (selectConnectedApp.checked) next.add(selectConnectedApp.dataset.connectedAppSelect);
+      else next.delete(selectConnectedApp.dataset.connectedAppSelect);
+      await patchEnvelope({ connected_app_ids: [...next].sort() });
+      renderConnectedAppsSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-connected-app-create]")) {
+    try {
+      await client.createConnectedApp({
+        id: el("connectedAppId").value.trim(),
+        displayName: el("connectedAppName").value.trim(),
+        resourceUrl: el("connectedAppUrl").value.trim(),
+        scopes: el("connectedAppScopes").value.trim().split(/\s+/).filter(Boolean),
+      });
+      await refreshConnectedApps();
+      renderConnectedAppsSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  const authorizeConnectedApp = event.target.closest("[data-connected-app-authorize]");
+  if (authorizeConnectedApp) {
+    try {
+      const started = await client.startConnectedAppOAuth(authorizeConnectedApp.dataset.connectedAppAuthorize, 300_000);
+      location.assign(started.authorizationUrl);
+    } catch (error) { notify(error); }
+    return;
+  }
+  const refreshConnectedApp = event.target.closest("[data-connected-app-refresh]");
+  if (refreshConnectedApp) {
+    try {
+      await client.refreshConnectedApp(refreshConnectedApp.dataset.connectedAppRefresh);
+      await refreshConnectedApps();
+      renderConnectedAppsSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  const revokeConnectedApp = event.target.closest("[data-connected-app-revoke]");
+  if (revokeConnectedApp) {
+    try {
+      await client.revokeConnectedApp(revokeConnectedApp.dataset.connectedAppRevoke);
+      await refreshConnectedApps();
+      renderConnectedAppsSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-model-apply]")) {
+    try { startModelChat(); } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-connector-refresh]")) {
+    try { await refreshConnectors(); renderModelSettings({ publish: false }); } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-connector-create]")) {
+    try {
+      const input = connectorProfileInput({
+        id: el("connectorId").value, displayName: el("connectorName").value,
+        provider: el("connectorProvider").value, baseUrl: el("connectorBaseUrl").value,
+        authorizationUrl: el("connectorAuthorizationUrl").value, tokenUrl: el("connectorTokenUrl").value,
+        clientId: el("connectorClientId").value, clientSecret: el("connectorClientSecret").value,
+        scopes: el("connectorScopes").value,
+      });
+      const created = await client.createConnector(input);
+      el("connectorClientSecret").value = "";
+      app.modelRoute = { ...app.modelRoute, connectorId: created.id, credentialRef: null, provider: created.provider, baseUrl: created.baseUrl };
+      await refreshConnectors(null);
+      renderModelSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-connector-store-key]")) {
+    try {
+      const profile = app.connectors.find((item) => item.id === el("modelConnector").value);
+      const apiKey = el("modelApiKey").value.trim();
+      if (!profile || !apiKey) throw new Error("Select a connector and enter its API key.");
+      const stored = await client.storeConnectorApiKey(profile.id, apiKey);
+      el("modelApiKey").value = "";
+      await refreshConnectors(stored.credentialRef);
+      const refreshed = app.connectors.find((item) => item.id === profile.id);
+      await selectConnector(refreshed, stored.credentialRef);
+      renderModelSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-connector-oauth]")) {
+    try {
+      const profile = app.connectors.find((item) => item.id === el("modelConnector").value);
+      if (!profile?.authorizationUrl) throw new Error("Selected connector is not configured for OAuth.");
+      const redirect = new URL(location.href);
+      redirect.hash = ""; redirect.search = "?settings=model";
+      const started = await client.startConnectorOAuth(profile.id, redirect.href, 300_000);
+      location.assign(started.authorizationUrl);
+    } catch (error) { notify(error); }
+    return;
+  }
+  if (event.target.closest("[data-connector-revoke]")) {
+    try {
+      const profile = app.connectors.find((item) => item.id === el("modelConnector").value);
+      if (!profile) throw new Error("Select a connector to revoke.");
+      await client.revokeConnector(profile.id);
+      if (app.modelRoute.credentialRef === profile.credentialRef) {
+        app.modelRoute = { ...app.modelRoute, credentialRef: null, connectorId: null };
+        await patchEnvelope({ model_route: { credential_ref: null } });
+      }
+      await refreshConnectors(null);
+      renderModelSettings({ publish: false });
+    } catch (error) { notify(error); }
+    return;
+  }
+  const card = event.target.closest("[data-artifact-role]");
+  if (!card || !app.currentRunId) return;
+  try {
+    const content = await client.artifact(app.currentRunId, card.dataset.artifactRole);
+    addEntry(app.currentRunId, { kind: "event", title: `Artifact: ${card.dataset.artifactRole}`, text: typeof content === "string" ? content : JSON.stringify(content, null, 2) });
+    const detail = await client.run(app.currentRunId);
+    const artifact = (detail.artifacts || []).find((item) => item.role === card.dataset.artifactRole);
+    if (artifact) {
+      app.restoredArtifactId = artifact.id;
+      await patchEnvelope({ selected_artifact_id: artifact.id, selected_view: "artifact" });
+    }
+  } catch (error) { notify(error); }
+});
+el("inspectorBody").addEventListener("change", async (event) => {
+  if (event.target.id !== "modelConnector") return;
+  try {
+    const profile = app.connectors.find((item) => item.id === event.target.value);
+    if (!profile) {
+      app.modelRoute = { ...app.modelRoute, credentialRef: null, connectorId: null };
+      await patchEnvelope({ model_route: { credential_ref: null } });
+    } else if (profile.credentialRef) {
+      await selectConnector(profile);
+    } else {
+      app.modelRoute = { ...app.modelRoute, connectorId: profile.id, credentialRef: null, provider: profile.provider, baseUrl: profile.baseUrl };
+    }
+    renderModelSettings({ publish: false });
+  } catch (error) { notify(error); }
+});
+el("newTask").addEventListener("click", startNewTask);
+async function clearActiveHandoff() {
+  const id = app.activeHandoffId;
+  if (id) {
+    try { await client.revokeExperienceHandoff(id); }
+    catch (error) { if (!(error instanceof FloydApiError) || error.status !== 404) throw error; }
+  }
+  // Clear the only retry handle only after Core confirms revocation (or says
+  // the grant no longer exists). A network failure leaves the dialog usable.
+  app.activeHandoffId = null;
+  app.activeHandoffLink = null;
+  if (app.handoffObjectUrl) URL.revokeObjectURL(app.handoffObjectUrl);
+  app.handoffObjectUrl = null;
+  el("handoffQr").removeAttribute("src");
+}
+
+function bestEffortRevokeActiveHandoff(fetchImpl = globalThis.fetch.bind(globalThis)) {
+  const id = app.activeHandoffId;
+  if (!id) return null;
+  app.activeHandoffId = null;
+  app.activeHandoffLink = null;
+  const request = fetchImpl(`/api/handoffs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: token() ? { authorization: `Bearer ${token()}` } : {},
+    credentials: "same-origin",
+    keepalive: true,
+  });
+  request.catch(() => {});
+  return request;
+}
+
+function teardownCockpit() {
+  app.streamAbort?.abort();
+  app.envelopeAbort?.abort();
+  app.artifactAbort?.abort();
+  app.surfaceAbort?.abort();
+  clearPendingCursorSave();
+  bestEffortRevokeActiveHandoff();
+}
+el("shareHandoff").addEventListener("click", async () => {
+  if (remoteMode) return;
+  try {
+    await clearActiveHandoff();
+    if (!app.envelope) await initializeExperience();
+    const handoff = await client.issueExperienceHandoff({
+      envelope_id: envelopeId,
+      envelope_revision: app.envelope.revision,
+      ttl_ms: 120_000,
+    });
+    app.activeHandoffId = handoff.handoff_id;
+    app.activeHandoffLink = handoff.deep_link;
+    app.handoffObjectUrl = URL.createObjectURL(new Blob([handoff.qr_svg], { type: "image/svg+xml" }));
+    el("handoffQr").src = app.handoffObjectUrl;
+    el("handoffDialog").showModal();
+  } catch (error) { notify(error); }
+});
+el("copyHandoff").addEventListener("click", async () => {
+  if (!app.activeHandoffLink) return;
+  try { await navigator.clipboard.writeText(app.activeHandoffLink); }
+  catch (error) { notify(error); }
+});
+async function closeHandoff() {
+  try {
+    await clearActiveHandoff();
+    el("handoffDialog").close();
+  } catch (error) { notify(error); }
+}
+el("closeHandoff").addEventListener("click", closeHandoff);
+el("handoffDialog").addEventListener("cancel", (event) => { event.preventDefault(); void closeHandoff(); });
+el("surfaceHub").addEventListener("click", () => {
+  void enqueueSurfaceNavigation(closeIntegratedSurface).then(async () => {
+    // The module installs this handler before its initial top-level await has
+    // necessarily restored Core. Never render project-only fallback state over
+    // a valid session/run handoff when the workspace is opened immediately.
+    if (app.experienceReady) await app.experienceReady;
+    await restoreEnvelope(await client.experience(envelopeId));
+    renderSurfaceHub();
+    el("surfaceDialog").showModal();
+    await verifySurfaceTargets();
+  }).catch(notify);
+});
+el("closeSurfaceHub").addEventListener("click", () => void enqueueSurfaceNavigation(closeSurfaceWorkspace).catch(notify));
+el("surfaceDialog").addEventListener("cancel", (event) => { event.preventDefault(); void enqueueSurfaceNavigation(closeSurfaceWorkspace).catch(notify); });
+el("surfaceStageBack").addEventListener("click", () => void enqueueSurfaceNavigation(closeIntegratedSurface).catch(notify));
+el("surfaceStageExternal").addEventListener("click", () => {
+  const target = el("surfaceStageExternal").dataset.target;
+  if (target) window.open(target, "_blank", "noopener,noreferrer");
+});
+el("surfaceTabs").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-surface-tab]");
+  if (!button) return;
+  const surface = FLOYD_SURFACES.find((item) => item.id === button.dataset.surfaceTab);
+  if (!surface) return;
+  void enqueueSurfaceNavigation(() => openIntegratedSurface(surface)).catch(notify);
+});
+el("surfaceGrid").addEventListener("click", async (event) => {
+  const openButton = event.target.closest("[data-surface-open]");
+  const copyButton = event.target.closest("[data-surface-copy]");
+  const surfaceId = openButton?.dataset.surfaceOpen || copyButton?.dataset.surfaceCopy;
+  if (!surfaceId) return;
+  const surface = FLOYD_SURFACES.find((item) => item.id === surfaceId);
+  if (!surface) return;
+  try {
+    const target = surfaceLaunchTarget(surface, activeSurfaceProject());
+    const remoteTui = remoteMode && surface.id === "tui" && integratedSurfaceTarget(surface);
+    if (!target && !remoteTui) throw new Error("Select an active project before opening the TUI continuation.");
+    if (openButton) {
+      await enqueueSurfaceNavigation(() => openIntegratedSurface(surface));
+    }
+    else await navigator.clipboard.writeText(target);
+  } catch (error) { notify(error); }
+});
+el("modelSettings").addEventListener("click", () => remoteMode ? notify(new Error("Provider settings require the local authority surface.")) : openModelSettings().catch(notify));
+el("connectedApps").addEventListener("click", () => openConnectedApps().catch(notify));
+el("modeButton").addEventListener("click", () => {
+  if (remoteMode) return;
+  if (app.mode === "model") { startNewTask(); return; }
+  if (!app.currentRunId) return;
+  app.mode = app.mode === "new" ? "steer" : "new";
+  el("modeButton").textContent = app.mode === "new" ? "Mode: new run" : "Mode: guide active run";
+});
+el("send").addEventListener("click", sendPrompt);
+el("prompt").addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); sendPrompt(); }
+});
+el("prompt").addEventListener("input", (event) => scheduleDraftSave(event.target.value));
+el("acceptRun").addEventListener("click", () => decide("accept"));
+el("rejectRun").addEventListener("click", () => decide("reject"));
+el("escalateRun").addEventListener("click", () => decide("escalate"));
+window.addEventListener("pagehide", teardownCockpit);
+window.addEventListener("beforeunload", teardownCockpit);
+
+setInterval(() => { el("clock").textContent = new Date().toLocaleTimeString(); }, 1000);
+setInterval(refreshHealth, 5000);
+app.refreshTimer = setInterval(() => refreshState(), 3500);
+if (remoteMode) {
+  el("boundaryLabel").textContent = "Private remote continuation";
+  for (const id of ["newTask", "modelSettings", "shareHandoff", "acceptRun", "rejectRun", "escalateRun"]) el(id).disabled = true;
+  el("modeButton").disabled = true;
+}
+async function confirmRemoteDeviceSession() {
+  let lastError;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await client.request("GET", "/api/health");
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof FloydApiError) || ![401, 403].includes(error.status) || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+if (remoteMode && handoffToken) {
+  try {
+    try { await client.pairExperienceHandoff(handoffToken); }
+    catch (error) {
+      // A dropped response may arrive after Core committed the pairing. The
+      // endpoint is idempotent for this handoff, so one bounded retry recovers
+      // the exact same session instead of creating another device.
+      if (error instanceof FloydApiError && error.status < 500) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await client.pairExperienceHandoff(handoffToken);
+    }
+    await confirmRemoteDeviceSession();
+  }
+  catch (error) { notify(error); }
+}
+if (!remoteMode && bootstrapToken) {
+  try { await establishLocalBrowserSession(); }
+  catch (error) { notify(error); }
+}
+await refreshHealth();
+await refreshState();
+app.experienceReady = initializeExperience();
+try { await app.experienceReady; } catch (error) { if (!remoteMode || token()) notify(error); }
+try { await completeOAuthCallback(); } catch (error) { notify(error); }
+if (query.get("settings") === "model") openModelSettings().catch(notify);
+if (query.get("settings") === "connections") {
+  openConnectedApps().then(() => {
+    if (query.get("connection_error")) notify(new Error(`Connected-app OAuth failed: ${query.get("connection_error")}`));
+    const clean = new URLSearchParams(location.search);
+    clean.delete("connected_app"); clean.delete("connection_error");
+    history.replaceState({}, "", `${location.pathname}?${clean.toString()}`);
+  }).catch(notify);
+}
+</script>
+</body>
+</html>

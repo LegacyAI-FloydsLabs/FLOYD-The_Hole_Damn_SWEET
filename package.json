@@ -1,0 +1,29 @@
+{
+  "name": "floyd",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FLOYD workstation \u2014 Floyd Core durable authority + managed OpenCode engine",
+  "type": "module",
+  "workspaces": [
+    "packages/contracts",
+    "packages/sdk",
+    "engines/opencode",
+    "core/daemon",
+    "clients/cli"
+  ],
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "typecheck": "node scripts/ensure-deps.mjs && tsc -b packages/contracts packages/sdk engines/opencode core/daemon clients/cli",
+    "test": "node --test \"packages/sdk/test/*.test.*\" \"engines/opencode/test/*.test.ts\" \"core/daemon/test/*.test.ts\" \"clients/cli/test/*.test.ts\"",
+    "verify:surfaces": "sh scripts/verify-active-surfaces.sh",
+    "core:install": "sh scripts/install-core-launch-agent.sh",
+    "core": "node core/daemon/src/main.ts",
+    "cli": "node clients/cli/src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>FLOYD</title>
+<link rel="icon" type="image/svg+xml" href="/assets/floyd-icon.svg">
+<link rel="apple-touch-icon" href="/assets/floyd-icon.svg">
+<style>
+  :root {
+    --bg: #08090c; --panel: #101218; --panel-2: #171a22; --line: #232734;
+    --text: #e8eaf0; --muted: #9aa1b2; --faint: #5c6374; --accent: #22d3ee;
+    --drawer-closed: 68px; --drawer-open: 288px;
+    --spring: cubic-bezier(.2, 1.4, .3, 1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  @media (prefers-reduced-motion: reduce) { :root { --spring: linear; } * { transition-duration: .01ms !important; } }
+
+  /* ---------- background stage (the base frame is nothing but this) ---------- */
+  .stage { position: fixed; inset: 0; }
+  .stage-bg { position: absolute; inset: 0; background: var(--bg) center / contain no-repeat; transition: background-image .4s ease, opacity .4s ease; }
+  /* Opaque surface: background art must never show through a loaded app. */
+  .stage-frame { position: absolute; inset: 0; border: 0; width: 100%; height: 100%; background: var(--bg); display: none; }
+  .stage-frame.active { display: block; }
+
+  /* ---------- spring-loaded hover drawer ---------- */
+  .drawer { position: fixed; z-index: 40; top: 0; left: 0; bottom: 0; width: var(--drawer-closed);
+    background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(18px);
+    border-right: 1px solid var(--line); overflow: hidden;
+    transition: width .45s var(--spring); display: flex; flex-direction: column; }
+  .drawer.open { width: var(--drawer-open); box-shadow: 24px 0 60px rgba(0,0,0,.45); }
+  .drawer-head { display: flex; align-items: center; gap: 12px; padding: 18px 16px; min-height: 64px; }
+  .mark { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; overflow: hidden; }
+  .mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .wordmark { font-weight: 700; letter-spacing: .14em; white-space: nowrap; opacity: 0; transform: translateX(-8px); transition: opacity .3s ease .08s, transform .45s var(--spring) .05s; }
+  .drawer.open .wordmark { opacity: 1; transform: none; }
+  .apps { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px; display: flex; flex-direction: column; gap: 8px; scrollbar-width: thin; }
+  .app { display: flex; align-items: center; gap: 12px; width: 100%; border: 1px solid transparent; border-radius: 12px;
+    padding: 9px; background: transparent; color: var(--text); cursor: pointer; text-align: left; min-height: 56px;
+    transition: background .18s ease, border-color .18s ease, transform .3s var(--spring); }
+  .app:hover { background: var(--panel-2); transform: translateX(2px); }
+  .app.active { border-color: var(--app-accent, var(--accent)); background: var(--panel-2); }
+  .app-icon { width: 38px; height: 38px; flex: 0 0 38px; border-radius: 9px; border: 1px solid var(--line); display: grid; place-items: center;
+    color: var(--app-accent, var(--accent)); font: 700 13px ui-monospace, monospace; background: #0b0d12; position: relative; overflow: visible; }
+  .app-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+  .app-quit { display: none; margin-left: auto; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--muted); font: 700 12px ui-monospace, monospace; cursor: pointer; place-items: center; }
+  .drawer.open .app.up .app-quit { display: grid; }
+  .app-quit:hover { border-color: #f87171; color: #f87171; }
+  .app-dot { position: absolute; right: -3px; top: -3px; width: 9px; height: 9px; border-radius: 50%; background: #333a48; border: 2px solid var(--panel); }
+  .app.up .app-dot { background: #34d399; }
+  .app-meta { min-width: 0; opacity: 0; transform: translateX(-10px); transition: opacity .25s ease .1s, transform .45s var(--spring) .07s; }
+  .drawer.open .app-meta { opacity: 1; transform: none; }
+  .app-meta strong { display: block; font-size: 13px; letter-spacing: .04em; white-space: nowrap; }
+  .app-meta span { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .drawer-foot { padding: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+
+  /* stage shifts with the drawer edge in tablet; desktop chrome fully hides */
+  .stage { left: 0; transition: left .45s var(--spring); }
+  body[data-vertical="tablet"] .stage { left: var(--drawer-closed); }
+
+  .titlebar { position: fixed; z-index: 30; top: 0; right: 0; left: var(--drawer-closed); height: 64px;
+    display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    background: color-mix(in srgb, var(--panel) 66%, transparent); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line);
+    transition: left .45s var(--spring), opacity .3s ease; }
+  .titlebar .brand { height: 48px; width: 48px; flex: 0 0 48px; border-radius: 10px; object-fit: cover; border: 1px solid var(--line); }
+  .titlebar .app-name { font: 600 15px ui-monospace, monospace; letter-spacing: .1em; color: var(--muted); white-space: nowrap; }
+  .titlebar .spacer { flex: 0 0 8px; }
+  /* Chips share the whole remaining bar width equally — big targets, big text. */
+  .chip { flex: 1 1 0; min-width: 0; min-height: 46px; border: 1px solid var(--line); background: transparent; color: var(--muted);
+    border-radius: 10px; padding: 10px 14px; font: 600 16px ui-monospace, monospace; letter-spacing: .04em; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip:hover { color: var(--text); border-color: var(--faint); background: var(--panel-2); }
+  /* Compact chips (panel close buttons etc.) keep their natural size. */
+  .keys-head .chip, .chrono-head .chip { flex: 0 0 auto; min-height: 0; padding: 5px 11px; font: 12px ui-monospace, monospace; }
+  body[data-chrome="hidden"] .titlebar { opacity: 0; pointer-events: none; }
+
+  /* ---------- desktop: all chrome vanishes until the pointer hovers an edge ---------- */
+  body[data-vertical="desktop"] .drawer { transform: translateX(-105%); transition: transform .45s var(--spring), width .45s var(--spring); }
+  body[data-vertical="desktop"] .drawer.open { transform: none; }
+  body[data-vertical="desktop"] .titlebar { left: 0; transform: translateY(-105%); transition: transform .45s var(--spring), left .45s var(--spring), opacity .3s ease; }
+  body[data-vertical="desktop"] .titlebar.reveal { transform: none; }
+  .edge-hot { position: fixed; z-index: 46; display: none; background: transparent; }
+  body[data-vertical="desktop"] .edge-hot { display: block; }
+  #edgeLeft { top: 0; bottom: 0; left: 0; width: 12px; }
+  #edgeTop { top: 0; left: 0; right: 0; height: 10px; }
+  body[data-app="home"] .titlebar { opacity: 0; pointer-events: none; }
+
+  /* ---------- mobile vertical: bottom nav, no hover ---------- */
+  body[data-vertical="mobile"] .drawer { display: none; }
+  body[data-vertical="mobile"] .stage { left: 0; }
+  body[data-vertical="mobile"] .titlebar { left: 0; padding-top: env(safe-area-inset-top); height: calc(64px + env(safe-area-inset-top)); }
+  .bottomnav { display: none; }
+  body[data-vertical="mobile"] .bottomnav { position: fixed; z-index: 40; left: 0; right: 0; bottom: 0; display: flex;
+    background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(18px); border-top: 1px solid var(--line);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
+  .bottomnav button { flex: 1; min-height: 48px; background: none; border: 0; color: var(--muted); font: 10px ui-monospace, monospace; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; border-radius: 10px; }
+  .bottomnav button.active { color: var(--accent); background: var(--panel-2); }
+  .bottomnav .glyph { font-size: 16px; font-weight: 700; }
+  .sheet { position: fixed; z-index: 50; left: 0; right: 0; bottom: 0; transform: translateY(105%); transition: transform .45s var(--spring);
+    background: var(--panel); border-radius: 18px 18px 0 0; border: 1px solid var(--line); max-height: 35dvh; overflow-y: auto; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); display: none; }
+  body[data-vertical="mobile"] .sheet { display: block; }
+  .sheet.open { transform: none; }
+  .sheet h2 { font-size: 13px; letter-spacing: .1em; color: var(--muted); margin-bottom: 10px; }
+
+  /* ---------- home hint ---------- */
+  .hint { position: fixed; z-index: 10; bottom: 26px; left: 50%; transform: translateX(-50%); color: var(--faint); font: 11px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; opacity: .8; pointer-events: none; }
+  body:not([data-app="home"]) .hint { display: none; }
+  .toast { position: fixed; z-index: 60; right: 16px; bottom: 16px; max-width: 420px; background: var(--panel-2); border: 1px solid #7f1d1d; border-radius: 9px; padding: 10px 13px; font: 12px ui-monospace, monospace; display: none; }
+  .toast.show { display: block; }
+  /* Full-screen loading is only used when NOTHING is on stage (home -> app).
+     Once any app is visible, launches use the corner chip instead so no
+     background art ever obstructs a loaded app. */
+  .loading { position: fixed; z-index: 20; inset: 0; display: none; color: var(--text); font: 12px ui-monospace, monospace; letter-spacing: .12em;
+    background: #08090c center / contain no-repeat; }
+  .loading span { position: absolute; right: 16px; bottom: 16px; background: rgba(8,9,12,.72); border: 1px solid var(--line); border-radius: 9px; padding: 8px 16px; }
+  .loading.show { display: block; }
+  .loading.corner { inset: auto 16px 16px auto; display: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px; z-index: 60; }
+  .loading.corner.show { display: block; }
+  .loading.corner span { position: static; background: none; border: 0; padding: 0; }
+
+  /* ---------- splash (initial boot) ---------- */
+  .splash { position: fixed; z-index: 100; inset: 0; display: block;
+    background: #08090c center / contain no-repeat;
+    transition: opacity .9s ease; }
+  .splash.gone { opacity: 0; pointer-events: none; }
+  /* Corner chip, off the artwork — never centered over the banner. */
+  .splash .boot { position: absolute; right: 16px; bottom: 16px; color: var(--muted); font: 12px ui-monospace, monospace; letter-spacing: .18em; text-transform: uppercase;
+    background: rgba(8,9,12,.72); border: 1px solid var(--line); border-radius: 9px; padding: 8px 16px;
+    display: flex; align-items: center; gap: 10px; }
+  .splash .boot::after { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--faint); border-top-color: var(--accent); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* ---------- chrono panel ---------- */
+  .chrono { position: fixed; z-index: 45; top: 0; right: 0; bottom: 0; width: 380px; transform: translateX(105%);
+    background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(18px);
+    border-left: 1px solid var(--line); transition: transform .45s var(--spring); display: flex; flex-direction: column; }
+  .chrono.open { transform: none; box-shadow: -24px 0 60px rgba(0,0,0,.45); }
+  .chrono-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .chrono-head strong { font: 700 13px ui-monospace, monospace; letter-spacing: .12em; }
+  .chrono-head select { margin-left: auto; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: 12px ui-monospace, monospace; }
+  .chrono-body { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 14px; scrollbar-width: thin; }
+  .chrono h3 { font: 700 11px ui-monospace, monospace; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+  .chrono-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chrono-row input { flex: 1; min-width: 120px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; font: 12px ui-monospace, monospace; }
+  .cbtn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 7px; padding: 6px 11px; font: 12px ui-monospace, monospace; cursor: pointer; white-space: nowrap; }
+  .cbtn:hover { border-color: var(--accent); }
+  .cbtn.danger:hover { border-color: #f87171; color: #f87171; }
+  .cbtn:disabled { opacity: .4; cursor: default; }
+  .timeline { display: flex; flex-direction: column; gap: 0; }
+  .tl-item { display: flex; gap: 10px; padding: 5px 0; font: 12px ui-monospace, monospace; align-items: baseline; }
+  .tl-item .sha { color: var(--accent); cursor: pointer; }
+  .tl-item .sha:hover { text-decoration: underline; }
+  .tl-item .t { color: var(--faint); }
+  .tl-item .s { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fork-item { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; font: 12px ui-monospace, monospace; }
+  .fork-item .frow { display: flex; gap: 8px; align-items: center; }
+  .fork-item .fname { font-weight: 700; color: var(--accent); }
+  .fork-item .fstat { color: var(--muted); font-size: 11px; }
+  .chrono-out { background: #0b0d12; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: 11px ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+  .chrono-out:empty { display: none; }
+
+  /* ---------- API keys panel ---------- */
+  .keys { position: fixed; z-index: 45; top: 0; right: 0; bottom: 0; width: 420px; max-width: 100vw; transform: translateX(105%);
+    background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(18px);
+    border-left: 1px solid var(--line); transition: transform .45s var(--spring); display: flex; flex-direction: column; }
+  .keys.open { transform: none; box-shadow: -24px 0 60px rgba(0,0,0,.45); }
+  .keys-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .keys-head strong { font: 700 13px ui-monospace, monospace; letter-spacing: .12em; }
+  .keys-head .chip { margin-left: auto; }
+  .keys-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; scrollbar-width: thin; }
+  .keys-paste { display: flex; flex-direction: column; gap: 8px; }
+  .keys-paste label { font: 700 11px ui-monospace, monospace; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; }
+  .keys-paste .row { display: flex; gap: 8px; }
+  .keys-paste input { flex: 1; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 9px;
+    padding: 11px 12px; font: 13px ui-monospace, monospace; }
+  .keys-paste input:focus { outline: none; border-color: var(--accent); }
+  .keys-paste .detect { font: 12px ui-monospace, monospace; color: var(--muted); min-height: 18px; }
+  .keys-paste .detect .vendor { color: var(--accent); font-weight: 700; }
+  .keys-paste select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; font: 13px ui-monospace, monospace; }
+  .keys-save { border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text);
+    border-radius: 9px; padding: 11px 16px; font: 700 13px ui-monospace, monospace; letter-spacing: .06em; cursor: pointer; }
+  .keys-save:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  .keys-save:disabled { opacity: .45; cursor: default; }
+  .keys-msg { font: 12px ui-monospace, monospace; min-height: 18px; }
+  .keys-msg.ok { color: #34d399; }
+  .keys-msg.err { color: #f87171; }
+  .keys-list { display: flex; flex-direction: column; gap: 8px; }
+  .key-item { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; flex-wrap: wrap; }
+  .key-item .k-dot { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #333a48; }
+  .key-item.configured .k-dot { background: #34d399; }
+  .key-item .k-meta { min-width: 0; flex: 1; }
+  .key-item .k-meta strong { display: block; font-size: 13px; }
+  .key-item .k-meta span { display: block; font: 11px ui-monospace, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .key-item .k-endpoint { flex-basis: 100%; display: flex; align-items: center; gap: 6px; font: 10px ui-monospace, monospace; color: var(--faint); min-width: 0; }
+  .key-item .k-endpoint .ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .key-item .k-endpoint .ep.custom { color: var(--accent); }
+  .key-item .k-endpoint button { flex: 0 0 auto; border: 0; background: none; color: var(--faint); font: 10px ui-monospace, monospace; cursor: pointer; text-decoration: underline; padding: 0; }
+  .key-item .k-endpoint button:hover { color: var(--text); }
+  .key-item .k-ep-edit { flex-basis: 100%; display: flex; gap: 6px; }
+  .key-item .k-ep-edit input { flex: 1; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: 11px ui-monospace, monospace; }
+  .key-item .k-ep-edit input:focus { outline: none; border-color: var(--accent); }
+  .key-item .k-get { font: 11px ui-monospace, monospace; color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .key-item .k-get:hover { text-decoration: underline; }
+  .key-item .k-del { flex: 0 0 24px; width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line); background: transparent;
+    color: var(--muted); font: 700 12px ui-monospace, monospace; cursor: pointer; }
+  .key-item .k-del:hover { border-color: #f87171; color: #f87171; }
+  .keys-note { font: 11px ui-monospace, monospace; color: var(--faint); line-height: 1.6; }
+  @media (max-width: 520px) { .keys { width: 100vw; } }
+</style>
+</head>
+<body data-vertical="desktop" data-app="home" data-chrome="visible">
+
+<div class="stage">
+  <div class="stage-bg" id="stageBg"></div>
+  <div class="loading" id="loading"><span>LAUNCHING…</span></div>
+  <!-- iframes are created per app and kept alive so switching apps never loses state -->
+  <div id="frames" style="position:absolute; inset:0;"></div>
+</div>
+
+<header class="titlebar" id="titlebar">
+  <img class="brand" src="/assets/floyd-labs-logo.png" alt="Floyd's Labs">
+  <span class="app-name" id="titleAppName"></span>
+  <span class="spacer"></span>
+  <button class="chip" id="chipChrono" title="Chrono sandbox: snapshots, rewinds, forks">⏱ Chrono</button>
+  <button class="chip" id="chipKeys" title="Vendor API keys: paste once, every app gets them">🔑 Keys</button>
+  <button class="chip" id="chipTerminal" title="Summon TerminalOne">Terminal</button>
+  <button class="chip" id="chipBrowser" title="Open Chrome with Floyd TTY Bridge">Browser</button>
+  <button class="chip" id="chipBg" title="Cycle background">BG</button>
+  <button class="chip" id="chipHome" title="Back to the frame">Home</button>
+</header>
+
+<div class="edge-hot" id="edgeLeft" aria-hidden="true"></div>
+<div class="edge-hot" id="edgeTop" aria-hidden="true"></div>
+<nav class="drawer" id="drawer" aria-label="Floyd apps">
+  <div class="drawer-head"><div class="mark"><img src="/assets/floyd-labs-logo.png" alt="Floyd's Labs"></div><div class="wordmark">FLOYD'S LABS</div></div>
+  <div class="apps" id="appList"></div>
+  <div class="drawer-foot">
+    <button class="app" id="settingsBtn" style="min-height:44px"><div class="app-icon">⚙</div><div class="app-meta"><strong>Settings</strong><span>Background · verticals</span></div></button>
+  </div>
+</nav>
+
+<nav class="bottomnav" id="bottomnav" aria-label="Floyd apps (mobile)"></nav>
+<div class="sheet" id="mobileSheet"><h2>ALL APPS</h2><div id="sheetList" class="apps" style="padding:0"></div></div>
+
+<div class="splash" id="splash"><div class="boot">FLOYD · BOOTING</div></div>
+<div class="hint">hover the left edge · apps drawer</div>
+
+<aside class="chrono" id="chronoPanel" aria-label="Chrono sandbox">
+  <div class="chrono-head">
+    <strong>⏱ CHRONO</strong>
+    <select id="chronoSurface" title="Target surface repo"></select>
+    <button class="chip" id="chronoClose">×</button>
+  </div>
+  <div class="chrono-body">
+    <section>
+      <h3>Timeline</h3>
+      <div class="chrono-row" style="margin-bottom:8px">
+        <input id="snapMsg" placeholder="snapshot message (optional)" maxlength="120">
+        <button class="cbtn" id="btnSnapshot">Snapshot</button>
+      </div>
+      <div class="timeline" id="chronoTimeline"></div>
+    </section>
+    <section>
+      <h3>Forks (parallel timelines)</h3>
+      <div class="chrono-row" style="margin-bottom:8px">
+        <input id="forkNames" placeholder="names: model-a, model-b" maxlength="120">
+        <button class="cbtn" id="btnFork">Fork</button>
+      </div>
+      <div id="chronoForks" style="display:flex;flex-direction:column;gap:8px"></div>
+    </section>
+    <section>
+      <h3>Ledger</h3>
+      <div id="chronoLedger" class="timeline"></div>
+    </section>
+    <section>
+      <h3>Output</h3>
+      <div class="chrono-out" id="chronoOut"></div>
+    </section>
+  </div>
+</aside>
+<div class="toast" id="toast" role="alert"></div>
+
+<aside class="keys" id="keysPanel" aria-label="Vendor API keys">
+  <div class="keys-head">
+    <strong>🔑 API KEYS</strong>
+    <button class="chip" id="keysClose">×</button>
+  </div>
+  <div class="keys-body">
+    <section class="keys-paste">
+      <label for="keyInput">Paste any vendor key — Floyd figures out whose it is</label>
+      <div class="row">
+        <input id="keyInput" type="password" placeholder="sk-… / AIza… / gsk_… / hf_… / ghp_…"
+               autocomplete="off" spellcheck="false" autocapitalize="off">
+        <button class="chip" id="keyReveal" title="Show / hide">👁</button>
+      </div>
+      <div class="detect" id="keyDetect"></div>
+      <select id="keyVendor" hidden></select>
+      <button class="keys-save" id="keySave" disabled>Save key</button>
+      <div class="keys-msg" id="keyMsg"></div>
+    </section>
+    <section>
+      <div class="keys-list" id="keysList"></div>
+    </section>
+    <p class="keys-note">Keys are live-tested against the vendor before saving, stored only on this
+      machine (owner-read-only file), and handed to every Floyd app at launch as standard
+      environment variables. They never appear unmasked again. Restart a running app
+      (shift-click its × in the drawer, then reopen) to feed it a new key.</p>
+  </div>
+</aside>
+
+<script type="module">
+/* ============ shared logic layer (never forked per vertical) ============ */
+const el = (id) => document.getElementById(id);
+/* The two Sweet Ecosystem banners alternate across splash, loads, switches
+   and home background so the art stays fresh without ever repeating twice. */
+const SWEET = ["sweet-ecosystem.png", "sweet-ecosystem-2.png"];
+let sweetIdx = Number(localStorage.getItem("floyd.sweetIdx") || 0) % SWEET.length;
+function nextSweet() {
+  sweetIdx = (sweetIdx + 1) % SWEET.length;
+  localStorage.setItem("floyd.sweetIdx", sweetIdx);
+  return SWEET[sweetIdx];
+}
+const BOOT_T0 = Date.now();
+const MIN_SPLASH_MS = 2200;
+const DEFAULT_BG = SWEET[sweetIdx];
+const state = {
+  registry: [], status: {}, backgrounds: [], bgFile: localStorage.getItem("floyd.bgFile") || DEFAULT_BG,
+  activeApp: localStorage.getItem("floyd.activeApp") || "home",
+  vertical: null, override: (() => {
+    // A stored mobile/tablet override must never survive on a desktop-capable
+    // machine (mouse + hover). Purge it so stale test state can't wreck layout.
+    const o = localStorage.getItem("floyd.verticalOverride");
+    if (o && o !== "desktop" && matchMedia("(any-pointer: fine)").matches && matchMedia("(any-hover: hover)").matches) {
+      localStorage.removeItem("floyd.verticalOverride");
+      return null;
+    }
+    return o;
+  })(),
+  frames: new Map(),
+};
+const toast = (msg) => { const t = el("toast"); t.textContent = String(msg); t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 6000); };
+
+/* ---- TVDS capability classification (capability-first, width tiebreaker) ---- */
+function classify() {
+  if (state.override) return state.override;
+  // Capability decides, never window size: a resized/non-fullscreen desktop
+  // browser window is still a desktop. any-pointer/any-hover so an attached
+  // touchscreen can't demote a mouse-driven machine.
+  const fine = matchMedia("(any-pointer: fine)").matches, hover = matchMedia("(any-hover: hover)").matches;
+  if (fine && hover) return "desktop";
+  // Safari on macOS can fail the pointer/hover media queries even on a real
+  // desktop. A Mac UA with no multi-touch is a genuine desktop; a Mac UA
+  // WITH multi-touch is an iPad masquerading as a Mac (tablet).
+  const macUA = /Mac/.test(navigator.userAgent);
+  if (macUA && navigator.maxTouchPoints <= 1) return "desktop";
+  if (macUA) return "tablet";
+  // Touch-only devices: physical screen size, not the window, picks the tier.
+  const smallest = Math.min(screen.width, screen.height);
+  return smallest >= 600 ? "tablet" : "mobile";
+}
+let classifyTimer;
+function applyVertical() {
+  const v = classify();
+  if (v === state.vertical) return;
+  state.vertical = v;
+  document.body.dataset.vertical = v;
+  // The ALL APPS sheet is a mobile-only surface; never leave it covering
+  // the stage after leaving mobile mode.
+  if (v !== "mobile") el("mobileSheet").classList.remove("open");
+  renderNav();
+}
+addEventListener("resize", () => { clearTimeout(classifyTimer); classifyTimer = setTimeout(applyVertical, 250); });
+
+/* ---- registry + status ---- */
+async function loadRegistry() {
+  const reg = await (await fetch("/api/registry")).json();
+  state.registry = reg.apps;
+  const st = await (await fetch("/api/status")).json();
+  state.status = st.apps; state.backgrounds = st.backgrounds;
+  applyBackground();
+  renderNav();
+}
+setInterval(async () => {
+  try { const st = await (await fetch("/api/status")).json(); state.status = st.apps; state.backgrounds = st.backgrounds; renderNav(); } catch {}
+}, 15000);
+/* heartbeat: tell the chrono daemon which app iframes are alive in this session */
+const beat = () => fetch("/api/heartbeat", { method: "POST", body: JSON.stringify({ apps: [...state.frames.keys()] }) }).catch(() => {});
+setInterval(beat, 60000);
+addEventListener("pagehide", beat);
+
+/* ---- background stage ---- */
+function applyBackground() {
+  if (!state.backgrounds.length) { el("stageBg").style.backgroundImage = ""; return; }
+  const file = state.backgrounds.includes(state.bgFile) ? state.bgFile : state.backgrounds[0];
+  el("stageBg").style.backgroundImage = `url(/backgrounds/${encodeURIComponent(file)})`;
+}
+function cycleBackground() {
+  if (!state.backgrounds.length) return toast("Drop a PNG/TIFF into apps/frame/backgrounds/");
+  const i = state.backgrounds.indexOf(state.bgFile);
+  state.bgFile = state.backgrounds[(i + 1) % state.backgrounds.length];
+  localStorage.setItem("floyd.bgFile", state.bgFile);
+  applyBackground();
+}
+
+/* ---- app launching: iframes persist so context is never lost on switch ---- */
+function setLoading(on) {
+  const box = el("loading");
+  if (!on) { box.classList.remove("show"); return; }
+  // Nothing on stage -> full-screen art (alternating). An app already visible
+  // -> corner chip only, so backgrounds never obstruct a loaded app.
+  const anyVisible = [...state.frames.values()].some((f) => f.classList.contains("active"));
+  box.classList.toggle("corner", anyVisible);
+  if (!anyVisible) box.style.backgroundImage = `url(/backgrounds/${encodeURIComponent(nextSweet())})`;
+  else box.style.backgroundImage = "";
+  box.classList.add("show");
+}
+async function openApp(id) {
+  if (id === "home") return activate("home");
+  const app = state.registry.find((a) => a.id === id);
+  if (!app) return;
+  if (app.kind === "action") {
+    try { await fetch(`/api/action/${app.action}`, { method: "POST", body: "{}" }); }
+    catch (e) { toast(e); }
+    return;
+  }
+  setLoading(true);
+  try {
+    const r = await (await fetch(`/api/launch/${id}`, { method: "POST" })).json();
+    if (r.managed && !r.up) throw new Error(`${app.name}: ${r.error || "failed to start"}`);
+    let frame = state.frames.get(id);
+    if (!frame) {
+      frame = document.createElement("iframe");
+      frame.className = "stage-frame";
+      frame.title = app.name;
+      const port = r.port ?? new URL(app.target).port;
+      // Remote visitors cannot reach 127.0.0.1 on this machine. A private overlay
+      // (WireGuard, cloudflared tunnel, etc.) is required for remote embedding.
+      // Tailscale has been removed from this system and the remote_port path is
+      // currently inactive. Any *.localhost name (e.g. floyd.localhost) is local by definition.
+      const h = location.hostname;
+      const remote = !(["127.0.0.1", "localhost", "::1", ""].includes(h) || h.endsWith(".localhost"));
+      frame.src = remote && app.remote_port
+        ? `https://${location.hostname}:${app.remote_port}/`
+        : (app.kind === "terminal" ? `http://127.0.0.1:${port}/` : app.target);
+      el("frames").appendChild(frame);
+      state.frames.set(id, frame);
+      // Wait for the app to actually render before revealing it — landing on a
+      // blank, still-loading surface feels broken. Cap the wait at 8s.
+      await new Promise((done) => {
+        frame.addEventListener("load", done, { once: true });
+        setTimeout(done, 8000);
+      });
+    }
+    activate(id);
+  } catch (e) { toast(e); }
+  finally { setLoading(false); }
+}
+function activate(id) {
+  state.activeApp = id;
+  localStorage.setItem("floyd.activeApp", id);
+  document.body.dataset.app = id;
+  for (const [fid, frame] of state.frames) frame.classList.toggle("active", fid === id);
+  const app = state.registry.find((a) => a.id === id);
+  el("titleAppName").textContent = app ? app.name : "";
+  // Returning home: rotate the stage art so the backdrop alternates too.
+  if (id === "home") { state.bgFile = nextSweet(); localStorage.setItem("floyd.bgFile", state.bgFile); applyBackground(); }
+  chronoFollowApp(id);
+  renderNav();
+}
+
+/* Chrono panel tracks the active app: selecting an app in the frame retargets
+   the chrono surface automatically (manual re-select still works until the
+   next app switch). */
+const CHRONO_APP_SURFACE = {
+  "cursem-ide": "ide",
+  "floyd-desktop": "desktop",
+  "browork": "desktop",
+  "harness-launcher": "launcher",
+  "floyd-code-cli": "pty",
+  "ohmyfloyd": "pty",
+  "terminalone": "pty",
+  "home": "workstation",
+};
+function chronoFollowApp(id) {
+  const surface = CHRONO_APP_SURFACE[id];
+  if (!surface) return;
+  const sel = el("chronoSurface");
+  if (!sel || sel.value === surface) return;
+  if (![...sel.options].some((o) => o.value === surface)) return;
+  sel.value = surface;
+  if (chrono.panel.classList.contains("open")) chronoRefresh();
+}
+
+/* ============ per-vertical presentation trees ============ */
+function appButton(app) {
+  const up = state.status[app.id]?.up;
+  const initials = app.name.replace(/FLOYD\s*/i, "").trim().slice(0, 2).toUpperCase() || "F";
+  const btn = document.createElement("button");
+  btn.className = `app ${up ? "up" : ""} ${state.activeApp === app.id ? "active" : ""}`;
+  btn.style.setProperty("--app-accent", app.accent || "#22d3ee");
+  btn.innerHTML = `<div class="app-icon">${initials}<img src="/assets/${app.id}.png" alt="" loading="lazy" onerror="this.remove()"><span class="app-dot"></span></div>
+    <div class="app-meta"><strong>${app.name}</strong><span>${app.subtitle ?? ""}</span></div>
+    <span class="app-quit" title="Detach ${app.name} (state preserved). Shift-click to force quit." role="button">×</span>`;
+  btn.addEventListener("click", () => openApp(app.id));
+  btn.querySelector(".app-quit").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!e.shiftKey) {
+      // Detach: hide the plane, keep the iframe and server process alive.
+      // State is never lost; reopening re-attaches instantly.
+      if (state.activeApp === app.id) activate("home");
+      toast(`${app.name} detached. State preserved — click to return.`);
+      renderNav();
+      return;
+    }
+    // Force quit (shift-click): stops the managed server and frees its port.
+    // Durable work lives in Floyd Core, not the plane, so this is recoverable.
+    if (!confirm(`Force quit ${app.name}? The app will stop and free its port. Durable work is preserved in Floyd Core; unsaved in-plane scratch state ends with the process.`)) return;
+    try {
+      const r = await (await fetch(`/api/quit/${app.id}`, { method: "POST" })).json();
+      if (!r.quit) throw new Error(r.error || "quit failed");
+      const frame = state.frames.get(app.id);
+      if (frame) { frame.remove(); state.frames.delete(app.id); }
+      if (state.activeApp === app.id) activate("home");
+      state.status[app.id] = { ...(state.status[app.id] || {}), up: false };
+      renderNav();
+    } catch (err) { toast(err); }
+  });
+  return btn;
+}
+function renderNav() {
+  // desktop + tablet: drawer
+  const list = el("appList"); list.replaceChildren(...state.registry.map(appButton));
+  // mobile: bottom nav = first 4 apps + "All" sheet
+  const nav = el("bottomnav"); nav.replaceChildren();
+  state.registry.slice(0, 4).forEach((app) => {
+    const b = document.createElement("button");
+    b.className = state.activeApp === app.id ? "active" : "";
+    b.innerHTML = `<span class="glyph"><img src="/assets/${app.id}.png" alt="" loading="lazy" style="width:22px;height:22px;border-radius:6px;object-fit:cover" onerror="this.replaceWith('${app.name.replace(/FLOYD\s*/i, "").trim().slice(0, 1)}')"></span>${app.name.split(" ")[0]}`;
+    b.addEventListener("click", () => openApp(app.id));
+    nav.appendChild(b);
+  });
+  const all = document.createElement("button");
+  all.innerHTML = `<span class="glyph">≡</span>All`;
+  all.addEventListener("click", () => el("mobileSheet").classList.toggle("open"));
+  nav.appendChild(all);
+  el("sheetList").replaceChildren(...state.registry.map(appButton));
+}
+// Selecting any app from the sheet dismisses it — it must never linger.
+// (Bound once; renderNav re-runs every 15s and must not stack listeners.)
+el("sheetList").addEventListener("click", () => el("mobileSheet").classList.remove("open"));
+
+/* ---- spring drawer: opens on hover (desktop), tap-to-toggle (tablet) ---- */
+const drawer = el("drawer");
+let closeTimer;
+drawer.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") { clearTimeout(closeTimer); drawer.classList.add("open"); } });
+drawer.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") { closeTimer = setTimeout(() => drawer.classList.remove("open"), 180); } });
+drawer.addEventListener("click", (e) => { if (document.body.dataset.vertical === "tablet" && !drawer.classList.contains("open")) { drawer.classList.add("open"); e.stopPropagation(); } });
+document.addEventListener("click", (e) => { if (document.body.dataset.vertical === "tablet" && !drawer.contains(e.target)) drawer.classList.remove("open"); });
+drawer.addEventListener("focusin", () => drawer.classList.add("open"));
+drawer.addEventListener("focusout", (e) => { if (!drawer.contains(e.relatedTarget)) drawer.classList.remove("open"); });
+
+/* ---- desktop auto-hide chrome: invisible edge hotzones reveal, leaving hides ---- */
+const titlebar = el("titlebar");
+let titleTimer;
+el("edgeLeft").addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") { clearTimeout(closeTimer); drawer.classList.add("open"); } });
+el("edgeTop").addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") { clearTimeout(titleTimer); titlebar.classList.add("reveal"); } });
+titlebar.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") clearTimeout(titleTimer); });
+titlebar.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") titleTimer = setTimeout(() => titlebar.classList.remove("reveal"), 300); });
+
+/* ---- titlebar chips ---- */
+el("chipHome").addEventListener("click", () => activate("home"));
+
+/* ---- chrono sandbox panel ---- */
+const chrono = {
+  panel: el("chronoPanel"), surface: () => el("chronoSurface").value,
+  busy: false,
+};
+async function chronoCall(op, params = {}, method = "POST") {
+  if (chrono.busy) return null;
+  chrono.busy = true;
+  document.querySelectorAll(".cbtn").forEach((b) => (b.disabled = true));
+  try {
+    const qs = new URLSearchParams(params).toString();
+    const r = await fetch(`/api/chrono/${chrono.surface()}/${op}${qs ? "?" + qs : ""}`, { method });
+    const out = await r.json();
+    el("chronoOut").textContent = JSON.stringify(out, null, 1).slice(0, 3000);
+    return out;
+  } catch (e) { el("chronoOut").textContent = String(e); return null; }
+  finally {
+    chrono.busy = false;
+    document.querySelectorAll(".cbtn").forEach((b) => (b.disabled = false));
+  }
+}
+async function chronoRefresh() {
+  const s = chrono.surface();
+  if (!s) return;
+  const [log, forks, ledger] = await Promise.all([
+    fetch(`/api/chrono/${s}/log?n=12`).then((r) => r.json()).catch(() => null),
+    fetch(`/api/chrono/${s}/forks`).then((r) => r.json()).catch(() => null),
+    fetch(`/api/chrono/${s}/ledger?n=8`).then((r) => r.json()).catch(() => null),
+  ]);
+  const tl = el("chronoTimeline"); tl.replaceChildren();
+  (log?.commits ?? []).forEach((c, i) => {
+    const d = document.createElement("div");
+    d.className = "tl-item";
+    d.innerHTML = `<span class="sha" title="Rewind to ${c.sha}">${c.sha}</span><span class="t">${c.time}</span><span class="s"></span>`;
+    d.querySelector(".s").textContent = c.subject;
+    d.querySelector(".sha").addEventListener("click", async () => {
+      if (!confirm(`Rewind ${chrono.surface()} to ${c.sha}?\n\n“${c.subject}”\n\nA safety snapshot is taken first, so this is reversible.`)) return;
+      await chronoCall("rewind", { to: c.sha });
+      chronoRefresh();
+    });
+    tl.appendChild(d);
+  });
+  const fl = el("chronoForks"); fl.replaceChildren();
+  const forkList = forks?.forks ?? [];
+  if (!forkList.length) fl.innerHTML = `<span style="font:11px ui-monospace,monospace;color:var(--faint)">no live forks</span>`;
+  forkList.forEach((f) => {
+    const d = document.createElement("div");
+    d.className = "fork-item";
+    d.innerHTML = `<div class="frow"><span class="fname">${f.name}</span><span class="fstat">${f.dirty ? "dirty" : "clean"} · ${f.diffstat}</span></div>
+      <div class="frow"><button class="cbtn" data-act="diff">Diff</button><button class="cbtn" data-act="merge">Merge as winner</button><button class="cbtn danger" data-act="prune">Prune</button></div>`;
+    d.querySelector('[data-act="diff"]').addEventListener("click", async () => {
+      const r = await fetch(`/api/chrono/${chrono.surface()}/diff?name=${f.name}`).then((x) => x.json());
+      el("chronoOut").textContent = r.diff ? r.diff.slice(0, 4000) : JSON.stringify(r, null, 1);
+    });
+    d.querySelector('[data-act="merge"]').addEventListener("click", async () => {
+      if (!confirm(`Merge fork “${f.name}” into ${chrono.surface()} and prune ALL other forks?`)) return;
+      await chronoCall("merge-winner", { name: f.name });
+      chronoRefresh();
+    });
+    d.querySelector('[data-act="prune"]').addEventListener("click", async () => {
+      if (!confirm(`Discard fork “${f.name}”? Its uncommitted work is lost.`)) return;
+      await chronoCall("prune", { name: f.name });
+      chronoRefresh();
+    });
+    fl.appendChild(d);
+  });
+  const lg = el("chronoLedger"); lg.replaceChildren();
+  (ledger?.entries ?? []).slice().reverse().forEach((e) => {
+    const d = document.createElement("div");
+    d.className = "tl-item";
+    d.innerHTML = `<span class="t">${(e.ts || "").slice(11)}</span><span class="s"></span>`;
+    d.querySelector(".s").textContent = `${e.op}${e.winner ? " → " + e.winner : ""}${e.forks ? " [" + e.forks.join(", ") + "]" : ""}`;
+    lg.appendChild(d);
+  });
+}
+async function chronoInit() {
+  const r = await fetch("/api/chrono/surfaces").then((x) => x.json()).catch(() => null);
+  if (!r?.ok) return;
+  const sel = el("chronoSurface");
+  sel.replaceChildren(...Object.entries(r.surfaces).filter(([, v]) => v.git).map(([name]) => {
+    const o = document.createElement("option"); o.value = name; o.textContent = name; return o;
+  }));
+  sel.addEventListener("change", chronoRefresh);
+  // Options exist now: align the surface with whatever app is already active.
+  chronoFollowApp(state.activeApp);
+}
+el("chipChrono").addEventListener("click", () => {
+  chrono.panel.classList.toggle("open");
+  if (chrono.panel.classList.contains("open")) chronoRefresh();
+});
+el("chronoClose").addEventListener("click", () => chrono.panel.classList.remove("open"));
+el("btnSnapshot").addEventListener("click", async () => {
+  await chronoCall("snapshot", el("snapMsg").value ? { message: el("snapMsg").value } : {});
+  el("snapMsg").value = "";
+  chronoRefresh();
+});
+el("btnFork").addEventListener("click", async () => {
+  const names = el("forkNames").value.trim();
+  if (!names) return toast("Name the forks: model-a, model-b");
+  await chronoCall("fork", { names });
+  el("forkNames").value = "";
+  chronoRefresh();
+});
+chronoInit();
+
+/* ---- API keys panel: paste -> auto-detect vendor -> live test -> saved ---- */
+const keys = { panel: el("keysPanel"), detected: null, providers: [] };
+async function keysRefresh() {
+  try {
+    const r = await (await fetch("/api/keys")).json();
+    keys.providers = r.providers;
+  } catch { return; }
+  const list = el("keysList"); list.replaceChildren();
+  const sorted = [...keys.providers].sort((a, b) => Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
+  for (const p of sorted) {
+    const d = document.createElement("div");
+    d.className = `key-item ${p.configured ? "configured" : ""}`;
+    d.innerHTML = `<span class="k-dot"></span>
+      <div class="k-meta"><strong></strong><span></span></div>
+      ${p.configured ? `<button class="k-del" title="Remove ${p.name} key">×</button>`
+                     : `<a class="k-get" href="${p.url}" target="_blank" rel="noreferrer noopener">get key ↗</a>`}
+      ${p.endpoint ? `<div class="k-endpoint"><span class="ep ${p.customEndpoint ? "custom" : ""}"></span><button class="k-ep-btn">edit</button>${p.customEndpoint ? `<button class="k-ep-reset">reset</button>` : ""}</div>` : ""}`;
+    d.querySelector("strong").textContent = p.name;
+    d.querySelector(".k-meta span").textContent = p.configured
+      ? `${p.masked}${p.verified ? " · verified" : ""} · ${p.env}`
+      : p.env;
+    const epLabel = d.querySelector(".k-endpoint .ep");
+    if (epLabel) { epLabel.textContent = p.endpoint; epLabel.title = p.endpoint; }
+    d.querySelector(".k-ep-btn")?.addEventListener("click", () => {
+      const row = d.querySelector(".k-endpoint");
+      const edit = document.createElement("div");
+      edit.className = "k-ep-edit";
+      edit.innerHTML = `<input value="" spellcheck="false"><button class="cbtn">Save</button><button class="cbtn">Cancel</button>`;
+      const input = edit.querySelector("input");
+      input.value = p.endpoint;
+      const [saveB, cancelB] = edit.querySelectorAll("button");
+      saveB.addEventListener("click", async () => {
+        const r = await (await fetch(`/api/keys/${p.id}/endpoint`, { method: "PUT", body: JSON.stringify({ endpoint: input.value.trim() }) })).json();
+        if (r.error) { keysMsg(`✗ ${r.error}`, "err"); return; }
+        keysMsg(r.check ? (r.check.valid ? `✓ ${p.name} endpoint saved — key verified live` : `⚠ endpoint saved but: ${r.check.note || "key not verified"}`) : `✓ ${p.name} endpoint saved`, r.check && !r.check.valid ? "err" : "ok");
+        keysRefresh();
+      });
+      cancelB.addEventListener("click", () => { edit.replaceWith(row); });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") saveB.click(); if (e.key === "Escape") cancelB.click(); });
+      row.replaceWith(edit);
+      input.focus();
+    });
+    d.querySelector(".k-ep-reset")?.addEventListener("click", async () => {
+      const r = await (await fetch(`/api/keys/${p.id}/endpoint`, { method: "PUT", body: JSON.stringify({ endpoint: "" }) })).json();
+      keysMsg(r.error ? `✗ ${r.error}` : `✓ ${p.name} endpoint reset to default`, r.error ? "err" : "ok");
+      keysRefresh();
+    });
+    d.querySelector(".k-del")?.addEventListener("click", async () => {
+      if (!confirm(`Remove the stored ${p.name} key? Apps launched afterwards will no longer receive ${p.env}.`)) return;
+      await fetch(`/api/keys/${p.id}`, { method: "DELETE" });
+      keysRefresh();
+    });
+    list.appendChild(d);
+  }
+}
+function keysMsg(text, cls) { const m = el("keyMsg"); m.textContent = text; m.className = `keys-msg ${cls || ""}`; }
+let detectTimer;
+el("keyInput").addEventListener("input", () => {
+  clearTimeout(detectTimer);
+  const v = el("keyInput").value.trim();
+  keys.detected = null;
+  el("keySave").disabled = true;
+  el("keyVendor").hidden = true;
+  keysMsg("");
+  if (!v) { el("keyDetect").textContent = ""; return; }
+  el("keyDetect").textContent = "identifying…";
+  detectTimer = setTimeout(async () => {
+    try {
+      const r = await (await fetch("/api/keys/detect", { method: "POST", body: JSON.stringify({ key: v }) })).json();
+      if (r.match) {
+        keys.detected = r.match.id;
+        el("keyDetect").innerHTML = `detected: <span class="vendor"></span> — ready to save`;
+        el("keyDetect").querySelector(".vendor").textContent = r.match.name;
+        el("keySave").disabled = false;
+      } else {
+        const sel = el("keyVendor");
+        sel.replaceChildren(new Option("— pick the vendor —", ""), ...r.candidates.map((c) => new Option(c.name, c.id)));
+        sel.hidden = false;
+        el("keyDetect").textContent = "could not tell the vendor from the key shape — pick it:";
+        el("keySave").disabled = true;
+      }
+    } catch { el("keyDetect").textContent = ""; }
+  }, 250);
+});
+el("keyVendor").addEventListener("change", () => {
+  keys.detected = el("keyVendor").value || null;
+  el("keySave").disabled = !keys.detected;
+});
+el("keyReveal").addEventListener("click", () => {
+  const i = el("keyInput");
+  i.type = i.type === "password" ? "text" : "password";
+});
+el("keySave").addEventListener("click", async () => {
+  const key = el("keyInput").value.trim();
+  if (!key || !keys.detected) return;
+  el("keySave").disabled = true;
+  keysMsg("testing key against the vendor…");
+  try {
+    const r = await (await fetch(`/api/keys/${keys.detected}`, { method: "POST", body: JSON.stringify({ key }) })).json();
+    if (!r.saved) throw new Error(r.error || "save failed");
+    const extra = (r.propagated || []).length ? ` · ${r.propagated.join(" · ")}` : "";
+    keysMsg(`✓ saved ${r.masked}${r.check?.valid ? " — key verified live" : r.check?.note ? ` — ${r.check.note}` : ""}${extra}`, "ok");
+    el("keyInput").value = "";
+    el("keyDetect").textContent = "";
+    el("keyVendor").hidden = true;
+    keys.detected = null;
+    keysRefresh();
+  } catch (e) {
+    keysMsg(`✗ ${e.message}`, "err");
+    el("keySave").disabled = false;
+  }
+});
+el("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !el("keySave").disabled) el("keySave").click(); });
+el("chipKeys").addEventListener("click", () => {
+  keys.panel.classList.toggle("open");
+  if (keys.panel.classList.contains("open")) { keysRefresh(); el("keyInput").focus(); }
+});
+el("keysClose").addEventListener("click", () => keys.panel.classList.remove("open"));
+
+el("chipBg").addEventListener("click", cycleBackground);
+el("chipTerminal").addEventListener("click", () => openApp("terminalone"));
+el("chipBrowser").addEventListener("click", async () => {
+  try { await fetch("/api/action/open-chrome", { method: "POST", body: "{}" }); } catch (e) { toast(e); }
+});
+el("settingsBtn").addEventListener("click", () => {
+  const next = { null: "mobile", mobile: "tablet", tablet: "desktop", desktop: null }[String(state.override)];
+  state.override = next;
+  if (next) localStorage.setItem("floyd.verticalOverride", next); else localStorage.removeItem("floyd.verticalOverride");
+  state.vertical = null; applyVertical();
+  toast(`Vertical override: ${next ?? "auto (capability)"}`);
+});
+/* keyboard: ⌘K opens drawer, ⌘1..9 direct app switch, Esc home */
+addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); drawer.classList.toggle("open"); }
+  if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
+    const app = state.registry[Number(e.key) - 1];
+    if (app) { e.preventDefault(); openApp(app.id); }
+  }
+  if (e.key === "Escape" && !e.metaKey) activate("home");
+});
+
+applyVertical();
+/* Splash art: alternate between the two banners on every boot. */
+el("splash").style.backgroundImage = `url(/backgrounds/${encodeURIComponent(SWEET[sweetIdx])})`;
+loadRegistry()
+  .then(() => (state.activeApp !== "home" ? openApp(state.activeApp) : null))
+  .catch((e) => toast(e))
+  .finally(() => {
+    // Hold the splash until the restored app is genuinely on screen AND the
+    // minimum display time has passed — no rushed cut, no half-loaded landing.
+    const remaining = Math.max(0, MIN_SPLASH_MS - (Date.now() - BOOT_T0));
+    setTimeout(() => {
+      const splash = el("splash");
+      splash.classList.add("gone");
+      setTimeout(() => splash.remove(), 1000);
+    }, remaining);
+  });
+</script>
+</body>
+</html>

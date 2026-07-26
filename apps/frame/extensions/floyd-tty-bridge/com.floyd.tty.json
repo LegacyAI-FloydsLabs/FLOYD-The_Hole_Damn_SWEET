@@ -1,0 +1,9 @@
+{
+  "name": "com.floyd.tty",
+  "description": "Floyd's Labs TTY Bridge Native Host v5.0.0",
+  "path": "/usr/local/bin/floyd-tty-bridge/native_host.py",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_YOUR_EXTENSION_ID/"
+  ]
+}

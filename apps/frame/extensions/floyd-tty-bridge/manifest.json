@@ -1,0 +1,141 @@
+{
+  "manifest_version": 3,
+  "name": "Floyd's Labs TTY Bridge",
+  "version": "5.1.0",
+  "minimum_chrome_version": "116",
+  "description": "AI agent browser bridge — connects LLM CLI tools to full browser control, page analysis, screen capture, and 12,000+ vectorized knowledge documents via Tom the Peep's vision engine.",
+
+  "permissions": [
+    "nativeMessaging",
+    "sidePanel",
+    "tabs",
+    "debugger",
+    "downloads",
+    "tabGroups",
+    "scripting",
+    "activeTab",
+    "storage",
+    "alarms",
+    "notifications",
+    "offscreen",
+    "unlimitedStorage",
+    "webNavigation",
+    "declarativeNetRequestWithHostAccess"
+  ],
+
+  "host_permissions": [
+    "<all_urls>"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+
+  "action": {
+    "default_title": "Floyd's TTY Bridge",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["accessibility-tree.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["ui-gate.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["ref-tools.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["distill-dom.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dom-observer.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["set-of-marks.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["quick-mode.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["agent-indicator.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "commands": {
+    "open_side_panel": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open Floyd's TTY Side Panel"
+    },
+    "capture_context": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Capture page context for agent"
+    },
+    "toggle_vision": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Toggle Tom's vision overlay"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/*", "audio/*", "interceptors-main.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

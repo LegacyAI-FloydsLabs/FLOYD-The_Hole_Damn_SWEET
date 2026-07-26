@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floyd's TTY Bridge</title>
+  <link rel="stylesheet" href="lib/xterm.css">
+  <style>
+    /* ─── Design Tokens ─── */
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --border: #2a2a2a;
+      --text-primary: #e0e0e0;
+      --text-muted: #666666;
+      --accent-green: #00ff88;
+      --accent-pink: #ff3388;
+      --accent-blue: #3388ff;
+      --accent-yellow: #ffcc00;
+      --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+      --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* ─── Status Bar (top) ─── */
+    #status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 6px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      min-height: 24px;
+      flex-shrink: 0;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    #status-bar .status-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    #status-bar .status-right {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex-shrink: 0;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .status-dot.connected { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
+    .status-dot.error { background: var(--accent-pink); box-shadow: 0 0 4px var(--accent-pink); }
+    .status-dot.connecting { background: var(--accent-yellow); animation: pulse 1.5s ease-in-out infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .status-label {
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-size: 8px;
+      font-weight: 600;
+    }
+
+    .status-version {
+      color: var(--accent-green);
+      font-weight: bold;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    /* ─── Session Tabs ─── */
+    #session-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 2px 6px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      user-select: none;
+      min-height: 22px;
+    }
+
+    .session-tab {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: all 0.12s ease;
+      white-space: nowrap;
+    }
+    .session-tab:hover {
+      background: var(--border);
+      color: var(--text-primary);
+    }
+    .session-tab.active {
+      background: var(--accent-green);
+      color: var(--bg-primary);
+      border-color: var(--accent-green);
+    }
+    .session-tab.split-active {
+      background: var(--accent-blue);
+      color: white;
+      border-color: var(--accent-blue);
+    }
+
+    .session-tab-spacer { flex: 1; }
+
+    .session-status {
+      font-family: var(--font-mono);
+      font-size: 7px;
+      color: var(--text-muted);
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+
+    /* ─── Terminal Area ─── */
+    #terminal-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .term-container {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      background: var(--bg-primary);
+      padding: 2px;
+      position: relative;
+    }
+    .term-container .xterm {
+      height: 100% !important;
+      width: 100% !important;
+      overflow: hidden;
+    }
+    .term-container.hidden { display: none; }
+    .term-container.focused { border-left: 2px solid var(--accent-green); padding-left: 0; }
+
+    /* ─── Split Divider ─── */
+    #split-divider {
+      height: 4px;
+      min-height: 4px;
+      background: var(--border);
+      cursor: row-resize;
+      display: none;
+      flex-shrink: 0;
+      position: relative;
+      transition: background 0.15s;
+    }
+    #split-divider:hover,
+    #split-divider.dragging {
+      background: var(--accent-blue);
+    }
+    #split-divider::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 24px;
+      height: 2px;
+      background: var(--text-muted);
+      border-radius: 1px;
+    }
+
+    /* Hide xterm scrollbar for cleaner look */
+    .xterm-viewport::-webkit-scrollbar { width: 3px; }
+    .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+    .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ─── Tom Chat Input ─── */
+    #tom-input-bar {
+      display: none;
+      align-items: center;
+      gap: var(--space-xs);
+      padding: 2px 6px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #tom-input-bar.visible { display: flex; }
+    #tom-input {
+      flex: 1;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 3px 6px;
+      border-radius: var(--radius-sm);
+      outline: none;
+      min-width: 0;
+    }
+    #tom-input:focus { border-color: var(--accent-pink); }
+    #tom-input::placeholder { color: var(--text-muted); }
+    #tom-send-btn {
+      background: var(--accent-pink);
+      border: none;
+      color: white;
+      font-family: var(--font-mono);
+      font-size: 8px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    #tom-send-btn:hover { opacity: 0.85; }
+    #tom-send-btn:active { transform: scale(0.97); }
+
+    /* ─── Tool Bar (bottom, responsive) ─── */
+    #tool-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 3px;
+      padding: 3px 4px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      min-height: 24px;
+    }
+
+    .tool-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      transition: all 0.12s ease;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .tool-btn:hover {
+      background: var(--border);
+      color: var(--text-primary);
+      border-color: #444;
+    }
+    .tool-btn:active { transform: scale(0.97); }
+    .tool-btn.active {
+      background: var(--accent-green);
+      color: var(--bg-primary);
+      border-color: var(--accent-green);
+    }
+    .tool-btn.live-active {
+      background: var(--accent-pink);
+      color: white;
+      border-color: var(--accent-pink);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .tool-btn.media-active {
+      background: var(--accent-blue);
+      color: white;
+      border-color: var(--accent-blue);
+    }
+    .tool-btn.danger { color: var(--accent-pink); }
+    .tool-btn.danger:hover {
+      background: var(--accent-pink);
+      color: white;
+      border-color: var(--accent-pink);
+    }
+
+    .tool-spacer { flex: 1; min-width: 4px; }
+    .tool-divider {
+      width: 1px;
+      height: 14px;
+      background: var(--border);
+      margin: 0 1px;
+      flex-shrink: 0;
+    }
+
+    /* ─── Settings Modal ─── */
+    #settings-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+    #settings-modal.visible { display: flex; }
+    .settings-panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      width: 90%;
+      max-width: 320px;
+    }
+    .settings-panel h3 {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-green);
+      margin-bottom: var(--space-sm);
+    }
+    .settings-panel label {
+      font-size: 9px;
+      color: var(--text-muted);
+      display: block;
+      margin-bottom: var(--space-xs);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .settings-panel input {
+      width: 100%;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 5px 7px;
+      border-radius: var(--radius-sm);
+      margin-bottom: var(--space-sm);
+    }
+    .settings-panel input:focus {
+      outline: none;
+      border-color: var(--accent-green);
+    }
+    .settings-panel .settings-actions {
+      display: flex;
+      gap: var(--space-xs);
+      justify-content: flex-end;
+      margin-top: var(--space-sm);
+    }
+
+    /* ─── Error Toast ─── */
+    #error-toast {
+      position: fixed;
+      top: 30px;
+      left: 6px;
+      right: 6px;
+      background: rgba(255, 51, 136, 0.95);
+      color: white;
+      padding: 6px 10px;
+      border-radius: var(--radius-md);
+      font-size: 10px;
+      font-family: var(--font-mono);
+      z-index: 1000;
+      display: none;
+      backdrop-filter: blur(8px);
+    }
+    #error-toast.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="status-bar">
+      <div class="status-left">
+        <div class="status-dot" id="native-dot" title="Native host status"></div>
+        <span class="status-version">FLOYD v5.1</span>
+        <span class="status-label" id="status-text">INITIALIZING</span>
+      </div>
+      <div class="status-right">
+        <span class="status-label" id="tab-info"></span>
+      </div>
+    </div>
+
+    <div id="session-tabs">
+      <button class="session-tab active" id="tab-t1" data-view="t1" title="Terminal 1 — LLM Agent">T1</button>
+      <button class="session-tab" id="tab-t2" data-view="t2" title="Terminal 2 — Vision / Tools">T2</button>
+      <button class="session-tab" id="tab-split" data-view="split" title="Split view — both terminals">SPLIT</button>
+      <span class="session-tab-spacer"></span>
+      <span class="session-status" id="session-status">T1 active</span>
+    </div>
+
+    <div id="terminal-area">
+      <div class="term-container focused" id="terminal-container-1"></div>
+      <div id="split-divider"></div>
+      <div class="term-container hidden" id="terminal-container-2"></div>
+    </div>
+
+    <div id="tom-input-bar">
+      <input type="text" id="tom-input" placeholder="Type a message to Tom..." autocomplete="off" spellcheck="false">
+      <button id="tom-send-btn">Send</button>
+    </div>
+
+    <div id="tool-bar">
+      <button class="tool-btn" id="btn-analyze" title="Analyze current page">ANALYZE</button>
+      <button class="tool-btn" id="btn-dom" title="Get DOM tree">DOM</button>
+      <button class="tool-btn" id="btn-a11y" title="Accessibility audit">A11Y</button>
+      <button class="tool-btn" id="btn-vision" title="Toggle Tom's vision overlay (Cmd+Shift+E)">&#128065; VIS</button>
+      <button class="tool-btn" id="btn-screenshot" title="Capture screenshot">CAP</button>
+      <div class="tool-divider"></div>
+      <button class="tool-btn" id="btn-live" title="Start/stop Gemini Live">LIVE</button>
+      <button class="tool-btn" id="btn-screen" title="Share screen">SCR</button>
+      <button class="tool-btn" id="btn-camera" title="Share camera">CAM</button>
+      <div class="tool-spacer"></div>
+      <button class="tool-btn" id="btn-settings" title="Settings">SET</button>
+      <button class="tool-btn" id="btn-reconnect" title="Reconnect native host">RE</button>
+      <button class="tool-btn danger" id="btn-reload" title="Reload entire extension">RLD</button>
+    </div>
+  </div>
+
+  <div id="error-toast" role="alert"></div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal">
+    <div class="settings-panel">
+      <h3>Settings</h3>
+      <label for="input-api-key">Gemini API Key</label>
+      <input type="password" id="input-api-key" placeholder="AIzaSy..." autocomplete="off">
+      <label for="input-voice">Live Voice</label>
+      <input type="text" id="input-voice" placeholder="Puck" value="Puck">
+      <div class="settings-actions">
+        <button class="tool-btn" id="btn-settings-cancel">CANCEL</button>
+        <button class="tool-btn active" id="btn-settings-save">SAVE</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="lib/xterm.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-07-14T07:22:20-04:00",
+  "authority": {
+    "source_control": "/Volumes/Storage/FLOYD_WORKSTATION",
+    "runtime": "/Volumes/Storage/FLOYD_RUNTIME",
+    "core": "Floyd Core",
+    "coding_engine": "OpenCode 1.17.18 via @floyd/opencode-runtime",
+    "surface_contract": "@floyd/sdk",
+    "rule": "Surfaces connect to Floyd Core and never directly own OpenCode lifecycle, provider credentials, durable sessions, or policy."
+  },
+  "surfaces": [
+    {
+      "id": "desktop",
+      "role": "primary desktop container",
+      "remote": "https://github.com/CaptainPhantasy/floyd-desktop-web-v2.git",
+      "local_source": "/Volumes/Storage/FloydDesktopWeb-v2",
+      "observed_branch": "add-ons",
+      "observed_head": "68ba064",
+      "source_state": "modified donor; copy required before admission",
+      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/desktop",
+      "copy_verified": true,
+      "integration": {
+        "status": "verified_component_branch",
+        "branch": "feat/floyd-core-runtime",
+        "commit": "822ee6367aa48acb63f55db48a826b48d53c7d56",
+        "remote_ref": "origin/feat/floyd-core-runtime",
+        "contract": "vendored @floyd/sdk -> server-side Floyd Core bridge -> managed OpenCode SDK",
+        "production_audit_vulnerabilities": 0,
+        "rendered_proof": true,
+        "admitted_runtime_url": "http://127.0.0.1:13010/",
+        "experience": {
+          "status": "verified",
+          "surface_id": "desktop",
+          "restore": ["active-context", "composer-draft", "durable-transcript", "selected-artifact", "pending-questions", "pending-permissions", "model-route"],
+          "publish": ["active-context", "composer-draft", "selected-view", "surface-presence"],
+          "watch": true,
+          "optimistic_conflicts": "preserve-409-no-blind-retry",
+          "automated_proof": true
+        }
+      },
+      "target": "apps/desktop",
+      "direct_opencode_access": false
+    },
+    {
+      "id": "ide",
+      "role": "mobile and web IDE",
+      "remote": "https://github.com/CaptainPhantasy/mobile-web-IDE.git",
+      "local_source": "/Volumes/SanDisk1Tb/MWIDE/mobile-web-IDE",
+      "observed_branch": null,
+      "observed_head": "1bec219",
+      "source_state": "donor; copy and provenance verification required",
+      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/ide",
+      "copy_verified": true,
+      "integration": {
+        "status": "verified_component_branch",
+        "branch": "feat/floyd-core-runtime",
+        "commit": "ed81b2fe190ebd2f941c458d27eef92b065024cd",
+        "remote_ref": "origin/feat/floyd-core-runtime",
+        "contract": "vendored @floyd/sdk -> server-side Floyd Core bridge -> managed OpenCode SDK",
+        "production_audit_vulnerabilities": 0,
+        "rendered_proof": true,
+        "admitted_runtime_url": "http://127.0.0.1:13012/",
+        "folder_workspace_proof": true,
+        "local_workspace_root_propagation": ["file-explorer", "terminal", "ai"],
+        "experience": {
+          "status": "verified",
+          "surface_id": "ide",
+          "restore": ["active-context", "composer-draft", "durable-transcript", "workspace", "selected-artifact", "pending-questions", "pending-permissions", "model-route"],
+          "publish": ["active-context", "composer-draft", "selected-view", "workspace", "surface-presence"],
+          "watch": true,
+          "optimistic_conflicts": "preserve-409-no-blind-retry",
+          "automated_proof": true
+        }
+      },
+      "target": "apps/ide",
+      "direct_opencode_access": false
+    },
+    {
+      "id": "tui",
+      "role": "coding TUI",
+      "remote": "https://github.com/CaptainPhantasy/OhMyFloyd.git",
+      "local_source": "/Volumes/SanDisk1Tb/OhMyFloyd",
+      "observed_branch": "omf-16",
+      "observed_head": "c5d2b2",
+      "source_state": "modified donor; copy required before admission",
+      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/tui",
+      "copy_verified": true,
+      "integration": {
+        "status": "verified_component_branch",
+        "branch": "feat/floyd-core-runtime",
+        "commit": "a1c9c06350dda8079ccf0ad5315569f198d823ff",
+        "remote_ref": "origin/feat/floyd-core-runtime",
+        "contract": "workspace @floyd/sdk -> Floyd Core -> managed OpenCode SDK",
+        "production_audit_vulnerabilities": 0,
+        "complete_audit_vulnerabilities": 0,
+        "rendered_proof": true,
+        "interactive_lifecycle_controls": true,
+        "legacy_direct_provider_command": "omp launch",
+        "runtime_artifact": {
+          "path": "/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui",
+          "sha256": "933ab2bab3037b226e48ca67e698de1ce878d81e2c00ee6c442102ac3ee0dcb8",
+          "architecture": "arm64",
+          "provenance": "/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui.provenance"
+        },
+        "experience": {
+          "status": "verified",
+          "surface_id": "tui",
+          "restore": ["active-context", "composer-draft", "durable-transcript", "transcript-cursor", "selected-artifact", "pending-questions", "pending-permissions", "model-route"],
+          "publish": ["active-context", "composer-draft", "selected-view", "transcript-cursor", "surface-presence"],
+          "watch": true,
+          "optimistic_conflicts": "preserve-409-no-blind-retry",
+          "automated_proof": true
+        }
+      },
+      "target": "clients/tui",
+      "direct_opencode_access": false
+    },
+    {
+      "id": "pty",
+      "role": "web terminal",
+      "remote": "https://github.com/CaptainPhantasy/TerminalOne.git",
+      "local_source": "/Volumes/SanDisk1Tb/TerminalOne",
+      "observed_branch": "ci/harden-first-run",
+      "observed_head": "b3a4d9",
+      "source_state": "modified donor; copy required before admission",
+      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/pty",
+      "copy_verified": true,
+      "integration": {
+        "status": "verified_component_branch",
+        "branch": "feat/floyd-core-runtime",
+        "commit": "91ebc395c2276f747c6ba42fb7838bb161be0f2a",
+        "remote_ref": "origin/feat/floyd-core-runtime",
+        "contract": "vendored @floyd/sdk -> loopback Floyd Core health bridge + canonical CLI PTY -> managed OpenCode SDK",
+        "production_audit_vulnerabilities": 0,
+        "rendered_proof": true,
+        "pty_round_trip": true,
+        "admitted_runtime_url": "http://127.0.0.1:13013/",
+        "admitted_tui_sha256": "933ab2bab3037b226e48ca67e698de1ce878d81e2c00ee6c442102ac3ee0dcb8",
+        "experience": {
+          "status": "verified_transport",
+          "surface_id": "pty",
+          "restore": ["active-context"],
+          "publish": ["surface-presence"],
+          "watch": true,
+          "semantic_transcript_owner": false,
+          "optimistic_conflicts": "preserve-409-no-blind-retry",
+          "automated_proof": true
+        }
+      },
+      "target": "clients/terminal",
+      "direct_opencode_access": false
+    },
+    {
+      "id": "launcher",
+      "role": "local harness launcher",
+      "remote": null,
+      "local_source": "/Volumes/Storage/harness-launcher",
+      "observed_branch": "main",
+      "observed_head": "30d6717",
+      "source_state": "clean local donor; copy required before admission",
+      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/launcher",
+      "copy_verified": true,
+      "integration": {
+        "status": "verified_local_copy_commit",
+        "branch": "feat/floyd-core-runtime",
+        "commit": "f9ea13c9b559488907079e91a724cddbdc0932b5",
+        "remote_ref": null,
+        "remote_note": "origin is the protected local donor; intentionally not pushed",
+        "contract": "vendored @floyd/sdk -> loopback Floyd Core health bridge + canonical CLI harness -> managed OpenCode SDK",
+        "production_audit_vulnerabilities": 0,
+        "rendered_proof": true,
+        "pty_round_trip": true,
+        "exact_tui_handoff": true,
+        "raw_pty_resume": {
+          "single_owner": true,
+          "ttl_ms": 120000,
+          "replay_max_bytes": 524288,
+          "storage": "memory-only"
+        },
+        "admitted_runtime_url": "http://127.0.0.1:13014/",
+        "experience": {
+          "status": "verified_transport",
+          "surface_id": "launcher",
+          "restore": ["active-context"],
+          "publish": ["surface-presence"],
+          "watch": true,
+          "semantic_transcript_owner": false,
+          "optimistic_conflicts": "preserve-409-no-blind-retry",
+          "automated_proof": true
+        }
+      },
+      "target": "apps/launcher",
+      "direct_opencode_access": false
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+artifacts/
+runtime/
+tmp/
+intake/
+
+*.tsbuildinfo
+dist-types/
+.supercache
+apps/frame/server/heartbeat.json
+
+# Permanent internal-browser extensions are version-controlled in full,
+# including runtime node_modules the TTY Bridge sidepanel imports.
+!apps/frame/extensions/floyd-tty-bridge/node_modules/
+!apps/frame/extensions/floyd-tty-bridge/node_modules/**
+
+# Independent embedded repo: OpenAI Sites publication project (own remote on git.chatgpt-team.site)
+apps/remote-portal/
+
+# Local session/planning artifacts stay out of the repo
+.planning/
+dogfood-output/
+
+# Non-runtime reports and session logs
+progress.md
+task_plan.md
+findings.md
+repository_report.md
+Issues/
+SSOT/repository_report*.json
+
+# Non-runtime documentation (runtime-only tracking)
+docs/
+CLAUDE.md
+FEATURES.md
+CHANGELOG.md
+.proofline.json
+SSOT/
