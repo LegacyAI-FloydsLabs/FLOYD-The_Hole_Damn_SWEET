@@ -1,25 +1,41 @@
-# FLOYD-THE_WHOLE_DAMN_SUITE
+# FLOYD-The_Hole_Damn_SWEET
 
-FLOYD ecosystem monorepo: Floyd Core daemon, FLOYD Frame shell, managed
-app surfaces, SDK, and the OpenCode engine integration.
+![FLOYD — The Hole Damn SWEET](assets/hero.jpg)
 
-- Active shell: `apps/frame` (http://floyd.localhost:13030). The legacy
-  cockpit is quarantined under `quarantine/cockpit` (tests/debug only).
+FLOYD ecosystem monorepo: Floyd Core daemon, FLOYD Frame shell, managed app
+surfaces, SDK, and the OpenCode engine integration.
+
+- Active shell: `apps/frame` (http://floyd.localhost:13030). Legacy cockpit is
+  quarantined under `quarantine/cockpit` (tests/debug only).
 - Contract and fixed decisions: `FLOYD.md`.
 
-## Readiness
+## Install
 
-As of the last verified run (2026-07-15, pre-FloydShell commits):
+Requires macOS, Node >= 26 (Homebrew node preferred), npm.
 
-- Typecheck: passing (tsc project references, exit 0).
-- Tests: 154/154 passing (`npm test`: sdk, opencode engine, core daemon, cli).
-- Core release flow: commit-addressed releases with health gate and
-  rollback, verified live (`CORE_RELEASE PASS`).
-- Surfaces: `npm run verify:surfaces` passing.
-- Known gaps: credential authority rework in progress (the Vault becomes
-  the single in-FLOYD credential proxy for LLM APIs; see branch
-  `salvage/v1.8.0-credential-proxy`). Rendered-browser visual proof and
-  reboot-survival checks remain manual.
+```sh
+git clone https://github.com/LegacyAI-FloydsLabs/FLOYD-The_Hole_Damn_SWEET.git
+cd FLOYD-The_Hole_Damn_SWEET
+npm install
+npm run typecheck        # builds TS project references
+npm test                 # full suite
+node apps/frame/server/frame-server.mjs   # frame shell on :13030
+```
+
+Optional persistent services (the only LaunchAgents this repo installs):
+`./scripts/new-world-bootstrap.sh` (idempotent PASS/FAIL adoption of a fresh
+machine) or `npm run core:install` for Floyd Core alone. Provider keys load
+from the vault (`provider-keys.json`, mode 600); enter keys in the frame Keys
+panel if the vault is absent.
+
+## Status
+
+- Testing: 154/154 passing (sdk, opencode engine, core daemon, cli) as of last
+  verified run 2026-07-15.
+- Dogfood: frame daily-driver verified on desktop and mobile viewports;
+  rendered-browser visual proof and reboot survival remain manual checks.
+- Known gap: credential authority rework pending — the Vault becomes the single
+  in-FLOYD credential proxy for LLM APIs (no external credential daemons).
 
 ## Policy
 
