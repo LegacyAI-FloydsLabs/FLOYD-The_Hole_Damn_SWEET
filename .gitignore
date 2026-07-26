@@ -28,3 +28,7 @@ apps/frame/server/heartbeat.json
 
 # Independent embedded repo: OpenAI Sites publication project (own remote on git.chatgpt-team.site)
 apps/remote-portal/
+
+# Local session/planning artifacts stay out of the repo
+.planning/
+dogfood-output/
