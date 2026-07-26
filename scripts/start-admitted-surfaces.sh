@@ -2,7 +2,11 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-/Volumes/Storage/FLOYD_RUNTIME}
+RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-}
+if [ -z "$RUNTIME_ROOT" ]; then
+  if [ -d /Volumes/Storage/FLOYD_RUNTIME ]; then RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
+  else RUNTIME_ROOT="$HOME/.floyd"; fi
+fi
 STATE_DIR="$RUNTIME_ROOT/surfaces"
 AGENT_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/Floyd"

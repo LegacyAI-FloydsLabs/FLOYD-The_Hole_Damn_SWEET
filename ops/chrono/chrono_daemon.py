@@ -25,7 +25,10 @@ import sys
 import time
 from dataclasses import dataclass
 
-WORKSTATION = "/Volumes/Storage/FLOYD_WORKSTATION"
+WORKSTATION = os.environ.get(
+    "FLOYD_WORKSTATION_ROOT",
+    os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")),
+)
 SURFACES = os.path.join(WORKSTATION, "intake", "surfaces")
 HEARTBEAT_FILE = os.path.join(WORKSTATION, "apps", "frame", "server", "heartbeat.json")
 LOG_FILE = os.path.expanduser("~/Library/Logs/floyd/chrono.log")

@@ -2,8 +2,12 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SOURCE="$ROOT/com.floyd.core.plist"
-RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-/Volumes/Storage/FLOYD_RUNTIME}
+SOURCE=$(mktemp /tmp/com.floyd.core.plist.XXXXXX)
+RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-}
+if [ -z "$RUNTIME_ROOT" ]; then
+  if [ -d /Volumes/Storage/FLOYD_RUNTIME ]; then RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
+  else RUNTIME_ROOT="$HOME/.floyd"; fi
+fi
 RELEASES="$RUNTIME_ROOT/releases/core"
 CURRENT="$RELEASES/current"
 AGENT_DIR="$HOME/Library/LaunchAgents"
@@ -12,6 +16,46 @@ LOG_DIR="$HOME/Library/Logs/floyd"
 DOMAIN="gui/$(id -u)"
 LABEL="com.floyd.core"
 TOKEN_FILE=${FLOYD_GATEWAY_TOKEN_FILE:-$RUNTIME_ROOT/core/gateway.token}
+
+# Render a machine-correct plist (this user, this runtime root, this node).
+if [ -x /opt/homebrew/bin/node ]; then NODE_BIN=/opt/homebrew/bin/node
+else NODE_BIN=$(command -v node); fi
+cat > "$SOURCE" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.floyd.core</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$NODE_BIN</string>
+    <string>$CURRENT/core/daemon/src/main.ts</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$CURRENT</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>FLOYD_RUNTIME_ROOT</key>
+    <string>$RUNTIME_ROOT</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>$HOME/Library/Logs/floyd/core.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/Library/Logs/floyd/core.err.log</string>
+</dict>
+</plist>
+PLIST
 
 if test -n "$(git -C "$ROOT" status --porcelain)"; then
   printf 'Refusing to deploy an uncommitted Floyd working tree.\n' >&2
@@ -26,6 +70,7 @@ NEW_CURRENT=
 PLIST_BACKUP=
 
 cleanup() {
+  rm -f "$SOURCE"
   test -z "$STAGING" || rm -rf "$STAGING"
   test -z "$DEPS" || rm -rf "$DEPS"
   test -z "$NEW_CURRENT" || rm -f "$NEW_CURRENT"

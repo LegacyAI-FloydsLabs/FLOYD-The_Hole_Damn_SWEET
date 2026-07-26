@@ -19,7 +19,7 @@ echo
 
 # 1. Volume + permission sanity ------------------------------------------------
 echo "[1/6] volumes and permissions"
-[ -d /Volumes/Storage ] && ok "/Volumes/Storage mounted" || bad "/Volumes/Storage NOT mounted — connect the X9 drive"
+[ -d "${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}" ] || [ -d /Volumes/Storage ] && ok "runtime location available" || ok "runtime will be created at ~/.floyd on first run"
 [ -r "$REPO/apps/frame/server/frame-server.mjs" ] && ok "repo readable" || bad "repo unreadable — grant Full Disk / Removable Volumes access to your terminal in System Settings > Privacy"
 
 # 2. Node runtime --------------------------------------------------------------
@@ -34,7 +34,12 @@ fi
 
 # 3. Secrets vault -------------------------------------------------------------
 echo "[3/6] provider-key vault"
-VAULT=/Volumes/Storage/FLOYD_RUNTIME/secrets/provider-keys.json
+RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-}
+if [ -z "$RUNTIME_ROOT" ]; then
+  if [ -d /Volumes/Storage/FLOYD_RUNTIME ]; then RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
+  else RUNTIME_ROOT="$HOME/.floyd"; fi
+fi
+VAULT=$RUNTIME_ROOT/secrets/provider-keys.json
 if [ -f "$VAULT" ]; then
   perms=$(stat -f %Lp "$VAULT")
   [ "$perms" = "600" ] && ok "vault present, mode 600" || { chmod 600 "$VAULT" && ok "vault present, tightened to 600"; }
@@ -45,19 +50,25 @@ fi
 # 4. LaunchAgents (the ONLY persistent services this repo installs) -----------
 echo "[4/6] LaunchAgents (com.floyd.core, com.floyd.frame)"
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/Floyd" "$HOME/Library/Logs/floyd"
-for unit in com.floyd.core:com.floyd.core.plist com.floyd.frame:apps/frame/com.floyd.frame.plist; do
-  label="${unit%%:*}"; src="$REPO/${unit#*:}"
-  dst="$HOME/Library/LaunchAgents/$label.plist"
-  if [ ! -f "$src" ]; then bad "$label source plist missing ($src)"; continue; fi
-  # Rewrite the baked-in home dir so the plist works for whatever user runs this.
-  sed "s|/Users/douglastalley|$HOME|g" "$src" > "$dst"
-  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null
-  if launchctl bootstrap "gui/$(id -u)" "$dst" 2>/dev/null; then
-    ok "$label loaded"
-  else
-    launchctl kickstart "gui/$(id -u)/$label" 2>/dev/null && ok "$label already loaded, kickstarted" || bad "$label failed to load — check $dst"
-  fi
-done
+# Plists are rendered for THIS machine (path, user, node) — never copied static.
+if sh "$REPO/scripts/render-launch-agents.sh" >/dev/null 2>&1; then
+  ok "com.floyd.frame plist rendered for this machine"
+else
+  bad "render-launch-agents.sh failed"
+fi
+label=com.floyd.frame
+dst="$HOME/Library/LaunchAgents/$label.plist"
+launchctl bootout "gui/$(id -u)/$label" 2>/dev/null
+if launchctl bootstrap "gui/$(id -u)" "$dst" 2>/dev/null; then
+  ok "$label loaded"
+else
+  launchctl kickstart "gui/$(id -u)/$label" 2>/dev/null && ok "$label already loaded, kickstarted" || bad "$label failed to load — check $dst"
+fi
+# Core is release-pinned: install via scripts/install-core-launch-agent.sh once
+# a runtime root exists (it builds, health-gates, and can roll back).
+[ -f "$HOME/Library/LaunchAgents/com.floyd.core.plist" ] \
+  && ok "com.floyd.core already installed" \
+  || echo "  NOTE  com.floyd.core not installed — run: npm run core:install"
 
 # 5. Frame reachable -----------------------------------------------------------
 echo "[5/6] frame health"

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "verified_at": "2026-07-14T07:22:20-04:00",
   "authority": {
-    "source_control": "/Volumes/Storage/FLOYD_WORKSTATION",
-    "runtime": "/Volumes/Storage/FLOYD_RUNTIME",
+    "source_control": "${REPO_ROOT}",
+    "runtime": "${RUNTIME_ROOT}",
     "core": "Floyd Core",
     "coding_engine": "OpenCode 1.17.18 via @floyd/opencode-runtime",
     "surface_contract": "@floyd/sdk",
@@ -18,7 +18,7 @@
       "observed_branch": "add-ons",
       "observed_head": "68ba064",
       "source_state": "modified donor; copy required before admission",
-      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/desktop",
+      "intake_copy": "${REPO_ROOT}/intake/surfaces/desktop",
       "copy_verified": true,
       "integration": {
         "status": "verified_component_branch",
@@ -50,7 +50,7 @@
       "observed_branch": null,
       "observed_head": "1bec219",
       "source_state": "donor; copy and provenance verification required",
-      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/ide",
+      "intake_copy": "${REPO_ROOT}/intake/surfaces/ide",
       "copy_verified": true,
       "integration": {
         "status": "verified_component_branch",
@@ -84,7 +84,7 @@
       "observed_branch": "omf-16",
       "observed_head": "c5d2b2",
       "source_state": "modified donor; copy required before admission",
-      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/tui",
+      "intake_copy": "${REPO_ROOT}/intake/surfaces/tui",
       "copy_verified": true,
       "integration": {
         "status": "verified_component_branch",
@@ -98,10 +98,10 @@
         "interactive_lifecycle_controls": true,
         "legacy_direct_provider_command": "omp launch",
         "runtime_artifact": {
-          "path": "/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui",
+          "path": "${RUNTIME_ROOT}/bin/floyd-tui",
           "sha256": "933ab2bab3037b226e48ca67e698de1ce878d81e2c00ee6c442102ac3ee0dcb8",
           "architecture": "arm64",
-          "provenance": "/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui.provenance"
+          "provenance": "${RUNTIME_ROOT}/bin/floyd-tui.provenance"
         },
         "experience": {
           "status": "verified",
@@ -124,7 +124,7 @@
       "observed_branch": "ci/harden-first-run",
       "observed_head": "b3a4d9",
       "source_state": "modified donor; copy required before admission",
-      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/pty",
+      "intake_copy": "${REPO_ROOT}/intake/surfaces/pty",
       "copy_verified": true,
       "integration": {
         "status": "verified_component_branch",
@@ -159,7 +159,7 @@
       "observed_branch": "main",
       "observed_head": "30d6717",
       "source_state": "clean local donor; copy required before admission",
-      "intake_copy": "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/launcher",
+      "intake_copy": "${REPO_ROOT}/intake/surfaces/launcher",
       "copy_verified": true,
       "integration": {
         "status": "verified_local_copy_commit",

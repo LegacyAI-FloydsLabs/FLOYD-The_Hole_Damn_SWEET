@@ -26,7 +26,7 @@ clone_remote ide https://github.com/CaptainPhantasy/mobile-web-IDE.git
 clone_remote tui https://github.com/CaptainPhantasy/OhMyFloyd.git
 clone_remote pty https://github.com/CaptainPhantasy/TerminalOne.git
 
-LAUNCHER_SOURCE=/Volumes/Storage/harness-launcher
+LAUNCHER_SOURCE=${LAUNCHER_SOURCE:-/Volumes/Storage/harness-launcher}
 LAUNCHER_TARGET="$DEST/launcher"
 if [ -d "$LAUNCHER_TARGET/.git" ]; then
   git -C "$LAUNCHER_TARGET" fetch --prune origin

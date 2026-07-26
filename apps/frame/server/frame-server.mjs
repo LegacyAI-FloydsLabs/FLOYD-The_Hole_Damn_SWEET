@@ -18,6 +18,14 @@ import net from "node:net";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const FRAME_DIR = resolve(ROOT, "..");
+// Repo root: everything the frame serves or spawns is addressed relative to
+// this clone, never to a machine-specific absolute path.
+const REPO_ROOT = resolve(FRAME_DIR, "..", "..");
+// Runtime home (vault, browser profile, tokens): env override first, then the
+// legacy external-drive hub if it exists, else ~/.floyd on this machine.
+const LEGACY_RUNTIME_ROOT = "/Volumes/Storage/FLOYD_RUNTIME";
+const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT
+  || (existsSync(LEGACY_RUNTIME_ROOT) ? LEGACY_RUNTIME_ROOT : join(homedir(), ".floyd"));
 const PUBLIC_DIR = join(FRAME_DIR, "public");
 const BACKGROUNDS_DIR = join(FRAME_DIR, "backgrounds");
 const REGISTRY_PATH = join(FRAME_DIR, "registry.json");
@@ -29,7 +37,7 @@ const PORT = Number(process.env.FRAME_PORT || 13030);
 // whose SHELL is a wrapper that execs the CLI, so the frame shows it pre-open.
 // All apps run from monorepo copies under intake/surfaces/ — originals
 // elsewhere on disk are never touched by the frame.
-const SURFACES = "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces";
+const SURFACES = join(REPO_ROOT, "intake", "surfaces");
 const PTY_COPY = join(SURFACES, "pty");
 // One node for everything: homebrew node (native modules in the copies are
 // built against it). No per-service pins.
@@ -49,7 +57,7 @@ function wrapperFor(id, execLine) {
 // ---- provider key vault ------------------------------------------------------
 // One place for vendor API keys. Stored 0600 in FLOYD_RUNTIME/secrets, injected
 // into every managed app's environment at launch, never returned unmasked.
-const SECRETS_DIR = "/Volumes/Storage/FLOYD_RUNTIME/secrets";
+const SECRETS_DIR = join(RUNTIME_ROOT, "secrets");
 const VAULT_PATH = join(SECRETS_DIR, "provider-keys.json");
 const PROVIDERS = [
   { id: "openai",     name: "OpenAI",       env: "OPENAI_API_KEY",       prefixes: ["sk-proj-", "sk-svcacct-"], ambiguous: ["sk-"], url: "https://platform.openai.com/api-keys",
@@ -298,7 +306,7 @@ const INTERNAL_EXTENSIONS = [
 // Dedicated profile so the internal browser's state persists independent of
 // the human's Chrome, plus a fixed CDP port so the frame (and every agent via
 // the MCP gateway) can drive it.
-const INTERNAL_BROWSER_PROFILE = "/Volumes/Storage/FLOYD_RUNTIME/internal-browser-profile";
+const INTERNAL_BROWSER_PROFILE = join(RUNTIME_ROOT, "internal-browser-profile");
 const INTERNAL_BROWSER_CDP_PORT = 9223;
 const CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
@@ -387,14 +395,14 @@ async function openChrome(url) {
 // Exposes the Python time-manipulation controller (ops/chrono/chrono_sandbox.py)
 // per surface. Only surfaces that are git repos are eligible. The UI drives
 // this through /api/chrono/<surface>/<op>.
-const CHRONO_PY = "/opt/homebrew/bin/python3";
-const CHRONO_CLI = "/Volumes/Storage/FLOYD_WORKSTATION/ops/chrono/chrono_sandbox.py";
+const CHRONO_PY = existsSync("/opt/homebrew/bin/python3") ? "/opt/homebrew/bin/python3" : "python3";
+const CHRONO_CLI = join(REPO_ROOT, "ops", "chrono", "chrono_sandbox.py");
 const CHRONO_SURFACES = {
   ide: join(SURFACES, "ide"),
   desktop: join(SURFACES, "desktop"),
   launcher: join(SURFACES, "launcher"),
   pty: PTY_COPY,
-  workstation: "/Volumes/Storage/FLOYD_WORKSTATION",
+  workstation: REPO_ROOT,
 };
 // op -> argv builder. Validation is strict: no free-form strings reach the CLI.
 const CHRONO_OPS = {

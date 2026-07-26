@@ -48,3 +48,6 @@ FEATURES.md
 CHANGELOG.md
 .proofline.json
 SSOT/
+
+# Frame-generated shell wrappers (rendered per machine at runtime)
+apps/frame/server/shells/

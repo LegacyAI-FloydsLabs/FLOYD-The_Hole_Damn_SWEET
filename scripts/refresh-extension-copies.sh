@@ -20,5 +20,7 @@ copy() {
   echo "OK: $2 <- $src ($name v$ver)"
 }
 
-copy "/Volumes/SanDisk1Tb/open-anvil/extension" open-anvil
-copy "/Volumes/Storage/Floyd TTY Bridge for Chrome/extension" floyd-tty-bridge
+# Donor originals: overridable per machine; skipped when the donor is absent
+# (the committed copies under apps/frame/extensions remain authoritative).
+copy "${OPEN_ANVIL_SRC:-/Volumes/SanDisk1Tb/open-anvil/extension}" open-anvil
+copy "${TTY_BRIDGE_SRC:-/Volumes/Storage/Floyd TTY Bridge for Chrome/extension}" floyd-tty-bridge

@@ -6,9 +6,18 @@ MANIFEST="$ROOT/ecosystem/surfaces.json"
 
 node --input-type=module - "$MANIFEST" <<'NODE'
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 
-const manifest = JSON.parse(await readFile(process.argv[2], "utf8"));
+const repoRoot = process.argv[2].replace(/\/ecosystem\/surfaces\.json$/, "");
+const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT
+  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const expand = (v) => typeof v === "string"
+  ? v.replaceAll("${REPO_ROOT}", repoRoot).replaceAll("${RUNTIME_ROOT}", runtimeRootForManifest) : v;
+const manifest = JSON.parse(
+  await readFile(process.argv[2], "utf8"),
+  (key, value) => expand(value),
+);
 const expected = ["desktop", "ide", "tui", "pty", "launcher"];
 const actual = manifest.surfaces.map(surface => surface.id);
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -40,8 +49,11 @@ NODE
 
 node --input-type=module <<'NODE'
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
-const token = (await readFile("/Volumes/Storage/FLOYD_RUNTIME/core/gateway.token", "utf8")).trim();
+const runtimeRoot = process.env.FLOYD_RUNTIME_ROOT
+  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const token = (await readFile(`${runtimeRoot}/core/gateway.token`, "utf8")).trim();
 const response = await fetch("http://127.0.0.1:41414/api/health", {
   headers: { authorization: `Bearer ${token}` },
 });
@@ -69,7 +81,16 @@ NODE
 tab=$(printf '\t')
 node --input-type=module - "$MANIFEST" <<'NODE' | while IFS="$tab" read -r id copy port; do
 import { readFile } from "node:fs/promises";
-const manifest = JSON.parse(await readFile(process.argv[2], "utf8"));
+import { existsSync } from "node:fs";
+const repoRoot = process.argv[2].replace(/\/ecosystem\/surfaces\.json$/, "");
+const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT
+  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const expand = (v) => typeof v === "string"
+  ? v.replaceAll("${REPO_ROOT}", repoRoot).replaceAll("${RUNTIME_ROOT}", runtimeRootForManifest) : v;
+const manifest = JSON.parse(
+  await readFile(process.argv[2], "utf8"),
+  (key, value) => expand(value),
+);
 for (const surface of manifest.surfaces.filter(surface => surface.integration?.admitted_runtime_url)) {
   const port = new URL(surface.integration.admitted_runtime_url).port;
   process.stdout.write(`${surface.id}\t${surface.intake_copy}\t${port}\n`);
@@ -91,7 +112,16 @@ done
 
 node --input-type=module - "$MANIFEST" <<'NODE' | while IFS="$tab" read -r id copy expected_head; do
 import { readFile } from "node:fs/promises";
-const manifest = JSON.parse(await readFile(process.argv[2], "utf8"));
+import { existsSync } from "node:fs";
+const repoRoot = process.argv[2].replace(/\/ecosystem\/surfaces\.json$/, "");
+const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT
+  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const expand = (v) => typeof v === "string"
+  ? v.replaceAll("${REPO_ROOT}", repoRoot).replaceAll("${RUNTIME_ROOT}", runtimeRootForManifest) : v;
+const manifest = JSON.parse(
+  await readFile(process.argv[2], "utf8"),
+  (key, value) => expand(value),
+);
 for (const surface of manifest.surfaces) {
   process.stdout.write(`${surface.id}\t${surface.intake_copy}\t${surface.integration.commit}\n`);
 }

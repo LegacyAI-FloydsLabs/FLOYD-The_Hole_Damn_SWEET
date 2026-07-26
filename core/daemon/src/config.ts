@@ -2,11 +2,15 @@ import { statSync, readFileSync, mkdirSync, chmodSync, existsSync, writeFileSync
 import { randomBytes } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const REPO_ROOT = join(HERE, "..", "..", "..");
-export const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT ?? "/Volumes/Storage/FLOYD_RUNTIME";
+const LEGACY_RUNTIME_ROOT = "/Volumes/Storage/FLOYD_RUNTIME";
+export const RUNTIME_ROOT =
+  process.env.FLOYD_RUNTIME_ROOT ??
+  (existsSync(LEGACY_RUNTIME_ROOT) ? LEGACY_RUNTIME_ROOT : join(homedir(), ".floyd"));
 
 export const CORE_PORT = Number(process.env.FLOYD_CORE_PORT ?? 41414);
 export const REMOTE_CORE_PORT = Number(process.env.FLOYD_REMOTE_CORE_PORT ?? 41416);
