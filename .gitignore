@@ -40,3 +40,11 @@ findings.md
 repository_report.md
 Issues/
 SSOT/repository_report*.json
+
+# Non-runtime documentation (runtime-only tracking)
+docs/
+CLAUDE.md
+FEATURES.md
+CHANGELOG.md
+.proofline.json
+SSOT/
