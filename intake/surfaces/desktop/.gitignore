@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+dist/
+dist-server/
+*.log
+
+# Environment variables (IMPORTANT: never commit .env.local)
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Cache
+.cache/
+.vite/
+.eslintcache
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Session data
+.floyd-data/
+.floyd/
+
+# Build artifacts
+*.tsbuildinfo
+
+# Runtime state: sessions, settings (contains API keys) — never commit
+.floyd-data/
+frame-visual-check.tmp.mjs
+vendor/
+
+# Not part of the application: local governance, agent state, planning docs
+.DS_Store
+.claude/
+.floyd/
+.floyd-lock-sha
+Claude.md
+FLOYD.MD
+Issues/
+SSOT/
+docs/
+assets/

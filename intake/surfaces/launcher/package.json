@@ -1,0 +1,39 @@
+{
+  "name": "harness-launcher",
+  "version": "1.0.0",
+  "description": "Interactive CLI harness launcher with terminal emulation",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "test": "node tests/multi-harness-test.js && node tests/error-recovery-test.js && node tests/security-args-test.js && node tests/respawn-race-test.js && node tests/concurrent-sessions-test.js && node tests/process-lifecycle-test.js && node tests/accessibility-card-test.js",
+    "test:multi": "node tests/multi-harness-test.js",
+    "test:errors": "node tests/error-recovery-test.js",
+    "test:security": "node tests/security-args-test.js",
+    "test:respawn": "node tests/respawn-race-test.js",
+    "test:concurrent": "node tests/concurrent-sessions-test.js",
+    "test:single": "node tests/test-harness.js"
+  },
+  "keywords": [
+    "cli",
+    "harness",
+    "agent",
+    "launcher"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "express": "^4.18.2",
+    "node-pty": "^1.1.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.41.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

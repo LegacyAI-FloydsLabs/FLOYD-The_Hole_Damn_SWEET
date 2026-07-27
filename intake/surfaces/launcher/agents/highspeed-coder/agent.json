@@ -1,0 +1,38 @@
+{
+  "models": {
+    "large": {
+      "model": "glm-5.2",
+      "provider": "zai",
+      "max_tokens": 131072,
+      "temperature": 0.2,
+      "top_p": 0.9
+    }
+  },
+  "options": {
+    "context_paths": [
+      "${AGENT_HOME}/prompt/AGENT.md"
+    ],
+    "skills_paths": [
+      "${AGENT_HOME}/skills"
+    ],
+    "disable_provider_auto_update": true,
+    "disable_auto_summarize": true
+  },
+  "mcp": {
+    "mcp-gateway": {
+      "disabled": true
+    },
+    "zai-mcp-server": {
+      "disabled": true
+    },
+    "web-search-prime": {
+      "disabled": true
+    },
+    "web-reader": {
+      "disabled": true
+    },
+    "zread": {
+      "disabled": true
+    }
+  }
+}

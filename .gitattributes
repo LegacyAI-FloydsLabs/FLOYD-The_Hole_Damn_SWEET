@@ -1,0 +1,2 @@
+intake/surfaces/ff/bin/floyd-ff-real filter=lfs diff=lfs merge=lfs -text
+intake/surfaces/omf/bin/omp filter=lfs diff=lfs merge=lfs -text

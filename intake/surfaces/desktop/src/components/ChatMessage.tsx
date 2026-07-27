@@ -1,0 +1,118 @@
+/**
+ * Chat Message Component
+ */
+
+import { cn } from '@/lib/utils';
+import type { Message } from '@/types';
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { User, Bot } from 'lucide-react';
+
+interface ChatMessageProps {
+  message: Message;
+  isStreaming?: boolean;
+}
+
+export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
+  const isUser = message.role === 'user';
+  
+  return (
+    <div className={cn(
+      'flex gap-3',
+      isUser ? 'justify-end' : 'justify-start',
+    )}>
+      {!isUser && (
+        <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center flex-shrink-0">
+          <Bot className="w-5 h-5" />
+        </div>
+      )}
+      
+      <div className={cn(
+        'max-w-[70%] rounded-lg px-4 py-3',
+        isUser 
+          ? 'bg-sky-600 text-white' 
+          : 'bg-slate-800 text-slate-100',
+      )}>
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {message.attachments.map((att, i) => (
+              att.type === 'image' ? (
+                <img
+                  key={i}
+                  src={`data:${att.mimeType || 'image/jpeg'};base64,${att.data}`}
+                  alt={att.name}
+                  className="max-w-[200px] max-h-[200px] rounded-md border border-white/20"
+                />
+              ) : att.type === 'video' ? (
+                <video
+                  key={i}
+                  src={`data:${att.mimeType || 'video/mp4'};base64,${att.data}`}
+                  controls
+                  className="max-w-[240px] max-h-[200px] rounded-md border border-white/20"
+                />
+              ) : (
+                <div key={i} className="flex items-center gap-2 bg-black/20 px-3 py-2 rounded-md text-sm">
+                  <span className="font-mono truncate max-w-[150px]">{att.name}</span>
+                </div>
+              )
+            ))}
+          </div>
+        )}
+        {isUser ? (
+          <p className="whitespace-pre-wrap">{message.content}</p>
+        ) : (
+          <div className="prose prose-invert prose-sm max-w-none">
+            <ReactMarkdown
+              components={{
+                code({ node, className, children, ...props }) {
+                  const match = /language-(\w+)/.exec(className || '');
+                  const isInline = !match;
+                  
+                  if (isInline) {
+                    return (
+                      <code className="bg-slate-700 px-1 py-0.5 rounded text-sm" {...props}>
+                        {children}
+                      </code>
+                    );
+                  }
+                  
+                  return (
+                    <SyntaxHighlighter
+                      style={oneDark as any}
+                      language={match[1]}
+                      PreTag="div"
+                      className="rounded-lg !bg-slate-900 !mt-2 !mb-2"
+                    >
+                      {String(children).replace(/\n$/, '')}
+                    </SyntaxHighlighter>
+                  );
+                },
+                p({ children }) {
+                  return <p className="mb-2 last:mb-0">{children}</p>;
+                },
+                ul({ children }) {
+                  return <ul className="list-disc list-inside mb-2">{children}</ul>;
+                },
+                ol({ children }) {
+                  return <ol className="list-decimal list-inside mb-2">{children}</ol>;
+                },
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+            {isStreaming && (
+              <span className="inline-block w-2 h-4 bg-sky-400 animate-pulse ml-1" />
+            )}
+          </div>
+        )}
+      </div>
+      
+      {isUser && (
+        <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center flex-shrink-0">
+          <User className="w-5 h-5" />
+        </div>
+      )}
+    </div>
+  );
+}

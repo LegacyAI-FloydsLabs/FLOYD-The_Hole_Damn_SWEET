@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+ <meta name="apple-mobile-web-app-capable" content="yes">
+ <meta name="mobile-web-app-capable" content="yes">
+ <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+ <meta name="apple-mobile-web-app-title" content="TerminalOne">
+ <title>TerminalOne</title>
+ <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+ <link rel="manifest" href="/manifest.json">
+ <link rel="apple-touch-icon" href="/icon-180.png">
+ <meta name="theme-color" content="#1a1b26">
+ <link rel="preconnect" href="https://fonts.googleapis.com">
+ <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+ <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+ <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+ <style>
+  /* ── Theme variables (defaults: Tokyo Night). JS overrides per selected theme. ── */
+  :root {
+   --ui-bg: #1a1b26;
+   --ui-fg: #c0caf5;
+   --ui-elevated: #16161e;
+   --ui-border: rgba(169,177,214,0.10);
+   --ui-accent: #7aa2f7;
+   --ui-muted: #565f89;
+  }
+
+  * { box-sizing: border-box; }
+  html {
+   height: 100%;
+   margin: 0;
+   overflow: hidden;
+   -webkit-font-smoothing: antialiased;
+   -moz-osx-font-smoothing: grayscale;
+  }
+  body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+   background: var(--ui-bg);
+   color: var(--ui-fg);
+   font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+   /* Prevent iOS text-size adjust and rubber-band overscroll on the chrome. */
+   -webkit-text-size-adjust: 100%;
+   overscroll-behavior: none;
+   /* Respect notches / home indicators. */
+   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* Digital-rain canvas (Matrix theme only) sits behind the app. */
+  #fxCanvas {
+   position: fixed;
+   inset: 0;
+   z-index: 0;
+   display: none;
+   pointer-events: none;
+  }
+
+  .app-shell {
+   position: relative;
+   z-index: 1;
+   display: flex;
+   flex-direction: column;
+   height: 100vh;
+   height: 100dvh;
+   width: 100vw;
+   background: transparent;
+  }
+  .terminal-header {
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   padding: 8px 16px;
+   background: var(--ui-elevated);
+   border-bottom: 1px solid var(--ui-border);
+   flex: 0 0 auto;
+   transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .terminal-title {
+   font-weight: 600;
+   font-size: 14px;
+   letter-spacing: 0.02em;
+   color: var(--ui-fg);
+  }
+  .statuswrap { display: flex; align-items: center; gap: 6px; }
+  .status-dot {
+   width: 8px;
+   height: 8px;
+   border-radius: 50%;
+   background: var(--ui-muted);
+   flex-shrink: 0;
+   transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .status-dot.connected { background: var(--ui-accent); box-shadow: 0 0 6px var(--ui-accent); }
+  .status-dot.error { background: #f7768e; box-shadow: 0 0 6px #f7768e; }
+  .status-dot.connecting { background: var(--ui-accent); animation: dotpulse 1.4s ease-in-out infinite; }
+  @keyframes dotpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .terminal-status {
+   font-size: 12px;
+   padding: 2px 8px;
+   border-radius: 4px;
+   background: var(--ui-elevated);
+   border: 1px solid var(--ui-border);
+   color: var(--ui-muted);
+   font-variant-numeric: tabular-nums;
+  }
+  .terminal-status.connected { color: var(--ui-accent); }
+  .terminal-status.error { color: #f7768e; }
+  .terminal-actions { display: flex; gap: 8px; }
+  button {
+   background: var(--ui-elevated);
+   border: 1px solid var(--ui-border);
+   color: var(--ui-fg);
+   border-radius: 4px;
+   padding: 4px 10px;
+   font-family: inherit;
+   font-size: 12px;
+   cursor: pointer;
+   transition-property: background-color, color, border-color, transform;
+   transition-duration: 0.12s;
+   transition-timing-function: ease;
+  }
+  button:hover { border-color: var(--ui-accent); }
+  button:active { transform: scale(0.96); }
+  button:focus-visible {
+   outline: 2px solid var(--ui-accent);
+   outline-offset: 2px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .terminal-container {
+   flex: 1 1 auto;
+   min-height: 0;
+   padding: 8px 12px 12px;
+   background: transparent;
+   /* Two-finger scroll is handled in JS; block the browser from also scrolling. */
+   touch-action: none;
+  }
+  #terminal { width: 100%; height: 100%; }
+
+  /* ── On-screen key bar (iPhone / iPad only). Hidden on desktop. ── */
+  .keybar {
+   flex: 0 0 auto;
+   display: none;
+   gap: 6px;
+   align-items: center;
+   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+   background: var(--ui-elevated);
+   border-top: 1px solid var(--ui-border);
+   overflow-x: auto;
+   -webkit-overflow-scrolling: touch;
+   scrollbar-width: none;
+  }
+  .keybar::-webkit-scrollbar { display: none; }
+  body[data-device="iphone"] .keybar.iphone,
+  body[data-device="ipad"] .keybar.ipad { display: flex; }
+  .keybar .kb-group {
+   display: flex;
+   gap: 4px;
+   padding-right: 6px;
+   border-right: 1px solid var(--ui-border);
+  }
+  .keybar .kb-group:last-child { border-right: none; padding-right: 0; }
+  .keybar .kb-key {
+   flex: 0 0 auto;
+   min-width: 44px;
+   min-height: 44px;
+   display: inline-flex;
+   align-items: center;
+   justify-content: center;
+   background: var(--ui-bg);
+   border: 1px solid var(--ui-border);
+   border-radius: 6px;
+   color: var(--ui-fg);
+   font-family: inherit;
+   font-size: 13px;
+   padding: 0 8px;
+   /* Big touch target with no tap highlight. */
+   -webkit-tap-highlight-color: transparent;
+   touch-action: manipulation;
+   user-select: none;
+   -webkit-user-select: none;
+   transition-property: background-color, border-color, color, transform;
+   transition-duration: 0.08s;
+   transition-timing-function: ease;
+  }
+  body[data-device="ipad"] .keybar .kb-key { min-width: 44px; min-height: 44px; font-size: 14px; }
+  .keybar .kb-key:active { background: var(--ui-accent); color: #000; border-color: var(--ui-accent); transform: scale(0.96); }
+  .keybar .kb-key.toggle.active {
+   background: var(--ui-accent);
+   color: #000;
+   border-color: var(--ui-accent);
+  }
+  .keybar .kb-arrows { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+  .keybar .kb-arrows .kb-row { display: flex; gap: 3px; }
+  .keybar .kb-spacer { flex: 0 1 6px; }
+
+  .terminal-footer {
+   flex: 0 0 auto;
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding: 6px 16px;
+   background: var(--ui-elevated);
+   border-top: 1px solid var(--ui-border);
+   font-size: 11px;
+   color: var(--ui-muted);
+   font-variant-numeric: tabular-nums;
+  }
+  .banner {
+   position: fixed;
+   top: 0; left: 0; right: 0;
+   padding: 8px 16px;
+   font-size: 12px;
+   z-index: 300;
+   display: none;
+  }
+  .banner.error { background: #f7768e; color: #1a1b26; display: block; }
+  .banner.warn { background: #e0af68; color: #1a1b26; display: block; }
+
+  /* ── Floyd TTY Bridge style: compact, uppercase mono, neon glow ── */
+  body[data-style="floyd"] { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, monospace; }
+  body[data-style="floyd"] .terminal-header { padding: 3px 10px; }
+  body[data-style="floyd"] .terminal-title {
+   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--ui-accent);
+  }
+  body[data-style="floyd"] button {
+   font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+   padding: 3px 8px; border-radius: 3px;
+  }
+  body[data-style="floyd"] button:hover { background: var(--ui-accent); color: #000; }
+  body[data-style="floyd"] .terminal-status {
+   font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px; background: transparent; border-color: transparent;
+  }
+  body[data-style="floyd"] .status-dot.connected { box-shadow: 0 0 8px var(--ui-accent); }
+  body[data-style="floyd"] .terminal-footer {
+   font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 10px;
+  }
+
+  /* ── Matrix theme: reveal the rain behind translucent chrome ── */
+  body[data-theme="matrix"] { background: transparent; }
+  body[data-theme="matrix"] #fxCanvas { display: block; }
+  body[data-theme="matrix"] .terminal-header,
+  body[data-theme="matrix"] .terminal-footer,
+  body[data-theme="matrix"] .keybar { background: rgba(0,17,0,0.66); }
+
+  /* ── Settings modal ── */
+  #settingsModal {
+   position: fixed; inset: 0; z-index: 400;
+   display: none; align-items: center; justify-content: center;
+   background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+  }
+  #settingsModal.open { display: flex; }
+  .settings-panel {
+   background: var(--ui-elevated);
+   border: 1px solid var(--ui-border);
+   border-radius: 10px;
+   padding: 18px;
+   width: 90%;
+   max-width: 340px;
+   box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  }
+  .settings-panel h2 { font-size: 13px; margin: 0 0 14px; color: var(--ui-accent); letter-spacing: 0.5px; }
+  .settings-row { margin-bottom: 14px; }
+  .settings-row label {
+   display: block; font-size: 11px; color: var(--ui-muted);
+   margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .settings-row select {
+   width: 100%;
+   background: var(--ui-bg);
+   color: var(--ui-fg);
+   border: 1px solid var(--ui-border);
+   border-radius: 6px;
+   padding: 7px 9px;
+   font-family: inherit;
+   font-size: 13px;
+   cursor: pointer;
+  }
+  .settings-row select:focus { outline: none; border-color: var(--ui-accent); }
+  .settings-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+ .t1toolbar {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 6px;
+   padding: 6px 16px;
+   background: var(--ui-elevated);
+   border-bottom: 1px solid var(--ui-border);
+   flex: 0 0 auto;
+ }
+ .t1toolbar:empty { display: none; }
+ .t1button {
+   background: var(--ui-bg);
+   border: 1px solid var(--ui-border);
+   color: var(--ui-fg);
+   border-radius: 6px;
+   padding: 4px 10px;
+   font-size: 12px;
+   cursor: pointer;
+ }
+ .t1button:hover { border-color: var(--ui-accent); }
+ .t1button:active { transform: scale(0.96); }
+ .t1button.active { background: var(--ui-accent); color: #000; border-color: var(--ui-accent); }
+ /* Toast notifications — transient, stacked, auto-dismissing. */
+ .t1toast-host {
+   position: fixed;
+   top: 12px;
+   right: 12px;
+   z-index: 1000;
+   display: flex;
+   flex-direction: column;
+   gap: 8px;
+   max-width: min(360px, 90vw);
+   pointer-events: none;
+ }
+ .t1toast {
+   pointer-events: auto;
+   background: var(--ui-elevated);
+   color: var(--ui-fg);
+   border: 1px solid var(--ui-border);
+   border-left: 3px solid var(--ui-muted);
+   border-radius: 6px;
+   padding: 9px 12px;
+   font-size: 12px;
+   line-height: 1.35;
+   box-shadow: 0 6px 22px rgba(0,0,0,0.45);
+   opacity: 0;
+   transform: translateX(12px);
+   transition: opacity 0.2s ease, transform 0.2s ease;
+   word-wrap: break-word;
+   font-variant-numeric: tabular-nums;
+ }
+ .t1toast.show { opacity: 1; transform: translateX(0); }
+ .t1toast-info { border-left-color: var(--ui-accent); }
+ .t1toast-warn { border-left-color: #e0af68; }
+ .t1toast-error { border-left-color: #f7768e; }
+ </style>
+</head>
+<body data-style="default" data-theme="tokyo-night" data-device="desktop">
+ <canvas id="fxCanvas" aria-hidden="true"></canvas>
+ <div class="banner" id="banner"></div>
+
+ <div class="app-shell">
+  <header class="terminal-header">
+   <div class="terminal-title">TerminalOne</div>
+   <div class="terminal-actions">
+    <button id="floydBtn" type="button" title="Launch the Floyd coding partner and continue active context">Floyd</button>
+    <button id="settingsBtn" type="button" title="Settings">Settings</button>
+    <button id="reconnectBtn" type="button">Reconnect</button>
+    <button id="closeBtn" type="button">Close</button>
+   </div>
+   <div class="statuswrap">
+    <span class="terminal-status" id="floydStatus">Core checking</span>
+    <span class="status-dot" id="statusDot"></span>
+    <span class="terminal-status" id="status">Ready</span>
+   </div>
+  </header>
+
+  <!-- Feature toolbar — buttons appended by public/features/*.mjs modules. -->
+  <div class="t1toolbar" id="t1toolbar" role="toolbar" aria-label="Features"></div>
+  <main class="terminal-container">
+   <div id="terminal"></div>
+  </main>
+
+  <!-- iPhone key bar: compact single row of essentials. -->
+  <div class="keybar iphone" id="keybarIphone" role="toolbar" aria-label="Control keys"></div>
+  <!-- iPad key bar: wide — modifiers, navigation, arrows, symbols. -->
+  <div class="keybar ipad" id="keybarIpad" role="toolbar" aria-label="Control keys"></div>
+
+  <footer class="terminal-footer">
+   <span id="footerMeta">WebSocket terminal emulator</span>
+   <span id="sessionInfo"></span>
+  </footer>
+ </div>
+
+ <!-- Settings modal -->
+ <div id="settingsModal" role="dialog" aria-modal="true" aria-label="Settings">
+  <div class="settings-panel">
+   <h2>Settings</h2>
+   <div class="settings-row">
+    <label for="styleSelect">Terminal style</label>
+    <select id="styleSelect">
+     <option value="default">TerminalOne (default)</option>
+     <option value="floyd">Floyd TTY Bridge</option>
+    </select>
+   </div>
+   <div class="settings-row">
+    <label for="themeSelect">Color theme</label>
+    <select id="themeSelect"></select>
+   </div>
+   <div class="settings-actions">
+    <button id="settingsClose" type="button">Done</button>
+   </div>
+  </div>
+ </div>
+
+ <script type="module">
+  import { Terminal } from '/node_modules/@xterm/xterm/lib/xterm.mjs';
+ import { FitAddon } from '/node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
+ import { WebLinksAddon } from '/node_modules/@xterm/addon-web-links/lib/addon-web-links.mjs';
+ import { WebglAddon } from '/node_modules/@xterm/addon-webgl/lib/addon-webgl.mjs';
+ import { InputGuard } from './input-guard.mjs';
+
+  // Cockpit's unified workspace can request one exact semantic continuation.
+  // The marker carries no secret or context IDs; TerminalOne asks Core for the
+  // authoritative project/session/run/event tuple and removes the marker from
+  // browser history before opening its WebSocket.
+  const launchQuery = new URLSearchParams(location.search);
+  const integratedFloydMarker = launchQuery.get('floyd');
+  const integratedFloydContinue = integratedFloydMarker === 'continue';
+  const integratedFloydEmbedded = integratedFloydMarker === 'integrated';
+  let integratedFloydContext = null;
+  let terminalReadyForFloyd = false;
+  let integratedFloydStarted = false;
+  if (launchQuery.has('floyd')) {
+   launchQuery.delete('floyd');
+   const rest = launchQuery.toString();
+   history.replaceState({}, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`);
+  }
+
+  // ── Theme catalog ─────────────────────────────────────────────────────────
+  const THEMES = {
+   'tokyo-night': {
+    name: 'Tokyo Night',
+    ui: { bg:'#1a1b26', fg:'#c0caf5', elevated:'#24283b', border:'rgba(169,177,214,0.10)', accent:'#7aa2f7', muted:'#565f89' },
+    xterm: { background:'#1a1b26', foreground:'#c0caf5', cursor:'#c0caf5', cursorAccent:'#1a1b26', selectionBackground:'#33467c',
+     black:'#15161e', red:'#f7768e', green:'#9ece6a', yellow:'#e0af68', blue:'#7aa2f7', magenta:'#bb9af7', cyan:'#7dcfff', white:'#a9b1d6',
+     brightBlack:'#414868', brightRed:'#f7768e', brightGreen:'#9ece6a', brightYellow:'#e0af68', brightBlue:'#7aa2f7', brightMagenta:'#bb9af7', brightCyan:'#7dcfff', brightWhite:'#c0caf5' }
+   },
+   'absolute-void': {
+    name: 'Absolute Void (VOID)',
+    ui: { bg:'#000000', fg:'rgba(245,248,252,0.92)', elevated:'#04070a', border:'rgba(255,255,255,0.055)', accent:'#7ddcff', muted:'rgba(170,180,190,0.58)' },
+    xterm: { background:'#000000', foreground:'#f5f8fc', cursor:'#7ddcff', cursorAccent:'#000000', selectionBackground:'#1f5366',
+     black:'#0a0a0a', red:'#ff6961', green:'#5ee2a0', yellow:'#f5d76e', blue:'#7ddcff', magenta:'#c08bff', cyan:'#7ddcff', white:'#f5f8fc',
+     brightBlack:'#6f7b85', brightRed:'#ff8a82', brightGreen:'#7df0b8', brightYellow:'#ffe390', brightBlue:'#a3e7ff', brightMagenta:'#dcb0ff', brightCyan:'#bff0ff', brightWhite:'#ffffff' }
+   },
+   'matrix': {
+    name: 'Matrix — Digital Rain',
+    ui: { bg:'#000000', fg:'#d9ffe0', elevated:'#001a00', border:'rgba(0,255,65,0.20)', accent:'#00ff41', muted:'#66ff88' },
+    xterm: { background:'rgba(0,0,0,0.66)', foreground:'#00ff41', cursor:'#00ff41', cursorAccent:'#000000', selectionBackground:'#064d16',
+     black:'#001100', red:'#ff4d4d', green:'#00ff41', yellow:'#ccff66', blue:'#00cc33', magenta:'#66ff88', cyan:'#00ff99', white:'#d9ffe0',
+     brightBlack:'#006b1a', brightRed:'#ff7777', brightGreen:'#5cff7d', brightYellow:'#ddff99', brightBlue:'#44ff66', brightMagenta:'#99ffbb', brightCyan:'#88ffcc', brightWhite:'#ffffff' }
+   },
+   'dracula': {
+    name: 'Dracula',
+    ui: { bg:'#282a36', fg:'#f8f8f2', elevated:'#21222c', border:'rgba(248,248,242,0.10)', accent:'#bd93f9', muted:'#6272a4' },
+    xterm: { background:'#282a36', foreground:'#f8f8f2', cursor:'#f8f8f2', cursorAccent:'#282a36', selectionBackground:'#44475a',
+     black:'#21222c', red:'#ff5555', green:'#50fa7b', yellow:'#f1fa8c', blue:'#bd93f9', magenta:'#ff79c6', cyan:'#8be9fd', white:'#f8f8f2',
+     brightBlack:'#6272a4', brightRed:'#ff6e6e', brightGreen:'#69ff94', brightYellow:'#ffffa5', brightBlue:'#d6acff', brightMagenta:'#ff92df', brightCyan:'#a4ffff', brightWhite:'#ffffff' }
+   },
+   'gruvbox': {
+    name: 'Gruvbox Dark',
+    ui: { bg:'#1d2021', fg:'#ebdbb2', elevated:'#32302f', border:'rgba(235,219,178,0.10)', accent:'#fabd2f', muted:'#a89984' },
+    xterm: { background:'#1d2021', foreground:'#ebdbb2', cursor:'#ebdbb2', cursorAccent:'#1d2021', selectionBackground:'#504945',
+     black:'#282828', red:'#cc241d', green:'#98971a', yellow:'#d79921', blue:'#458588', magenta:'#b16286', cyan:'#689d6a', white:'#a89984',
+     brightBlack:'#928374', brightRed:'#fb4934', brightGreen:'#b8bb26', brightYellow:'#fabd2f', brightBlue:'#83a598', brightMagenta:'#d3869b', brightCyan:'#8ec07c', brightWhite:'#ebdbb2' }
+   },
+   'nord': {
+    name: 'Nord',
+    ui: { bg:'#2e3440', fg:'#d8dee9', elevated:'#3b4252', border:'rgba(216,222,233,0.10)', accent:'#88c0d0', muted:'#81a1c1' },
+    xterm: { background:'#2e3440', foreground:'#d8dee9', cursor:'#d8dee9', cursorAccent:'#2e3440', selectionBackground:'#4c566a',
+     black:'#3b4252', red:'#bf616a', green:'#a3be8c', yellow:'#ebcb8b', blue:'#81a1c1', magenta:'#b48ead', cyan:'#88c0d0', white:'#e5e9f0',
+     brightBlack:'#4c566a', brightRed:'#bf616a', brightGreen:'#a3be8c', brightYellow:'#ebcb8b', brightBlue:'#81a1c1', brightMagenta:'#b48ead', brightCyan:'#8fbcbb', brightWhite:'#eceff4' }
+   },
+   'catppuccin': {
+    name: 'Catppuccin Mocha',
+    ui: { bg:'#1e1e2e', fg:'#cdd6f4', elevated:'#313244', border:'rgba(205,214,244,0.10)', accent:'#89b4fa', muted:'#bac2de' },
+    xterm: { background:'#1e1e2e', foreground:'#cdd6f4', cursor:'#f5e0dc', cursorAccent:'#1e1e2e', selectionBackground:'#45475a',
+     black:'#45475a', red:'#f38ba8', green:'#a6e3a1', yellow:'#f9e2af', blue:'#89b4fa', magenta:'#f5c2e7', cyan:'#89dceb', white:'#bac2de',
+     brightBlack:'#585b70', brightRed:'#f38ba8', brightGreen:'#a6e3a1', brightYellow:'#f9e2af', brightBlue:'#89b4fa', brightMagenta:'#f5c2e7', brightCyan:'#89dceb', brightWhite:'#a6adc8' }
+   },
+   'solarized-dark': {
+    name: 'Solarized Dark',
+    ui: { bg:'#002b36', fg:'#93a1a1', elevated:'#073642', border:'rgba(147,161,161,0.14)', accent:'#268bd2', muted:'#586e75' },
+    xterm: { background:'#002b36', foreground:'#93a1a1', cursor:'#93a1a1', cursorAccent:'#002b36', selectionBackground:'#073642',
+     black:'#073642', red:'#dc322f', green:'#859900', yellow:'#b58900', blue:'#268bd2', magenta:'#d33682', cyan:'#2aa198', white:'#eee8d5',
+     brightBlack:'#002b36', brightRed:'#cb4b16', brightGreen:'#586e75', brightYellow:'#657b83', brightBlue:'#839496', brightMagenta:'#6c71c4', brightCyan:'#93a1a1', brightWhite:'#fdf6e3' }
+   },
+   'solarized-light': {
+    name: 'Solarized Light',
+    ui: { bg:'#fdf6e3', fg:'#586e75', elevated:'#eee8d5', border:'rgba(88,110,117,0.18)', accent:'#268bd2', muted:'#93a1a1' },
+    xterm: { background:'#fdf6e3', foreground:'#586e75', cursor:'#586e75', cursorAccent:'#fdf6e3', selectionBackground:'#eee8d5',
+     black:'#073642', red:'#dc322f', green:'#859900', yellow:'#b58900', blue:'#268bd2', magenta:'#d33682', cyan:'#2aa198', white:'#eee8d5',
+     brightBlack:'#002b36', brightRed:'#cb4b16', brightGreen:'#586e75', brightYellow:'#657b83', brightBlue:'#839496', brightMagenta:'#6c71c4', brightCyan:'#93a1a1', brightWhite:'#fdf6e3' }
+   },
+   'monokai': {
+    name: 'Monokai',
+    ui: { bg:'#272822', fg:'#f8f8f2', elevated:'#1e1f1c', border:'rgba(248,248,242,0.10)', accent:'#a6e22e', muted:'#75715e' },
+    xterm: { background:'#272822', foreground:'#f8f8f2', cursor:'#f8f8f0', cursorAccent:'#272822', selectionBackground:'#49483e',
+     black:'#272822', red:'#f92672', green:'#a6e22e', yellow:'#f4bf75', blue:'#66d9ef', magenta:'#ae81ff', cyan:'#a1efe4', white:'#f8f8f2',
+     brightBlack:'#75715e', brightRed:'#f92672', brightGreen:'#a6e22e', brightYellow:'#f4bf75', brightBlue:'#66d9ef', brightMagenta:'#ae81ff', brightCyan:'#a1efe4', brightWhite:'#9ff8f5' }
+   },
+   'one-dark': {
+    name: 'One Dark',
+    ui: { bg:'#282c34', fg:'#abb2bf', elevated:'#21252b', border:'rgba(171,178,191,0.10)', accent:'#61afef', muted:'#5c6370' },
+    xterm: { background:'#282c34', foreground:'#abb2bf', cursor:'#528bff', cursorAccent:'#282c34', selectionBackground:'#3e4451',
+     black:'#282c34', red:'#e06c75', green:'#98c379', yellow:'#e5c07b', blue:'#61afef', magenta:'#c678dd', cyan:'#56b6c2', white:'#abb2bf',
+     brightBlack:'#5c6370', brightRed:'#e06c75', brightGreen:'#98c379', brightYellow:'#e5c07b', brightBlue:'#61afef', brightMagenta:'#c678dd', brightCyan:'#56b6c2', brightWhite:'#ffffff' }
+   },
+   'github-dark': {
+    name: 'GitHub Dark',
+    ui: { bg:'#0d1117', fg:'#c9d1d9', elevated:'#161b22', border:'rgba(201,209,217,0.10)', accent:'#58a6ff', muted:'#8b949e' },
+    xterm: { background:'#0d1117', foreground:'#c9d1d9', cursor:'#58a6ff', cursorAccent:'#0d1117', selectionBackground:'#264f78',
+     black:'#484f58', red:'#ff7b72', green:'#3fb950', yellow:'#d29922', blue:'#58a6ff', magenta:'#bc8cff', cyan:'#39c5cf', white:'#b1bbc4',
+     brightBlack:'#6e7681', brightRed:'#ffa198', brightGreen:'#56d364', brightYellow:'#e3b341', brightBlue:'#79c0ff', brightMagenta:'#d2a8ff', brightCyan:'#56d4dd', brightWhite:'#ffffff' }
+   }
+  };
+
+  const THEME_ORDER = ['tokyo-night','absolute-void','matrix','dracula','gruvbox','nord','catppuccin','solarized-dark','solarized-light','monokai','one-dark','github-dark'];
+  const STYLES = { 'default': "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', monospace", 'floyd': "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, monospace" };
+
+  const DEFAULT_THEME = 'tokyo-night';
+  const DEFAULT_STYLE = 'default';
+  const LS_THEME = 'terminalone.theme';
+  const LS_STYLE = 'terminalone.style';
+  const LS_SESSION = 'terminalone.sessionId';
+
+  // ── State ───────────────────────────────────────────────────────────────
+  let ws = null;
+  let term = null;
+  let fitAddon = null;
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
+  let userInitiatedClose = false;
+  let currentSessionId = null;
+  let currentTheme = DEFAULT_THEME;
+  let currentStyle = DEFAULT_STYLE;
+  let rain = null; // lazily created digital-rain controller
+  let fitTimer = null;
+  let terminalResourceDisposers = [];
+
+  // Module-level input sender. initTerminal() (which owns the dictation guard
+  // and the real sendInput closure) sets this so key-bar buttons outside the
+  // closure can emit control sequences.
+  let sendInputFn = null;
+  // Modifier toggle state for the on-screen key bar (Ctrl / Alt as sticky).
+  let modState = { ctrl: false, alt: false };
+
+  const $ = (sel) => document.querySelector(sel);
+
+  function unifiedParentOriginAllowed(value) {
+   try {
+    const origin = new URL(value);
+    const localCore = origin.protocol === 'http:' && origin.port === '41414'
+     && ['127.0.0.1', 'localhost', '::1'].includes(origin.hostname);
+    const configuredRemoteParent = launchQuery.get('floyd_parent');
+    const remoteCore = configuredRemoteParent === origin.origin && origin.protocol === 'https:'
+     && origin.hostname === location.hostname;
+    return localCore || remoteCore;
+   } catch (_) { return false; }
+  }
+
+  window.addEventListener('message', (event) => {
+   if (event.source !== window.parent || !unifiedParentOriginAllowed(event.origin)) return;
+   if (event.data?.type === 'floyd:continue-context') {
+    const context = event.data.context;
+    const validId = (value) => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(value);
+    if (context && validId(context.projectId) && validId(context.sessionId) && validId(context.runId)) {
+     integratedFloydContext = { projectId: context.projectId, sessionId: context.sessionId, runId: context.runId };
+     maybeLaunchIntegratedFloyd();
+    }
+    return;
+   }
+   if (event.data?.type !== 'floyd:surface-close') return;
+   const requestId = event.data?.requestId;
+   if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 160) return;
+   closeConnection();
+   event.source.postMessage({ type: 'floyd:surface-closed', requestId }, event.origin);
+  });
+
+  function addTerminalResource(disposer) {
+   if (!disposer) return;
+   if (typeof disposer === 'function') {
+    terminalResourceDisposers.push(disposer);
+   } else if (typeof disposer.dispose === 'function') {
+    terminalResourceDisposers.push(() => disposer.dispose());
+   }
+  }
+
+  function cleanupTerminalResources() {
+   if (fitTimer) {
+    clearTimeout(fitTimer);
+    fitTimer = null;
+   }
+   const disposers = terminalResourceDisposers.splice(0).reverse();
+   for (const dispose of disposers) {
+    try { dispose(); } catch (_) {}
+   }
+  }
+
+  // ── Settings persistence ──────────────────────────────────────────────────
+  function lsGet(key, fallback) {
+   try { const v = localStorage.getItem(key); return v == null ? fallback : v; } catch (_) { return fallback; }
+  }
+  function lsSet(key, value) {
+   try { localStorage.setItem(key, value); } catch (_) {}
+  }
+  function lsDel(key) {
+   try { localStorage.removeItem(key); } catch (_) {}
+  }
+
+  // ── Device detection (iPhone vs iPad vs desktop) ──────────────────────────
+  // iPadOS 13+ requests desktop sites and reports platform 'MacIntel' with a
+  // touch screen, so the MacIntel+maxTouchPoints heuristic is required in
+  // addition to the legacy /iPad/ UA string.
+  function detectDevice() {
+   const ua = navigator.userAgent || '';
+   const isIPad = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+   const isIPhone = /iPhone|iPod/.test(ua);
+   if (isIPad) return 'ipad';
+   if (isIPhone) return 'iphone';
+   return 'desktop';
+  }
+
+  // ── Digital rain (ported from VOID MatrixRain.tsx) ─────────────────────────
+  function createRain(canvas) {
+   const ctx = canvas.getContext('2d', { alpha: false });
+   const CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ';
+   const TARGET_FRAME_MS = 50;
+   const drops = [];
+   const speeds = [];
+   let width = 1, height = 1, fontSize = 16, raf = 0, last = 0;
+   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+   const rnd = () => CHARS.charAt(Math.floor(Math.random() * CHARS.length));
+   const resetColumn = (c) => { drops[c] = -Math.random() * Math.max(4, height / fontSize); speeds[c] = 0.72 + Math.random() * 1.42; };
+   function resize() {
+    width = Math.max(1, window.innerWidth);
+    height = Math.max(1, window.innerHeight);
+    fontSize = Math.round(clamp(width / 90, 10, 18));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.ceil(width * dpr);
+    canvas.height = Math.ceil(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cols = Math.ceil(width / fontSize) + 1;
+    for (let c = drops.length; c < cols; c += 1) resetColumn(c);
+    drops.length = cols; speeds.length = cols;
+    ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, width, height);
+   }
+   function draw(ts) {
+    if (document.hidden) { raf = requestAnimationFrame(draw); return; }
+    if (ts - last < TARGET_FRAME_MS) { raf = requestAnimationFrame(draw); return; }
+    last = ts;
+    ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.fillRect(0, 0, width, height);
+    ctx.font = `${fontSize}px 'JetBrains Mono', ui-monospace, monospace`;
+    ctx.textBaseline = 'top';
+    for (let c = 0; c < drops.length; c += 1) {
+     const x = c * fontSize, y = drops[c] * fontSize;
+     const head = Math.random() > 0.92;
+     ctx.globalAlpha = head ? 0.96 : 0.46 + Math.random() * 0.38;
+     ctx.fillStyle = head ? '#d9ffe0' : '#00ff41';
+     ctx.fillText(rnd(), x, y);
+     if (y > height + fontSize && Math.random() > 0.975) resetColumn(c);
+     else drops[c] += speeds[c];
+    }
+    ctx.globalAlpha = 1;
+    raf = requestAnimationFrame(draw);
+   }
+   resize();
+   window.addEventListener('resize', resize, { passive: true });
+   return {
+    start() { if (!raf) { last = 0; raf = requestAnimationFrame(draw); } },
+    stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+   };
+  }
+
+  function setRainActive(active) {
+   const canvas = $('#fxCanvas');
+   if (active) {
+    if (!rain) rain = createRain(canvas);
+    rain.start();
+   } else if (rain) {
+    rain.stop();
+   }
+  }
+
+  // ── Apply theme / style ────────────────────────────────────────────────────
+  function applyTheme(id) {
+   if (!THEMES[id]) id = DEFAULT_THEME;
+   currentTheme = id;
+   const t = THEMES[id];
+   const root = document.documentElement.style;
+   root.setProperty('--ui-bg', t.ui.bg);
+   root.setProperty('--ui-fg', t.ui.fg);
+   root.setProperty('--ui-elevated', t.ui.elevated);
+   root.setProperty('--ui-border', t.ui.border);
+   root.setProperty('--ui-accent', t.ui.accent);
+   root.setProperty('--ui-muted', t.ui.muted);
+   document.body.dataset.theme = id;
+   if (term) term.options.theme = t.xterm;
+   setRainActive(id === 'matrix');
+   lsSet(LS_THEME, id);
+  }
+
+  function applyStyle(id) {
+   if (!STYLES[id]) id = DEFAULT_STYLE;
+   currentStyle = id;
+   document.body.dataset.style = id;
+   if (term) { term.options.fontFamily = STYLES[id]; scheduleFit(); }
+   lsSet(LS_STYLE, id);
+  }
+
+  // ── UI feedback helpers ────────────────────────────────────────────────────
+  function showBanner(msg, type = 'error') {
+   const banner = $('#banner');
+   banner.textContent = msg;
+   banner.className = `banner ${type}`;
+  }
+
+  function hideBanner() {
+   $('#banner').className = 'banner';
+   $('#banner').style.display = 'none';
+  }
+
+  function updateStatus(text, state = 'neutral') {
+   const status = $('#status');
+   status.textContent = text;
+   status.className = `terminal-status ${state}`;
+   const dot = $('#statusDot');
+   if (dot) dot.className = `status-dot ${state === 'connected' ? 'connected' : state === 'error' ? 'error' : state === 'neutral' ? '' : 'connecting'}`;
+  }
+
+  function setFooter(text) { $('#footerMeta').textContent = text; }
+  function setSessionInfo(text) { $('#sessionInfo').textContent = text; }
+
+  function scheduleFit(delay = 0) {
+   if (fitTimer) clearTimeout(fitTimer);
+   fitTimer = window.setTimeout(() => {
+    fitTimer = null;
+    if (!fitAddon || !term) return;
+    try { fitAddon.fit(); } catch (_) {}
+   }, delay);
+  }
+
+  // ── On-screen key bar ─────────────────────────────────────────────────────
+  // xterm control sequences for the keys missing on iOS/iPadOS keyboards.
+  const SEQ = {
+   esc: '\x1b',
+   tab: '\t',
+   enter: '\r',
+   del: '\x7f',
+   up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
+   home: '\x1b[H', end: '\x1b[F', pgup: '\x1b[5~', pgdn: '\x1b[6~'
+  };
+
+  function emitSeq(seq) {
+   if (!sendInputFn) return;
+   sendInputFn(seq);
+   // Sticky modifiers consume themselves on the next emit.
+   modState.ctrl = false;
+   modState.alt = false;
+   syncModButtons();
+  }
+
+  /** Map a literal character to its Ctrl / Alt combination if a mod is sticky. */
+  function emitLiteral(ch) {
+   if (!sendInputFn) return;
+   let out = ch;
+   if (modState.ctrl && ch.length === 1) {
+    // Ctrl+X = X & 0x1f (ASCII control code).
+    out = String.fromCharCode(ch.charCodeAt(0) & 0x1f);
+   }
+   if (modState.alt && out.length === 1) {
+    // Alt prefix in xterm: ESC then the char.
+    out = '\x1b' + out;
+   }
+   sendInputFn(out);
+   modState.ctrl = false;
+   modState.alt = false;
+   syncModButtons();
+  }
+
+  function syncModButtons() {
+   document.querySelectorAll('.kb-key.toggle[data-mod]').forEach((b) => {
+    b.classList.toggle('active', !!modState[b.dataset.mod]);
+   });
+  }
+
+  /** Build a key element. kind: 'seq' | 'literal' | 'toggle' | 'special'. */
+  function makeKey(label, opts = {}) {
+   const el = document.createElement('button');
+   el.type = 'button';
+   el.className = 'kb-key';
+   el.textContent = label;
+   if (opts.title) el.title = opts.title;
+   if (opts.kind === 'toggle') {
+    el.classList.add('toggle');
+    if (opts.mod) el.dataset.mod = opts.mod;
+    el.addEventListener('click', () => {
+     const m = opts.mod;
+     if (!m) return;
+     // Toggling one mod clears the other (single sticky mod at a time).
+     modState[m] = !modState[m];
+     Object.keys(modState).forEach((k) => { if (k !== m) modState[k] = false; });
+     syncModButtons();
+    });
+   } else if (opts.kind === 'special' && opts.special === 'del') {
+    el.addEventListener('click', () => emitSeq(SEQ.del));
+   } else if (opts.seq) {
+    el.addEventListener('click', () => emitSeq(opts.seq));
+   } else if (opts.literal != null) {
+    el.addEventListener('click', () => emitLiteral(opts.literal));
+   }
+   return el;
+  }
+
+  function makeArrowPad() {
+   const wrap = document.createElement('div');
+   wrap.className = 'kb-arrows';
+   const top = document.createElement('div'); top.className = 'kb-row';
+   top.appendChild(makeKey('↑', { seq: SEQ.up, title: 'Up' }));
+   const mid = document.createElement('div'); mid.className = 'kb-row';
+   mid.appendChild(makeKey('←', { seq: SEQ.left, title: 'Left' }));
+   mid.appendChild(makeKey('↓', { seq: SEQ.down, title: 'Down' }));
+   mid.appendChild(makeKey('→', { seq: SEQ.right, title: 'Right' }));
+   wrap.appendChild(top);
+   wrap.appendChild(mid);
+   return wrap;
+  }
+
+  function makeGroup(children) {
+   const g = document.createElement('div');
+   g.className = 'kb-group';
+   children.forEach((c) => g.appendChild(c));
+   return g;
+  }
+
+  function buildKeyBars() {
+   const device = detectDevice();
+   document.body.dataset.device = device;
+   const iphone = $('#keybarIphone');
+   const ipad = $('#keybarIpad');
+
+   // iPhone: compact single row — essentials only.
+   iphone.innerHTML = '';
+   if (device === 'iphone') {
+    iphone.appendChild(makeGroup([
+     makeKey('ESC', { seq: SEQ.esc, title: 'Escape' }),
+     makeKey('TAB', { seq: SEQ.tab, title: 'Tab' }),
+     makeKey('ENTER', { seq: SEQ.enter, title: 'Enter' }),
+     makeKey('CTRL', { kind: 'toggle', mod: 'ctrl', title: 'Ctrl (sticky)' })
+    ]));
+    iphone.appendChild(makeGroup([
+     makeKey('←', { seq: SEQ.left }),
+     makeKey('↓', { seq: SEQ.down }),
+     makeKey('↑', { seq: SEQ.up }),
+     makeKey('→', { seq: SEQ.right })
+    ]));
+    iphone.appendChild(makeGroup([
+     makeKey('~', { literal: '~' }),
+     makeKey('/', { literal: '/' }),
+     makeKey('|', { literal: '|' }),
+     makeKey('-', { literal: '-' })
+    ]));
+   }
+
+   // iPad: wide — modifiers + navigation + arrow pad + symbols + DEL.
+   ipad.innerHTML = '';
+   if (device === 'ipad') {
+    ipad.appendChild(makeGroup([
+     makeKey('ESC', { seq: SEQ.esc, title: 'Escape' }),
+     makeKey('TAB', { seq: SEQ.tab, title: 'Tab' }),
+     makeKey('ENTER', { seq: SEQ.enter, title: 'Enter' }),
+     makeKey('CTRL', { kind: 'toggle', mod: 'ctrl', title: 'Ctrl (sticky)' }),
+     makeKey('ALT', { kind: 'toggle', mod: 'alt', title: 'Alt / Meta (sticky)' })
+    ]));
+    ipad.appendChild(makeGroup([
+     makeKey('HOME', { seq: SEQ.home }),
+     makeKey('END', { seq: SEQ.end }),
+     makeKey('PGUP', { seq: SEQ.pgup }),
+     makeKey('PGDN', { seq: SEQ.pgdn })
+    ]));
+    ipad.appendChild(makeGroup([ makeArrowPad() ]));
+    ipad.appendChild(makeGroup([
+     makeKey('~', { literal: '~' }),
+     makeKey('/', { literal: '/' }),
+     makeKey('|', { literal: '|' }),
+     makeKey('-', { literal: '-' }),
+     makeKey('DEL', { kind: 'special', special: 'del', title: 'Delete' })
+    ]));
+   }
+  }
+
+  // ── Two-finger touch scroll (native iOS feel with momentum) ────────────────
+  // One-finger touches pass through to xterm (text selection etc.). Two fingers
+  // scroll the scrollback with inertial momentum on release, like a native iOS
+  // scroll view.
+  function initTouchScroll() {
+   if (!term) return;
+   const screen = term.element;
+   if (!screen) return;
+   let scrolling = false;
+   let lastY = 0;
+   let velocity = 0;
+   let lastMoveTs = 0;
+   let momentumRaf = 0;
+   let lineHeight = 0;
+
+   function getLineHeight() {
+    if (lineHeight > 0) return lineHeight;
+    const rows = screen.querySelector('.xterm-rows');
+    if (rows) {
+     const lh = parseFloat(getComputedStyle(rows).lineHeight) || 0;
+     if (lh > 0) { lineHeight = lh; return lineHeight; }
+    }
+    // Fallback: derive from terminal font size + line height setting.
+    lineHeight = (term.options.fontSize || 14) * (term.options.lineHeight || 1.2);
+    return lineHeight;
+   }
+
+   function avgY(touches) {
+    let sum = 0;
+    for (let i = 0; i < touches.length; i += 1) sum += touches[i].clientY;
+    return sum / touches.length;
+   }
+
+   function stopMomentum() {
+    if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = 0; }
+   }
+
+   function momentumStep() {
+    if (Math.abs(velocity) < 0.5) { momentumRaf = 0; return; }
+    const lh = getLineHeight();
+    const lines = Math.round(velocity / lh);
+    if (lines !== 0 && term) term.scrollLines(lines);
+    velocity *= 0.92; // decay
+    momentumRaf = requestAnimationFrame(momentumStep);
+   }
+
+   const onTouchStart = (e) => {
+    if (e.touches.length !== 2) return;
+    scrolling = true;
+    stopMomentum();
+    lastY = avgY(e.touches);
+    velocity = 0;
+    lastMoveTs = Date.now();
+   };
+
+   const onTouchMove = (e) => {
+    if (!scrolling) return;
+    e.preventDefault();
+    const cur = avgY(e.touches);
+    const dy = lastY - cur; // up-drag (cur smaller) → scroll back (positive)
+    const lh = getLineHeight();
+    const lines = Math.round(dy / lh);
+    if (lines !== 0 && term) term.scrollLines(lines);
+    const now = Date.now();
+    const dt = Math.max(1, now - lastMoveTs);
+    velocity = dy / dt * 16; // px per ~frame
+    lastY = cur;
+    lastMoveTs = now;
+   };
+
+   const endScroll = (e) => {
+    if (!scrolling) return;
+    if (e.touches && e.touches.length >= 2) return; // still two fingers down
+    scrolling = false;
+    momentumRaf = requestAnimationFrame(momentumStep);
+   };
+   screen.addEventListener('touchstart', onTouchStart, { passive: true });
+   screen.addEventListener('touchmove', onTouchMove, { passive: false });
+   screen.addEventListener('touchend', endScroll, { passive: true });
+   screen.addEventListener('touchcancel', endScroll, { passive: true });
+   return () => {
+    stopMomentum();
+    screen.removeEventListener('touchstart', onTouchStart);
+    screen.removeEventListener('touchmove', onTouchMove);
+    screen.removeEventListener('touchend', endScroll);
+    screen.removeEventListener('touchcancel', endScroll);
+   };
+  }
+
+  // ── Terminal ────────────────────────────────────────────────────────────────
+  function initTerminal() {
+   cleanupTerminalResources();
+   if (term) {
+    try { term.dispose(); } catch (_) {}
+   }
+
+   term = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'block',
+    fontSize: 14,
+    lineHeight: 1.2,
+    fontFamily: STYLES[currentStyle],
+    theme: THEMES[currentTheme].xterm,
+    allowTransparency: true,
+    allowProposedApi: true,
+    scrollback: 5000,
+    convertEol: false
+   });
+
+   fitAddon = new FitAddon();
+   term.loadAddon(fitAddon);
+   term.loadAddon(new WebLinksAddon());
+   term.open($('#terminal'));
+   // GPU renderer: the DOM renderer degrades badly after sustained output
+   // (layout/paint cost grows with the live viewport churn). WebGL keeps
+   // rendering O(frame) regardless of session age. Fall back silently when
+   // WebGL is unavailable, and recover from context loss by re-adding.
+   function attachWebgl() {
+    try {
+     const webgl = new WebglAddon();
+     webgl.onContextLoss(() => {
+      try { webgl.dispose(); } catch (_) {}
+      attachWebgl();
+     });
+     term.loadAddon(webgl);
+     addTerminalResource(webgl);
+    } catch (_) { /* DOM renderer fallback */ }
+   }
+   attachWebgl();
+   requestAnimationFrame(() => fitAddon.fit());
+
+   addTerminalResource(initTouchScroll());
+
+ // ── iOS dictation / typing guard ────────────────────────────────────────
+ // Replaced buggy inline debounce (which overwrote fast keystrokes) with
+ // InputGuard: single chars send immediately, duplicated onData events are
+ // dropped, and iOS/IME cumulative partials send only the new suffix.
+
+  function sendInput(data) {
+   if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'input', data }));
+   }
+  }
+  const guard = new InputGuard({ send: sendInput, identicalDedupeMs: 500 });
+  // Expose the sender to the on-screen key bar (outside this closure).
+  sendInputFn = (data) => guard.send(data);
+
+  addTerminalResource(term.onData((data) => guard.onData(data)));
+
+   addTerminalResource(term.onResize(({ cols, rows }) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+     ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    }
+   }));
+
+   const ro = new ResizeObserver(() => scheduleFit());
+   ro.observe($('#terminal'));
+   addTerminalResource(() => ro.disconnect());
+  }
+
+  function handleServerMessage(msg) {
+   switch (msg.type) {
+    case 'ready': {
+     currentSessionId = msg.sessionId;
+     lsSet(LS_SESSION, msg.sessionId);
+     if (msg.resumed) {
+      // Buffer replay lands in the fresh terminal from connect(); don't reset.
+      updateStatus('Resumed', 'connected');
+      setFooter(`Resumed · ${msg.cwd}`);
+     } else {
+      updateStatus('Connected', 'connected');
+      setFooter(`${msg.command} · ${msg.cwd}`);
+     }
+     setSessionInfo(`session ${msg.sessionId.slice(0, 8)}`);
+     terminalReadyForFloyd = !msg.resumed;
+     maybeLaunchIntegratedFloyd();
+     break;
+    }
+    case 'output': {
+     term?.write(msg.data);
+     break;
+    }
+    case 'exit': {
+     updateStatus(`Exited (code ${msg.code})`, 'error');
+     setFooter(`Process exited · code ${msg.code}`);
+     break;
+    }
+    case 'shell-reset': {
+     term?.reset();
+     updateStatus('Connected', 'connected');
+     setFooter('Fresh shell — type to continue');
+     break;
+    }
+    case 'floyd-ready': {
+     setFooter('Admitted Floyd TUI launched');
+     break;
+    }
+    case 'resume-failed': {
+     // Target session gone/expired — fall back to a fresh shell on this open ws.
+     infoResumeFail(msg);
+     lsDel(LS_SESSION);
+     currentSessionId = null;
+     if (ws && ws.readyState === WebSocket.OPEN) {
+      const dims = fitAddon?.proposeDimensions() || { cols: 120, rows: 40 };
+      ws.send(JSON.stringify({ type: 'shell', cols: dims.cols, rows: dims.rows }));
+     }
+     break;
+    }
+    case 'error': {
+     const errText = `\r\n\x1b[31m[ERROR ${msg.code}]\x1b[0m ${msg.message}\r\n`;
+     term?.write(errText);
+     showBanner(`[${msg.code}] ${msg.message}`, 'error');
+     updateStatus(msg.code, 'error');
+     break;
+    }
+   }
+  }
+
+  function infoResumeFail(msg) {
+   term?.write(`\r\n\x1b[33m[resume unavailable — starting fresh shell]\x1b[0m\r\n`);
+  }
+
+  async function openAuthenticatedWebSocket() {
+   const response = await fetch('/api/ws-ticket', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+   });
+   const payload = await response.json().catch(() => ({}));
+   if (!response.ok) throw new Error(payload.error || `Terminal authorization failed (${response.status})`);
+   if (!payload.ticket) throw new Error('Terminal authorization returned no ticket');
+   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+   return new WebSocket(`${protocol}//${location.host}/ws?ticket=${encodeURIComponent(payload.ticket)}`);
+  }
+
+  async function connect() {
+   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+   if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+   }
+
+   userInitiatedClose = false;
+
+   if (ws) {
+    try { ws.close(); } catch (_) {}
+   }
+
+   initTerminal();
+   updateStatus('Connecting…', 'connecting');
+   hideBanner();
+
+   try {
+    ws = await openAuthenticatedWebSocket();
+   } catch (error) {
+    showBanner(error.message || String(error), 'error');
+    updateStatus('Authorization failed', 'error');
+    return;
+   }
+
+   ws.onopen = () => {
+    reconnectAttempts = 0;
+    const dims = fitAddon?.proposeDimensions() || { cols: 120, rows: 40 };
+    // If we have a saved session id, try to resume it; otherwise spawn fresh.
+    const savedId = lsGet(LS_SESSION, null);
+    if (savedId) {
+     ws.send(JSON.stringify({ type: 'resume', sessionId: savedId, cols: dims.cols, rows: dims.rows }));
+    } else {
+     ws.send(JSON.stringify({ type: 'shell', cols: dims.cols, rows: dims.rows }));
+    }
+    scheduleFit();
+   };
+
+   ws.onmessage = (evt) => {
+    try { handleServerMessage(JSON.parse(evt.data)); }
+    catch (e) { showBanner('Malformed server message', 'error'); }
+   };
+
+   ws.onerror = () => {
+    showBanner('WebSocket connection failed', 'error');
+    updateStatus('WS error', 'error');
+   };
+
+   ws.onclose = () => {
+    if (userInitiatedClose) return;
+    updateStatus('Disconnected', 'error');
+    // Leave the saved session id in place so the reconnect attempts a resume.
+    const delay = Math.min(1_000 * Math.pow(2, reconnectAttempts), 60_000);
+    reconnectAttempts++;
+    reconnectTimer = setTimeout(() => {
+     if (!userInitiatedClose) connect();
+    }, delay);
+   };
+  }
+
+  function closeConnection() {
+   userInitiatedClose = true;
+   reconnectAttempts = 0;
+
+   // Explicit close must never resume: clear the saved session id first.
+   lsDel(LS_SESSION);
+   currentSessionId = null;
+
+   if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+   }
+
+   if (ws) {
+    try { ws.send(JSON.stringify({ type: 'close' })); } catch (_) {}
+    ws.close();
+    ws = null;
+   }
+
+   try { term?.dispose(); } catch (_) {}
+   cleanupTerminalResources();
+   term = null;
+   fitAddon = null;
+   sendInputFn = null;
+
+   updateStatus('Closed', 'neutral');
+   setFooter('Connection closed');
+   setSessionInfo('');
+  }
+
+  function switchTerminalSession(sessionId) {
+   const newSessionRequested = sessionId === '__new__';
+   const targetSessionId = newSessionRequested ? null : String(sessionId || '').trim();
+   if (!newSessionRequested && !targetSessionId) return;
+
+   if (targetSessionId) lsSet(LS_SESSION, targetSessionId);
+   else lsDel(LS_SESSION);
+   currentSessionId = null;
+
+   if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+   }
+
+   // A tab switch detaches the current PTY so it remains resumable. Suppress
+   // that socket's reconnect handlers before opening the selected session.
+   const previousSocket = ws;
+   ws = null;
+   if (previousSocket) {
+    previousSocket.onclose = null;
+    previousSocket.onerror = null;
+    previousSocket.onmessage = null;
+    try { previousSocket.close(); } catch (_) {}
+   }
+   connect();
+  }
+
+  async function refreshFloydHealth() {
+   const status = $('#floydStatus');
+   try {
+    const response = await fetch('/api/floyd/health');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error?.message || `HTTP ${response.status}`);
+    const engineHealthy = payload?.engine?.ok === true || payload?.engine?.healthy === true;
+    status.textContent = engineHealthy ? 'Core/OpenCode online' : 'Core online; engine degraded';
+    status.className = `terminal-status ${engineHealthy ? 'connected' : 'error'}`;
+   } catch (_) {
+    status.textContent = 'Floyd context unavailable';
+    status.className = 'terminal-status error';
+   }
+  }
+
+  function launchFloyd() {
+   if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showBanner('Connect a terminal before launching Floyd', 'error');
+    return;
+   }
+   ws.send(JSON.stringify({ type: 'floyd', ...(integratedFloydContext ? { context: integratedFloydContext } : {}) }));
+  }
+
+  function maybeLaunchIntegratedFloyd() {
+   const remoteContextRequired = launchQuery.has('floyd_parent');
+   if (!integratedFloydContinue || integratedFloydStarted || !terminalReadyForFloyd
+    || (remoteContextRequired && !integratedFloydContext)) return;
+   integratedFloydStarted = true;
+   queueMicrotask(launchFloyd);
+  }
+
+  // ── Settings UI ─────────────────────────────────────────────────────────────
+  function buildThemeOptions() {
+   const sel = $('#themeSelect');
+   sel.innerHTML = '';
+   for (const id of THEME_ORDER) {
+    if (!THEMES[id]) continue;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = THEMES[id].name;
+    sel.appendChild(opt);
+   }
+  }
+
+  function openSettings() {
+   $('#styleSelect').value = currentStyle;
+   $('#themeSelect').value = currentTheme;
+   $('#settingsModal').classList.add('open');
+  }
+  function closeSettings() { $('#settingsModal').classList.remove('open'); }
+
+  // ── Wire up ──────────────────────────────────────────────────────────────────
+  buildThemeOptions();
+  buildKeyBars();
+  applyStyle(lsGet(LS_STYLE, DEFAULT_STYLE));
+  applyTheme(lsGet(LS_THEME, DEFAULT_THEME));
+
+  $('#settingsBtn').addEventListener('click', openSettings);
+  $('#floydBtn').addEventListener('click', launchFloyd);
+  $('#settingsClose').addEventListener('click', closeSettings);
+  $('#settingsModal').addEventListener('click', (e) => { if (e.target === $('#settingsModal')) closeSettings(); });
+  $('#styleSelect').addEventListener('change', (e) => applyStyle(e.target.value));
+  $('#themeSelect').addEventListener('change', (e) => applyTheme(e.target.value));
+
+  $('#reconnectBtn').addEventListener('click', () => {
+   // Manual reconnect keeps the saved session id so it resumes.
+   userInitiatedClose = false;
+   connect();
+  });
+  $('#closeBtn').addEventListener('click', closeConnection);
+
+  // Re-detect on orientation change (iPhone↔iPad-like layout shifts are rare,
+  // but viewport reflow should refresh the key bars).
+  window.addEventListener('orientationchange', () => {
+   setTimeout(() => { buildKeyBars(); scheduleFit(); }, 200);
+  });
+
+  // ── Feature module loader ────────────────────────────────────────────────
+  // public/features/*.mjs each export init(T1). This builds the T1 facade the
+  // feature API contract expects, then dynamically imports every module and
+  // runs its init() inside try/catch so one failure cannot break the app.
+  const termReadyCbs = [];
+  function runTermReadyCallback(cb) {
+    if (!term) return;
+    try { addTerminalResource(cb(term)); } catch (_) {}
+  }
+  function onTermReady(cb) {
+    termReadyCbs.push(cb);
+    runTermReadyCallback(cb);
+  }
+  // Re-fire onTermReady callbacks whenever the terminal is recreated on
+  // reconnect. initTerminal() already ran before this loader exists, so fire
+  // for the current term now.
+  function __fireTermReady() { if (term) termReadyCbs.forEach(runTermReadyCallback); }
+  const __origInitTerminal = initTerminal;
+  initTerminal = function () { __origInitTerminal(); __fireTermReady(); };
+  __fireTermReady();
+
+  // ── Toast notification system ─────────────────────────────────────────────
+  // A real transient toast (auto-dismiss) layered above the app. Features call
+  // T1.toast(msg, type) expecting a notification, NOT a persistent status-bar
+  // change. Multiple toasts stack and fade; the toast-status feature wraps
+  // this to also log them.
+  let __toastSeq = 0;
+  function __toastContainer() {
+    let c = document.getElementById('t1toastHost');
+    if (!c) {
+      c = document.createElement('div');
+      c.id = 't1toastHost';
+      c.className = 't1toast-host';
+      document.body.appendChild(c);
+    }
+    return c;
+  }
+  function __showToast(msg, type) {
+    const el = document.createElement('div');
+    el.className = `t1toast t1toast-${type || 'info'}`;
+    el.setAttribute('role', 'status');
+    el.textContent = String(msg).slice(0, 160);
+    __toastContainer().appendChild(el);
+    const id = ++__toastSeq;
+    el.dataset.seq = String(id);
+    // Animate in, hold, then fade out and remove.
+    requestAnimationFrame(() => el.classList.add('show'));
+    const ttl = type === 'error' ? 6000 : type === 'warn' ? 4500 : 3000;
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 350);
+    }, ttl);
+    return id;
+  }
+
+  const T1 = {
+    get term() { return term; },
+    get ws() { return ws; },
+    // detectDevice() is defined above; surface the current device so features
+    // can gate per-device (desktop-palette, haptic-keys, split-view, etc.).
+    get device() { return document.body.dataset.device || detectDevice(); },
+    sendData: (data) => { if (sendInputFn) sendInputFn(data); },
+    fit: () => scheduleFit(),
+    toast: (msg, type = 'info') => __showToast(msg, type),
+    onTermReady,
+    storage: {
+      get: (k, def) => { const v = lsGet(k, undefined); return v === undefined ? def : v; },
+      set: (k, v) => lsSet(k, String(v)),
+      del: (k) => lsDel(k)
+    },
+    ui: {
+      toolbar: () => document.getElementById('t1toolbar'),
+      appShell: () => document.querySelector('.app-shell'),
+      settingsPanel: () => document.querySelector('#settingsModal .settings-panel'),
+      addStyle: (css) => {
+        const s = document.createElement('style');
+        s.textContent = css;
+        document.head.appendChild(s);
+      },
+      makeButton: (label, title, onClick) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 't1button';
+        b.textContent = label;
+        if (title) b.title = title;
+        if (typeof onClick === 'function') b.addEventListener('click', onClick);
+        return b;
+      }
+    }
+  };
+
+  // Ordered by the ShellFish parity manifest, then the extra verticals.
+  const FEATURE_MODULES = [
+    'theme-system', 'keyboard-shortcuts', 'history-undo', 'autosave',
+    'recent-commands', 'search', 'command-palette', 'toast-status',
+    'osc-bridge', 'links', 'zoom', 'keybar-config', 'session-manager',
+    'status-metrics', 'export', 'clipboard', 'snippets', 'fontsize',
+    'wake-fullscreen', 'desktop-palette', 'file-drop', 'floating-palette',
+    'haptic-keys', 'keepalive', 'multi-window-sync', 'phone-landscape-focus',
+    'session-lock', 'settings-sync', 'shortcut-help', 'smart-completions',
+    'smart-suggest', 'split-view', 'stylus-support', 'swipe-history',
+    'swipe-sessions', 'tab-reorder', 'two-finger-menu', 'window-title',
+    'appearance', 'floyd-experience'
+  ];
+  (async () => {
+    const loaded = [];
+    for (const name of FEATURE_MODULES) {
+      try {
+        const mod = await import(`./features/${name}.mjs`);
+        if (typeof mod.init === 'function') { mod.init(T1); loaded.push(name); }
+      } catch (err) {
+        console.error(`[features] ${name} failed to load:`, err);
+      }
+    }
+    window.__t1Features = loaded;
+  })();
+
+  refreshFloydHealth();
+  connect();
+
+  // Best-effort: on touch devices only, shed the browser URL bar by entering
+  // fullscreen on the first user gesture. Gated to iPhone/iPad so a desktop
+  // click is never hijacked into fullscreen. iPhone Safari has no element
+  // Fullscreen API (the requestFullscreen guard no-ops there); the real
+  // chrome-hiding path on iPhone is PWA standalone (Add to Home Screen).
+  (function attemptFullscreenOnce() {
+   const dev = detectDevice();
+   if (dev !== 'iphone' && dev !== 'ipad') return;
+   const standalone =
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+    window.navigator.standalone === true;
+   if (standalone) return;
+   const target = document.querySelector('.app-shell') || document.documentElement;
+   if (!target || !target.requestFullscreen) return;
+   function go() {
+    document.removeEventListener('pointerdown', go);
+    document.removeEventListener('keydown', go);
+    if (!document.fullscreenElement) target.requestFullscreen().catch(() => {});
+   }
+   document.addEventListener('pointerdown', go, { passive: true });
+   document.addEventListener('keydown', go);
+  })();
+
+  // Expose for automated tests.
+  window.__terminalOne = {
+   get theme() { return currentTheme; },
+   get style() { return currentStyle; },
+   get device() { return document.body.dataset.device; },
+   themes: () => THEME_ORDER.slice(),
+   setTheme: applyTheme,
+   setStyle: applyStyle,
+   termTheme: () => term && term.options.theme,
+   // Test hooks for the key bar + resume.
+   detectDevice,
+   visibleKeyBar: () => {
+    const d = document.body.dataset.device;
+    if (d === 'iphone') return $('#keybarIphone');
+    if (d === 'ipad') return $('#keybarIpad');
+    return null;
+   },
+   keyCount: () => {
+    const bar = (document.body.dataset.device === 'iphone' ? $('#keybarIphone') : $('#keybarIpad'));
+    return bar ? bar.querySelectorAll('.kb-key').length : 0;
+   },
+   savedSession: () => lsGet(LS_SESSION, null),
+   integratedContinueRequested: () => integratedFloydContinue,
+   integratedWorkspaceRequested: () => integratedFloydEmbedded,
+   switchSession: switchTerminalSession,
+   launchFloyd
+  };
+ </script>
+ <script>
+  /* PWA: register the offline shell service worker. Guarded — failure never breaks the app. */
+  if ('serviceWorker' in navigator) {
+   window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' }).catch((e) => {
+     console.warn('TerminalOne SW registration failed:', e);
+    });
+   });
+  }
+ </script>
+</body>
+</html>

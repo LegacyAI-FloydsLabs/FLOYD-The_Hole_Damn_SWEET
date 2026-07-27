@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start server
+        run: |
+          PORT=11000 npm start &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:11000/health > /dev/null 2>&1; then
+              echo "Server ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Verify server health
+        run: curl -s http://localhost:11000/health | grep -q '"status":"ok"'
+
+      - name: Verify harness discovery API
+        run: curl -s http://localhost:11000/harnesses | grep -q '"harnesses"'
+
+      - name: Verify admin sessions API
+        run: curl -s http://localhost:11000/admin/sessions | grep -q '"active"'
+
+      - name: Run security audit
+        run: npm audit --audit-level=high
+
+      - name: Run harness tests
+        run: npm test
+
+      - name: Stop server
+        if: always()
+        run: kill $SERVER_PID 2>/dev/null || true

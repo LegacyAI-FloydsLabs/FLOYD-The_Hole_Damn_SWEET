@@ -14,7 +14,10 @@ coverage/
 artifacts/
 runtime/
 tmp/
-intake/
+# intake/ is now tracked (folded surfaces). Keep local-only runtime junk out.
+.git-standalone/
+intake/**/.floyd-data/
+intake/**/sessions/
 
 *.tsbuildinfo
 dist-types/
@@ -51,3 +54,8 @@ SSOT/
 
 # Frame-generated shell wrappers (rendered per machine at runtime)
 apps/frame/server/shells/
+
+# tui: vendored omp monorepo SOURCE, unreferenced by the package (omf ships the
+# compiled binary). Upstream code contains public Google OAuth client IDs that
+# trip GitHub push protection. Stays on disk, not tracked.
+intake/surfaces/tui/

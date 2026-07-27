@@ -1,0 +1,87 @@
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-canvas: #08070d;
+  --bg-editor: #0b0912;
+  --bg-surface: #100e18;
+  --bg-raised: #17141f;
+  --bg-hover: #211d2b;
+  --bg-active: #292236;
+  --border: #302a3b;
+  --border-strong: #44394f;
+  --text-primary: #ebe8ef;
+  --text-secondary: #aaa4b5;
+  --text-muted: #777184;
+  --accent: #f72585;
+  --accent-strong: #ff4a9b;
+  --accent-soft: rgba(247, 37, 133, 0.14);
+  --on-accent: #09090b;
+  --cyan: #25d9f5;
+  --cyan-soft: rgba(37, 217, 245, 0.13);
+  --focus: #25d9f5;
+  --selection: rgba(247, 37, 133, 0.32);
+  --success: #51d59a;
+  --warning: #f4c464;
+  --error: #ff6b83;
+  --scroll-thumb: rgba(190, 180, 205, 0.34);
+  --shadow: 0 18px 56px rgba(0, 0, 0, 0.52);
+  --activity-width: 50px;
+  --title-height: 40px;
+  --status-height: 23px;
+  --tab-height: 35px;
+  --workbench-font-family: "Phantasy Mono PTY", "JetBrains Mono", Menlo, monospace;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-canvas: #eeeaf1;
+  --bg-editor: #fbf9fc;
+  --bg-surface: #f5f1f7;
+  --bg-raised: #ffffff;
+  --bg-hover: #e8e1ec;
+  --bg-active: #ded4e4;
+  --border: #d3c9d9;
+  --border-strong: #b8aabd;
+  --text-primary: #211e29;
+  --text-secondary: #5d5767;
+  --text-muted: #817988;
+  --accent: #b80d5b;
+  --accent-strong: #99084a;
+  --accent-soft: rgba(184, 13, 91, 0.1);
+  --cyan: #007888;
+  --cyan-soft: rgba(0, 120, 136, 0.1);
+  --focus: #007888;
+  --selection: rgba(184, 13, 91, 0.2);
+  --success: #16704a;
+  --warning: #8b5b00;
+  --error: #b31d37;
+  --scroll-thumb: rgba(70, 55, 80, 0.28);
+  --shadow: 0 18px 56px rgba(45, 28, 52, 0.22);
+}
+
+:root[data-theme='contrast'] {
+  color-scheme: dark;
+  --bg-canvas: #000;
+  --bg-editor: #000;
+  --bg-surface: #050505;
+  --bg-raised: #101010;
+  --bg-hover: #202020;
+  --bg-active: #303030;
+  --border: #fff;
+  --border-strong: #fff;
+  --text-primary: #fff;
+  --text-secondary: #fff;
+  --text-muted: #ddd;
+  --accent: #ff5cad;
+  --accent-strong: #ff5cad;
+  --accent-soft: rgba(255, 92, 173, 0.25);
+  --cyan: #4ef2ff;
+  --cyan-soft: rgba(78, 242, 255, 0.24);
+  --focus: #fff600;
+  --selection: #8a0050;
+  --success: #70ffb4;
+  --warning: #fff600;
+  --error: #ff667d;
+  --scroll-thumb: #fff;
+  --shadow: 0 0 0 2px #fff;
+}

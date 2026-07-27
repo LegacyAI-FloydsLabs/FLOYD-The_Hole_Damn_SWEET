@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# floyd-agent — parametric launcher for the nine FLOYD launcher agents.
+#
+# Invoked via a per-agent stub (basename = agent slug) or directly:
+#   floyd-agent <slug> [floyd args...]
+#
+# What it does, in order:
+#   1. Resolves the agent home:  <launcher>/agents/<slug>
+#   2. Merges the canonical Floyd data config (provider auth) with the
+#      agent overlay (model, temperature, prompt package, skills) into
+#      $HOME/.floyd-agents/<slug>/config/floyd.json  (mode 600)
+#   3. Launches the real FF Floyd binary with FLOYD_GLOBAL_DATA pointing
+#      at the merged config and an isolated per-agent data dir.
+#
+# The canonical config at ~/.local/share/floyd/floyd.json is never written.
+set -u
+
+SELF=$(basename "$0")
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+AGENTS_DIR=$(dirname "$SELF_DIR")
+
+if [ "$SELF" = "floyd-agent" ]; then
+  SLUG=${1:-}
+  [ -n "$SLUG" ] && shift || { echo "floyd-agent: missing agent slug" >&2; exit 64; }
+else
+  SLUG=$SELF
+fi
+
+AGENT_HOME="$AGENTS_DIR/$SLUG"
+OVERLAY="$AGENT_HOME/agent.json"
+[ -f "$OVERLAY" ] || { echo "floyd-agent: unknown agent '$SLUG' (no $OVERLAY)" >&2; exit 66; }
+
+# Floyd binary: explicit env, dev canonical, or the runtime copy shipped
+# with the ff surface (installed-app path).
+REAL=${FLOYD_AGENT_REAL_BIN:-}
+if [ -z "$REAL" ]; then
+  for c in /opt/homebrew/libexec/floyd-harnesses/floyd-ff-real \
+           "$AGENTS_DIR/../../ff/bin/floyd-ff-real"; do
+    [ -x "$c" ] && { REAL=$c; break; }
+  done
+fi
+[ -n "$REAL" ] && [ -x "$REAL" ] || { echo "floyd-agent: no Floyd binary (set FLOYD_AGENT_REAL_BIN)" >&2; exit 127; }
+
+NODE=${FLOYD_AGENT_NODE:-}
+[ -n "$NODE" ] && [ -x "$NODE" ] || NODE=$(command -v node) || { echo "floyd-agent: node not found" >&2; exit 127; }
+
+RUNTIME="$HOME/.floyd-agents/$SLUG"
+mkdir -p "$RUNTIME/config" "$RUNTIME/data"
+
+# Base config is optional: on a fresh install there is none, and provider
+# auth comes from the vault during the merge. {} is a valid empty base.
+BASE_CONFIG=${FLOYD_AGENT_BASE_CONFIG:-"$HOME/.local/share/floyd/floyd.json"}
+if [ ! -f "$BASE_CONFIG" ]; then
+  BASE_CONFIG="$RUNTIME/config/empty-base.json"
+  [ -f "$BASE_CONFIG" ] || printf '{}' > "$BASE_CONFIG"
+fi
+
+"$NODE" "$AGENTS_DIR/lib/merge-config.mjs" "$BASE_CONFIG" "$OVERLAY" "$AGENT_HOME" "$RUNTIME/config/floyd.json" \
+  || { echo "floyd-agent: config merge failed for $SLUG" >&2; exit 70; }
+
+# Per-agent runtime environment knobs declared in env.sh (optional).
+if [ -f "$AGENT_HOME/env.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$AGENT_HOME/env.sh"
+fi
+
+export FLOYD_GLOBAL_DATA="$RUNTIME/config"
+exec "$REAL" -D "$RUNTIME/data" "$@"

@@ -1,0 +1,49 @@
+{
+  "name": "terminalone",
+  "version": "1.0.0",
+  "description": "A browser-based terminal emulator — your shell, in your browser, with 38 feature modules and PWA install. Free. No subscription. No catch.",
+  "license": "MIT",
+  "repository": "github:CaptainPhantasy/TerminalOne",
+  "homepage": "https://github.com/CaptainPhantasy/TerminalOne#readme",
+  "bugs": "https://github.com/CaptainPhantasy/TerminalOne/issues",
+  "keywords": [
+    "terminal",
+    "emulator",
+    "browser",
+    "pty",
+    "websocket",
+    "xterm",
+    "pwa",
+    "shell"
+  ],
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "test": "node tests/input-guard.test.mjs && node tests/service-worker-test.js && node tests/floyd-core-test.js && node tests/smoke-test.js && node tests/feature-test.js && node tests/feature-behavior-test.js && node tests/responsive-test.js",
+    "test:floyd": "node tests/floyd-core-test.js",
+    "test:unit": "node tests/input-guard.test.mjs",
+    "test:service-worker": "node tests/service-worker-test.js",
+    "test:smoke": "node tests/smoke-test.js",
+    "test:features": "node tests/feature-test.js",
+    "test:behavior": "node tests/feature-behavior-test.js",
+    "test:responsive": "node tests/responsive-test.js"
+  },
+  "dependencies": {
+    "@floyd/sdk": "file:vendor/floyd-sdk",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.20.0-beta.289",
+    "@xterm/xterm": "^6.0.0",
+    "express": "^4.22.2",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.41.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

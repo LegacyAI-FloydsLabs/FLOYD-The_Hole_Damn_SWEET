@@ -1,0 +1,21 @@
+{
+  "models": {
+    "large": {
+      "model": "glm-5.2",
+      "provider": "zai",
+      "max_tokens": 131072,
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "presence_penalty": 0.3
+    }
+  },
+  "options": {
+    "context_paths": [
+      "${AGENT_HOME}/prompt/AGENT.md"
+    ],
+    "skills_paths": [
+      "${AGENT_HOME}/skills"
+    ],
+    "disable_provider_auto_update": true
+  }
+}

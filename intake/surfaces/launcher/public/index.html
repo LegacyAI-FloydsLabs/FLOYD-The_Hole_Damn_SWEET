@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>Harness Launcher</title>
+ <link rel="preconnect" href="https://fonts.googleapis.com">
+ <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+ <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+ <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css">
+ <style>
+ :root {
+  --font-display: 'Outfit', sans-serif;
+  --font-body: 'JetBrains Mono', monospace;
+  --font-mono: 'Space Mono', monospace;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 40px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --color-bg-primary: #0f1117;
+  --color-bg-secondary: #1a1b26;
+  --color-surface: rgba(30, 30, 46, 0.85);
+  --color-surface-elevated: rgba(17, 19, 29, 0.96);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(122, 162, 247, 0.25);
+  --color-accent-primary: #7aa2f7;
+  --color-accent-secondary: #f7768e;
+  --color-yellow: #e0af68;
+  --color-text-primary: #c0caf5;
+  --color-text-secondary: rgba(192, 202, 245, 0.7);
+  --color-text-muted: rgba(192, 202, 245, 0.5);
+ }
+
+ * {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+ }
+
+ html, body {
+  height: 100%;
+  font-family: var(--font-body);
+  background: radial-gradient(circle at top left, rgba(122, 162, 247, 0.08), transparent 30%), var(--color-bg-primary);
+  color: var(--color-text-primary);
+  overflow: hidden;
+ }
+
+ body {
+  min-height: 100vh;
+ }
+
+ button, input {
+  font: inherit;
+ }
+
+ .banner {
+  position: fixed;
+  top: var(--spacing-md);
+  left: var(--spacing-md);
+  right: var(--spacing-md);
+  z-index: 40;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  display: none;
+  backdrop-filter: blur(10px);
+ }
+
+ .banner.error {
+  background: rgba(247, 118, 142, 0.12);
+  border: 1px solid rgba(247, 118, 142, 0.3);
+  color: var(--color-accent-secondary);
+ }
+
+ .banner.warn {
+  background: rgba(224, 175, 104, 0.12);
+  border: 1px solid rgba(224, 175, 104, 0.3);
+  color: var(--color-yellow);
+ }
+
+ .app-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  padding: var(--spacing-md);
+ }
+
+ .workspace {
+  height: 100%;
+ }
+
+ .drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 6, 12, 0.58);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 15;
+ }
+
+ .drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+ }
+
+ .nav-drawer {
+  position: absolute;
+  top: var(--spacing-md);
+  left: var(--spacing-md);
+  bottom: var(--spacing-md);
+  width: clamp(280px, 28vw, 420px);
+  max-width: calc(100vw - var(--spacing-md) * 2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+  transform: translateX(calc(-100% - var(--spacing-lg)));
+  transition: transform 0.22s ease;
+  z-index: 20;
+ }
+
+ .nav-drawer.open {
+  transform: translateX(0);
+ }
+
+ .drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+ }
+
+ .drawer-title h1 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+ }
+
+ .drawer-title p {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+ }
+
+ .drawer-close,
+ .menu-toggle,
+ .terminal-action,
+ .chip-button,
+ .welcome-action {
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: rgba(122, 162, 247, 0.08);
+  color: var(--color-text-primary);
+  border-radius: 999px;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+ }
+
+ .drawer-close:hover,
+ .menu-toggle:hover,
+ .terminal-action:hover,
+ .chip-button:hover,
+ .welcome-action:hover {
+  border-color: var(--color-accent-primary);
+  background: rgba(122, 162, 247, 0.14);
+ }
+
+ .drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-height: 0;
+ }
+
+ .drawer-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+ }
+
+ .config-input {
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text-primary);
+  padding: 12px 14px;
+  outline: none;
+ }
+
+ .config-input:focus {
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.12);
+ }
+
+ .harness-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+ }
+
+ .harness-grid::-webkit-scrollbar {
+  width: 6px;
+ }
+
+ .harness-grid::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+ }
+
+ .harness-card {
+  appearance: none;
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: pointer;
+  transition: all 0.18s ease;
+ }
+
+ .harness-card:hover {
+  background: rgba(122, 162, 247, 0.08);
+  border-color: rgba(122, 162, 247, 0.3);
+  transform: translateY(-1px);
+ }
+
+ .harness-card.active {
+  background: rgba(122, 162, 247, 0.14);
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 1px var(--color-accent-primary);
+ }
+
+ .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: 4px;
+ }
+
+ .card-title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-accent-primary);
+ }
+
+ .card-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: rgba(122, 162, 247, 0.08);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+ }
+
+ .card-description {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+ }
+
+ .spinner-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  min-height: 96px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: var(--spacing-md);
+ }
+
+ .loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(122, 162, 247, 0.2);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+ }
+
+ @keyframes spin {
+  to { transform: rotate(360deg); }
+ }
+
+ .terminal-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+ }
+
+ .terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(30, 30, 46, 0.45);
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
+ }
+
+ .header-left,
+ .header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+ }
+
+ .menu-toggle {
+  padding-inline: 12px;
+ }
+
+ .chip-button {
+  max-width: min(42vw, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(122, 162, 247, 0.12);
+ }
+
+ .chip-button.idle {
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+ }
+
+ .terminal-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+ }
+
+ .terminal-status.connected {
+  color: var(--color-accent-primary);
+ }
+
+ .terminal-status.error {
+  color: var(--color-accent-secondary);
+ }
+
+ .terminal-action {
+  display: none;
+ }
+
+ .terminal-container {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+ }
+
+ .welcome-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  text-align: center;
+  padding: var(--spacing-xl);
+ }
+
+ .welcome-screen h2 {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 600;
+ }
+
+ .welcome-screen p {
+  max-width: 520px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+ }
+
+ .welcome-screen .hint {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+ }
+
+ .welcome-screen .hint.hidden {
+  display: none;
+ }
+
+ #terminal {
+  height: 100%;
+  width: 100%;
+ }
+
+ .xterm {
+  height: 100%;
+ }
+
+ .xterm-screen,
+ .xterm-viewport {
+  width: 100% !important;
+ }
+
+ .xterm-viewport {
+  overflow-y: auto !important;
+ }
+
+ .terminal-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-height: 44px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+ }
+
+ .footer-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+ }
+
+ @media (max-width: 900px) {
+  .app-shell {
+   padding: var(--spacing-sm);
+  }
+
+  .nav-drawer {
+   top: var(--spacing-sm);
+   left: var(--spacing-sm);
+   bottom: var(--spacing-sm);
+   width: min(88vw, 420px);
+   max-width: calc(100vw - var(--spacing-sm) * 2);
+   padding: var(--spacing-md);
+  }
+
+  .terminal-header {
+   flex-wrap: wrap;
+   align-items: stretch;
+  }
+
+  .header-left,
+  .header-right {
+   width: 100%;
+   justify-content: space-between;
+  }
+
+  .chip-button {
+   max-width: none;
+   flex: 1;
+   min-width: 0;
+  }
+ }
+
+ @media (max-width: 640px) {
+  .welcome-screen {
+   padding: var(--spacing-lg);
+  }
+
+  .drawer-title h1 {
+   font-size: 24px;
+  }
+
+  .terminal-action,
+  .menu-toggle,
+  .chip-button,
+  .drawer-close,
+  .welcome-action {
+   padding: 8px 12px;
+  }
+ }
+ </style>
+</head>
+<body>
+ <div class="banner" id="banner"></div>
+
+ <div class="app-shell">
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+
+  <aside class="nav-drawer" id="navDrawer" aria-hidden="true">
+   <div class="drawer-header">
+    <div class="drawer-title">
+     <h1>Harness</h1>
+     <p>$ click to launch</p>
+    </div>
+    <button class="drawer-close" type="button" onclick="closeDrawer()">Close</button>
+   </div>
+
+   <div class="drawer-section">
+    <span class="drawer-label">Launch args</span>
+    <input
+     type="text"
+     class="config-input"
+     id="argsInput"
+     placeholder="--model claude --verbose"
+     autocomplete="off"
+     spellcheck="false"
+    >
+   </div>
+
+   <div class="drawer-section">
+    <span class="drawer-label">Harnesses</span>
+    <div class="harness-grid" id="harnessGrid">
+     <div class="spinner-card" id="harnessLoading">
+      <div class="loading-spinner"></div>
+      <span>Loading harnesses…</span>
+     </div>
+    </div>
+   </div>
+  </aside>
+
+  <main class="workspace">
+   <div class="terminal-view">
+    <div class="terminal-header">
+     <div class="header-left">
+      <button class="menu-toggle" id="menuToggle" type="button" onclick="toggleDrawer()">Menu</button>
+      <button class="chip-button idle" id="activeHarnessChip" type="button" onclick="openDrawer()">Choose harness</button>
+     </div>
+     <div class="header-right">
+      <span class="terminal-status" id="status">Ready</span>
+      <button class="terminal-action" id="restartBtn" type="button" onclick="restartHarness()" disabled>Restart</button>
+      <button class="terminal-action" id="closeBtn" type="button" onclick="closeTerminal()">Close Session</button>
+     </div>
+    </div>
+
+    <div class="terminal-container">
+     <div class="welcome-screen" id="welcomeScreen">
+      <h2>Terminal-first launcher</h2>
+      <p>Open the drawer, choose a harness, and keep the terminal as your primary workspace on every screen.</p>
+      <button class="welcome-action" type="button" onclick="openDrawer()">Choose harness</button>
+      <p class="hint" id="loadHint">Loading harness list…</p>
+     </div>
+     <div id="terminal" style="display: none;"></div>
+    </div>
+
+    <div class="terminal-footer">
+      <span class="footer-meta" id="footerMeta"></span>
+    </div>
+   </div>
+  </main>
+ </div>
+
+ <script type="module">
+  import { Terminal } from '/node_modules/@xterm/xterm/lib/xterm.mjs';
+  import { FitAddon } from '/node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
+  import { WebLinksAddon } from '/node_modules/@xterm/addon-web-links/lib/addon-web-links.mjs';
+
+  let ws = null;
+  let term = null;
+  let fitAddon = null;
+  let currentHarness = null;
+  let currentSessionId = null;
+  let currentCard = null;
+  let userInitiatedClose = false;
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
+  let drawerOpen = false;
+  let harnesses = [];
+
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  function showBanner(msg, type = 'error') {
+   const banner = $('#banner');
+   banner.textContent = msg;
+   banner.className = `banner ${type}`;
+   banner.style.display = 'block';
+  }
+
+  function hideBanner() {
+   $('#banner').style.display = 'none';
+  }
+
+  function updateStatus(text, state = 'neutral') {
+   const status = $('#status');
+   status.textContent = text;
+   status.className = `terminal-status ${state === 'connected' ? 'connected' : state === 'error' ? 'error' : ''}`;
+  }
+
+  function setFooter(text) {
+   $('#footerMeta').textContent = text;
+  }
+
+  function updateHarnessChip(name = null, state = 'idle') {
+   const chip = $('#activeHarnessChip');
+   chip.textContent = name || 'Choose harness';
+   chip.classList.toggle('idle', !name || state === 'idle');
+  }
+
+  function scheduleFit(delay = 0) {
+   window.setTimeout(() => {
+    if (!fitAddon || !term) return;
+    try {
+     fitAddon.fit();
+    } catch (_) {}
+   }, delay);
+  }
+
+  function setDrawerOpen(open) {
+   drawerOpen = open;
+   const drawer = $('#navDrawer');
+   const backdrop = $('#drawerBackdrop');
+   drawer.classList.toggle('open', open);
+   drawer.setAttribute('aria-hidden', String(!open));
+   backdrop.classList.toggle('open', open);
+   scheduleFit(open ? 0 : 220);
+  }
+
+  function openDrawer() {
+   setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+   setDrawerOpen(false);
+  }
+
+  function toggleDrawer() {
+   setDrawerOpen(!drawerOpen);
+  }
+
+  window.openDrawer = openDrawer;
+  window.closeDrawer = closeDrawer;
+  window.toggleDrawer = toggleDrawer;
+
+  function syncActiveCard() {
+   $$('.harness-card').forEach((card) => {
+    card.classList.toggle('active', card.dataset.harness === currentHarness);
+   });
+  }
+
+  async function loadHarnesses() {
+   try {
+    const res = await fetch('/harnesses');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { harnesses: list } = await res.json();
+    harnesses = list;
+    renderHarnessGrid(harnesses);
+   } catch (e) {
+    const errDiv = document.createElement('div');
+    errDiv.className = 'spinner-card';
+    errDiv.style.color = 'var(--color-accent-secondary)';
+    const errSpan = document.createElement('span');
+    errSpan.textContent = 'Failed to load harnesses: ' + (e.message || String(e));
+    errDiv.appendChild(errSpan);
+    $('#harnessGrid').replaceChildren(errDiv);
+   }
+  }
+
+  function renderHarnessGrid(list) {
+   const grid = $('#harnessGrid');
+   grid.innerHTML = '';
+
+   list.forEach((h) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'harness-card';
+    card.dataset.harness = h.name;
+    card.setAttribute('aria-label', `Launch ${h.name} harness`);
+    const hdr = document.createElement('div');
+    hdr.className = 'card-header';
+
+    const title = document.createElement('div');
+    title.className = 'card-title';
+    title.textContent = h.name;
+
+    const typ = document.createElement('div');
+    typ.className = 'card-type';
+    typ.textContent = h.type;
+
+    hdr.appendChild(title);
+    hdr.appendChild(typ);
+
+    const desc = document.createElement('p');
+    desc.className = 'card-description';
+    desc.textContent = h.description;
+
+    card.appendChild(hdr);
+    card.appendChild(desc);
+    card.addEventListener('click', () => {
+     launchHarness(h.name, card);
+    });
+
+    grid.appendChild(card);
+   });
+
+   syncActiveCard();
+  }
+
+  function initTerminal() {
+   if (term) {
+    try { term.dispose(); } catch (_) {}
+    term = null;
+   }
+
+   const termEl = $('#terminal');
+   termEl.style.display = 'block';
+   $('#welcomeScreen').style.display = 'none';
+
+   term = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'block',
+    fontSize: 14,
+    lineHeight: 1.2,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', monospace",
+    theme: {
+     background: '#1a1b26',
+     foreground: '#c0caf5',
+     cursor: '#c0caf5',
+     cursorAccent: '#1a1b26',
+     selectionBackground: 'rgba(122, 162, 247, 0.3)',
+     selectionForeground: '#c0caf5',
+     black: '#15161e',
+     red: '#f7768e',
+     green: '#9ece6a',
+     yellow: '#e0af68',
+     blue: '#7aa2f7',
+     magenta: '#bb9af7',
+     cyan: '#7dcfff',
+     white: '#a9b1d6',
+     brightBlack: '#414868',
+     brightRed: '#f7768e',
+     brightGreen: '#9ece6a',
+     brightYellow: '#e0af68',
+     brightBlue: '#7aa2f7',
+     brightMagenta: '#bb9af7',
+     brightCyan: '#7dcfff',
+     brightWhite: '#c0caf5'
+    },
+    allowProposedApi: true,
+    scrollback: 10000,
+    convertEol: false
+   });
+
+   fitAddon = new FitAddon();
+   term.loadAddon(fitAddon);
+   term.loadAddon(new WebLinksAddon());
+   term.open(termEl);
+   requestAnimationFrame(() => fitAddon.fit());
+
+   term.onData((data) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+     ws.send(JSON.stringify({ type: 'input', data }));
+    }
+   });
+
+   term.onResize(({ cols, rows }) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+     ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    }
+   });
+
+   const ro = new ResizeObserver(() => {
+    scheduleFit();
+   });
+   ro.observe(termEl);
+
+   return { term, fitAddon };
+  }
+
+  function handleServerMessage(msg) {
+   switch (msg.type) {
+    case 'launched': {
+     currentSessionId = msg.sessionId;
+     if (msg.harness === 'shell') {
+      updateStatus('Shell', 'connected');
+      updateHarnessChip(null, 'idle');
+     } else {
+      updateStatus(`Running ${msg.harness}`, 'connected');
+      updateHarnessChip(msg.harness, 'active');
+     }
+     setFooter(`${msg.command} · ${msg.cwd}`);
+     $('#closeBtn').style.display = 'inline-block';
+     $('#restartBtn').style.display = 'none';
+     $('#restartBtn').disabled = true;
+     break;
+    }
+
+    case 'output': {
+     term?.write(msg.data);
+     break;
+    }
+
+    case 'exit': {
+     const code = msg.code;
+     updateStatus(`Exited (code ${code})`, 'error');
+     setFooter(`Process exited · code ${code}`);
+     $('#restartBtn').style.display = 'inline-block';
+     $('#restartBtn').disabled = false;
+     break;
+    }
+    case 'command-exit': {
+     const code = Number(msg.code) || 0;
+     updateStatus(`Exited ${msg.harness} (code ${code})`, code === 0 ? 'neutral' : 'error');
+     updateHarnessChip(msg.harness, 'idle');
+     setFooter(`${msg.harness} exited · code ${code} · shell ready`);
+     $('#restartBtn').style.display = 'inline-block';
+     $('#restartBtn').disabled = false;
+     break;
+    }
+
+    case 'error': {
+     const errText = `\r\n\x1b[31m[ERROR ${msg.code}]\x1b[0m ${msg.message}\r\n`;
+     term?.write(errText);
+
+     if (msg.code === 'SESSION_LIMIT') {
+      showBanner(msg.message, 'warn');
+     } else {
+      showBanner(`[${msg.code}] ${msg.message}`, 'error');
+     }
+
+     if (msg.code === 'INVALID_HARNESS' || msg.code === 'SPAWN_FAILED') {
+      $('#restartBtn').style.display = 'inline-block';
+      $('#restartBtn').disabled = false;
+     }
+     break;
+    }
+    case 'shell-reset': {
+     // Shell exited (e.g. user typed `exit`); server respawned a fresh one.
+     // Clear the screen and reset status so the terminal stays live.
+     term?.reset();
+     updateStatus('Shell', 'connected');
+     updateHarnessChip(null, 'idle');
+     setFooter('Fresh shell — type to continue');
+     $('#closeBtn').style.display = 'inline-block';
+     $('#restartBtn').style.display = 'none';
+     $('#restartBtn').disabled = true;
+     break;
+    }
+   }
+  }
+
+  window.launchHarness = function(harness, cardEl) {
+   if (currentHarness === harness && ws && ws.readyState === WebSocket.OPEN) {
+    closeDrawer();
+    return;
+   }
+
+   if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+   }
+   reconnectAttempts = 0;
+
+   userInitiatedClose = true;
+   if (ws) {
+    ws.close();
+    ws = null;
+   }
+
+   currentHarness = harness;
+   currentCard = cardEl || $(`[data-harness="${harness}"]`);
+   currentSessionId = null;
+   userInitiatedClose = false;
+   syncActiveCard();
+   updateHarnessChip(harness, 'connecting');
+
+   const { fitAddon: fa } = initTerminal();
+   fitAddon = fa;
+
+   updateStatus('Connecting…', 'neutral');
+   hideBanner();
+
+   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+   ws = new WebSocket(`${protocol}//${location.host}`);
+
+   ws.onopen = () => {
+    const argsInput = $('#argsInput').value.trim();
+    const args = argsInput ? argsInput.split(/\s+/).filter(Boolean) : [];
+
+    ws.send(JSON.stringify({
+     type: 'launch',
+     harness,
+     cols: 120,
+     rows: 40,
+     args
+    }));
+
+    closeDrawer();
+    scheduleFit();
+   };
+
+   ws.onmessage = (evt) => {
+    try {
+     const msg = JSON.parse(evt.data);
+     handleServerMessage(msg);
+    } catch (_) {}
+   };
+
+   ws.onerror = () => {
+    showBanner('WebSocket connection failed', 'error');
+    updateStatus('WS error', 'error');
+   };
+
+   ws.onclose = () => {
+    if (userInitiatedClose) return;
+
+    updateStatus('Disconnected', 'error');
+    const delay = Math.min(1_000 * Math.pow(2, reconnectAttempts), 60_000);
+    reconnectAttempts++;
+    reconnectTimer = setTimeout(() => {
+     if (!userInitiatedClose && currentHarness) {
+      launchHarness(currentHarness, currentCard || $(`[data-harness="${currentHarness}"]`));
+     }
+    }, delay);
+   };
+  };
+
+  window.restartHarness = function() {
+   if (!currentHarness) return;
+   $('#restartBtn').disabled = true;
+   $('#restartBtn').style.display = 'none';
+   launchHarness(currentHarness, currentCard || $(`[data-harness="${currentHarness}"]`));
+  };
+
+  window.closeTerminal = function() {
+   userInitiatedClose = true;
+   reconnectAttempts = 0;
+
+   if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+   }
+
+   if (ws) {
+    ws.send(JSON.stringify({ type: 'close' }));
+    ws.close();
+    ws = null;
+   }
+
+   currentHarness = null;
+   currentSessionId = null;
+   currentCard = null;
+   syncActiveCard();
+   updateHarnessChip();
+
+   try { term?.dispose(); } catch (_) {}
+   term = null;
+   fitAddon = null;
+
+   $('#terminal').style.display = 'none';
+   $('#welcomeScreen').style.display = 'flex';
+   $('#closeBtn').style.display = 'none';
+   $('#restartBtn').style.display = 'none';
+   $('#restartBtn').disabled = true;
+   setFooter('');
+   updateStatus('Ready', 'neutral');
+   hideBanner();
+  }
+
+  document.addEventListener('keydown', (event) => {
+   if (event.key === 'Escape' && drawerOpen) {
+    closeDrawer();
+   }
+  });
+
+  $('#drawerBackdrop').addEventListener('click', () => {
+   closeDrawer();
+  });
+
+  // Connect to a bare ZSH shell immediately — terminal is the default home screen.
+  // Harnesses launch from the drawer on top of this live shell.
+  window.connectShell = function() {
+   if (ws && ws.readyState === WebSocket.OPEN) return;
+
+   const { fitAddon: fa } = initTerminal();
+   fitAddon = fa;
+   updateStatus('Connecting…', 'neutral');
+   hideBanner();
+
+   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+   ws = new WebSocket(`${protocol}//${location.host}`);
+   userInitiatedClose = false;
+
+   ws.onopen = () => {
+    reconnectAttempts = 0;
+    ws.send(JSON.stringify({ type: 'shell', cols: 120, rows: 40 }));
+    scheduleFit();
+   };
+
+   ws.onmessage = (evt) => {
+    try { handleServerMessage(JSON.parse(evt.data)); } catch (_) {}
+   };
+
+   ws.onerror = () => {
+    showBanner('WebSocket connection failed', 'error');
+    updateStatus('WS error', 'error');
+   };
+
+   ws.onclose = () => {
+    if (userInitiatedClose) return;
+    updateStatus('Disconnected', 'error');
+    const delay = Math.min(1_000 * Math.pow(2, reconnectAttempts), 60_000);
+    reconnectAttempts++;
+    reconnectTimer = setTimeout(() => {
+     if (!userInitiatedClose) connectShell();
+    }, delay);
+   };
+  };
+
+  (async () => {
+   await loadHarnesses();
+
+   const hint = $('#loadHint');
+   if (harnesses.length > 0) {
+    hint.classList.add('hidden');
+   } else {
+    hint.textContent = 'Could not reach server — start with npm start';
+   }
+
+   // Terminal-first: spawn a live shell immediately, hide the welcome screen.
+   $('#welcomeScreen').style.display = 'none';
+   connectShell();
+  })();
+ </script>
+</body>
+</html>

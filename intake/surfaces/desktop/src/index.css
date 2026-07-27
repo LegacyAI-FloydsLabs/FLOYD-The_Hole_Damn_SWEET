@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  /* System font stack - SF Pro on Mac (Claude desktop app style) */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Theme variables - set by ThemeProvider via CSS custom properties */
+  background-color: var(--color-bg-base, #000000);
+  color: var(--color-text-primary, #FFFFFF);
+}
+
+/* CRUSH Theme Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-base, #000000);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-overlay, #231991);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-bg-modal, #4D4C57);
+}
+
+/* Markdown styles - Theme-aware */
+.prose pre {
+  background: var(--color-bg-elevated, #1C165E);
+  border: 1px solid var(--color-bg-overlay, #231991);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.prose code {
+  background: var(--color-bg-elevated, #1C165E);
+  color: var(--color-accent-tertiary, #68FFD6);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.prose pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+/* Syntax highlighting - Theme-aware */
+.prose .keyword {
+  color: var(--color-accent-info, #00A4FF);
+}
+
+.prose .string {
+  color: var(--color-accent-secondary, #BF976F);
+}
+
+.prose .function {
+  color: var(--color-status-ready, #12C78F);
+}
+
+.prose .comment {
+  color: var(--color-text-subtle, #706F7B);
+}
+
+.prose .number {
+  color: var(--color-extended-julep, #00FFB2);
+}

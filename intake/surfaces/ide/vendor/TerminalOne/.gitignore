@@ -1,0 +1,21 @@
+.env
+node_modules/
+.DS_Store
+.work/
+
+# Harness control-plane — never ship (infra topology, governance state)
+# `**/.supercache` catches symlinks too (root `.supercache/` only matches dirs)
+.floyd/
+**/.supercache
+FLOYD.md
+
+# ─── Quarantine (Douglas review queue — files preserved, never deleted by agent) ──
+.quarantine/
+.aider*
+# Session handoffs — internal topology, never ship
+docs/HANDOFF.md
+
+# ─── Agent working notes — session scratch, not source of truth ──
+findings.md
+progress.md
+task_plan.md

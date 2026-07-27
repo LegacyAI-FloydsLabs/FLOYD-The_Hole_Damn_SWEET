@@ -1,0 +1,17 @@
+{
+  "name": "TerminalOne",
+  "short_name": "T1",
+  "description": "Browser-based WebSocket terminal emulator",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1b26",
+  "theme_color": "#7aa2f7",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "shortcuts": [
+    { "name": "New Tab", "short_name": "New", "description": "Open a new terminal session", "url": "/?action=new-tab", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Focus Mode", "short_name": "Focus", "description": "Open in full-screen focus mode", "url": "/?action=focus", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
