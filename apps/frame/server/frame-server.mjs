@@ -37,11 +37,10 @@ const PORT = Number(process.env.FRAME_PORT || 13030);
 // elsewhere on disk are never touched by the frame.
 const SURFACES = join(REPO_ROOT, "intake", "surfaces");
 const PTY_COPY = join(SURFACES, "pty");
-// One node for everything: homebrew node (native modules in the copies are
-// built against it). No per-service pins.
-// Prefer Homebrew node; fall back to the node running this server so the
-// frame works on a fresh OS before Homebrew is installed (new-world boot).
-const NODE_BIN = existsSync("/opt/homebrew/bin/node") ? "/opt/homebrew/bin/node" : process.execPath;
+// Surfaces run on the same node that runs the frame (the app's bundled runtime
+// when installed, whatever launched us in dev). Never prefer a system node:
+// its ABI may not match the surfaces' native modules.
+const NODE_BIN = process.execPath;
 const WRAPPER_DIR = join(FRAME_DIR, "server", "shells");
 mkdirSync(WRAPPER_DIR, { recursive: true });
 mkdirSync(BACKGROUNDS_DIR, { recursive: true });
@@ -280,7 +279,7 @@ async function ensureApp(id) {
   if (!spec) return { id, managed: false };
   if (await portOpen(spec.port)) return { id, managed: true, up: true, port: spec.port };
   if (!existsSync(spec.cwd)) return { id, managed: true, up: false, error: `missing cwd ${spec.cwd}` };
-  const env = { ...process.env, ...vaultEnv(id), ...(typeof spec.env === "function" ? spec.env() : spec.env) };
+  const env = { ...process.env, FLOYD_RUNTIME_ROOT: RUNTIME_ROOT, ...vaultEnv(id), ...(typeof spec.env === "function" ? spec.env() : spec.env) };
   const child = spawn(spec.cmd, spec.args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   children.set(id, child);
   child.stdout.on("data", (d) => process.stdout.write(`[${id}] ${d}`));
