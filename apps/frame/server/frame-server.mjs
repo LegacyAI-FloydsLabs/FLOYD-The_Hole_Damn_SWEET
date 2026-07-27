@@ -646,6 +646,23 @@ const server = http.createServer(async (req, res) => {
     if (path === "/api/vault/alerts" && req.method === "GET") {
       return json(res, 200, { alerts: vaultProxy.store.alerts(Number(url.searchParams.get("limit")) || 100) });
     }
+    // ---- agent model preferences ---------------------------------------
+    // Shipped agent.json model pins are defaults only. Users override them
+    // here; merge-config.mjs layers this file over every agent overlay.
+    //   GET  -> { default: {...}, agents: { slug: {...} } }
+    //   PUT  -> replace the whole preference document (validated JSON object)
+    if (path === "/api/agent-models" && req.method === "GET") {
+      try { return json(res, 200, JSON.parse(readFileSync(join(RUNTIME_ROOT, "agent-models.json"), "utf8"))); }
+      catch { return json(res, 200, { default: {}, agents: {} }); }
+    }
+    if (path === "/api/agent-models" && req.method === "PUT") {
+      let body = ""; for await (const c of req) body += c;
+      let prefs;
+      try { prefs = JSON.parse(body); } catch { return json(res, 400, { error: "invalid JSON" }); }
+      if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) return json(res, 400, { error: "expected an object" });
+      writeFileSync(join(RUNTIME_ROOT, "agent-models.json"), JSON.stringify(prefs, null, 2));
+      return json(res, 200, { ok: true, prefs });
+    }
     if (path === "/api/action/open-chrome" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
       const target = body ? (JSON.parse(body).url ?? null) : null;
