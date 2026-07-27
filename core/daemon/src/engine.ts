@@ -44,6 +44,15 @@ export class OpenCodeEngine {
    */
   async fetchGlmKey(): Promise<{ key: string; source: string }> {
     const candidates: Array<{ key: string; source: string }> = [];
+    // Primary: the FLOYD vault (single credential authority; what a fresh
+    // install populates through the frame's key UI).
+    try {
+      const vault = JSON.parse(readFileSync(join(RUNTIME_ROOT, "secrets", "provider-keys.json"), "utf8")) as
+        Record<string, { key?: string }>;
+      const vk = vault.zai?.key;
+      if (vk && vk.length >= 10) candidates.push({ key: vk, source: "floyd-vault:zai" });
+    } catch { /* vault not populated yet */ }
+    // Legacy: a validated key in the user's opencode config (pre-vault path).
     try {
       const cfg = JSON.parse(readFileSync(join(process.env.HOME ?? "", ".config/opencode/opencode.json"), "utf8")) as {
         provider?: { "zai-coding-plan"?: { options?: { apiKey?: string } } };

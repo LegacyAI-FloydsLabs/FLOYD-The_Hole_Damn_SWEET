@@ -35,7 +35,7 @@ printf '%s\n' "$VERSION" > "$WS/VERSION"   # updater reads installed version her
 rsync -a "$ROOT/node_modules/" "$WS/node_modules/"
 
 echo "==> staging surfaces (runtime copies only — no planning docs, tests, or artifacts)"
-for s in desktop ff ide launcher omf pty tui; do
+for s in desktop ff ide launcher omf pty; do
   src="$ROOT/intake/surfaces/$s"
   [ -d "$src" ] || { echo "FATAL: missing surface $s" >&2; exit 1; }
   mkdir -p "$WS/intake/surfaces/$s"
@@ -87,6 +87,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>FLOYD Desktop Suite</string>
+  <key>CFBundleIconFile</key><string>FLOYD</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
@@ -142,6 +143,8 @@ done
 open "http://127.0.0.1:13030/"
 LAUNCHER
 chmod 755 "$APP/Contents/MacOS/FLOYD Desktop Suite"
+
+cp "$ROOT/build-assets/FLOYD.icns" "$APP/Contents/Resources/FLOYD.icns"
 
 echo "==> secret scan (fail closed)"
 SCAN_FAIL=0
