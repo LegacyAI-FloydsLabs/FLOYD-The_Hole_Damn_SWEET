@@ -28,8 +28,10 @@ export function versionGt(a, b) {
   return false;
 }
 
-/** Installed version, or null in a dev checkout (updates disabled). */
+/** Installed version. Dev checkouts (a .git dir is present) return null:
+ * the updater must never offer to "update" a working tree. */
 export function installedVersion(repoRoot) {
+  if (existsSync(join(repoRoot, ".git"))) return null;
   try { return readFileSync(join(repoRoot, "VERSION"), "utf8").trim() || null; } catch { return null; }
 }
 
@@ -45,7 +47,7 @@ export function createUpdater({ repoRoot, runtimeRoot, manifestUrl = DEFAULT_MAN
   async function check() {
     state.checkedAt = new Date().toISOString();
     state.error = null;
-    if (!state.current) { state.error = "dev checkout (no VERSION file); updates disabled"; return state; }
+    if (!state.current) { state.error = "dev checkout; updates disabled"; return state; }
     try {
       const res = await fetchImpl(manifestUrl, { signal: AbortSignal.timeout(15_000) });
       if (!res.ok) throw new Error(`manifest HTTP ${res.status}`);

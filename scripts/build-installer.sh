@@ -13,7 +13,10 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-VERSION=${FLOYD_VERSION:-0.1.$(date +%Y%m%d%H%M)}
+# Version comes from the repo VERSION file (bumped with each shipped
+# improvement); FLOYD_VERSION overrides for one-off builds.
+VERSION=${FLOYD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}
+[ -n "$VERSION" ] || { echo "FATAL: empty VERSION" >&2; exit 1; }
 IDENTIFIER="com.floydslabs.floyd"
 DIST="$ROOT/dist"
 STAGE=$(mktemp -d /tmp/floyd-pkg.XXXXXX)

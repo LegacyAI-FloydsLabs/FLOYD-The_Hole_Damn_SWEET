@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createUpdater, versionGt, installedVersion } from "../server/self-update.mjs";
@@ -40,6 +40,13 @@ function serve(routes) {
 test("dev checkout (no VERSION): updates disabled", async () => {
   const { repoRoot, runtimeRoot } = tempRoots(null);
   assert.equal(installedVersion(repoRoot), null);
+  // a working tree (VERSION present but .git too) is also not updatable
+  writeFileSync(join(repoRoot, "VERSION"), "0.5.0");
+  mkdirSync(join(repoRoot, ".git"));
+  assert.equal(installedVersion(repoRoot), null);
+  rmSync(join(repoRoot, ".git"), { recursive: true });
+  assert.equal(installedVersion(repoRoot), "0.5.0");
+  rmSync(join(repoRoot, "VERSION"));
   const u = createUpdater({ repoRoot, runtimeRoot, manifestUrl: "http://127.0.0.1:1/x" });
   const s = await u.check();
   assert.equal(s.available, null);
