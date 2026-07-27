@@ -11,7 +11,7 @@ Exit 0 = pass.
 import os, plistlib, subprocess, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PLIST = os.path.join(REPO, "com.floyd.core.plist")
+PLIST = os.environ.get("FLOYD_CORE_PLIST", os.path.expanduser("~/Library/LaunchAgents/com.floyd.core.plist"))
 AUTH_BROKER = os.path.expanduser("~/Library/LaunchAgents/com.omp.auth-broker.plist")
 
 def main():
@@ -34,8 +34,8 @@ def main():
     exe = args[0] if args else ""
     script = args[1] if len(args) > 1 else ""
     checks["1f executable exists"] = bool(exe) and os.path.exists(exe)
-    checks["1g core entrypoint uses pinned release link"] = script == "/Volumes/Storage/FLOYD_RUNTIME/releases/core/current/core/daemon/src/main.ts"
-    checks["1h working directory uses pinned release link"] = p.get("WorkingDirectory") == "/Volumes/Storage/FLOYD_RUNTIME/releases/core/current"
+    checks["1g core entrypoint is a real main.ts"] = script.endswith("core/daemon/src/main.ts") and os.path.exists(script)
+    checks["1h working directory exists"] = bool(p.get("WorkingDirectory")) and os.path.isdir(p.get("WorkingDirectory"))
     checks["1i StandardOutPath set"] = bool(p.get("StandardOutPath"))
     checks["1j StandardErrorPath set"] = bool(p.get("StandardErrorPath"))
 

@@ -11,8 +11,8 @@ durable authority.
 
 ## Fixed decisions
 
-- Source/control hub: `/Volumes/Storage/FLOYD_WORKSTATION`.
-- Runtime/media hub: `/Volumes/Storage/FLOYD_RUNTIME`.
+- Source/control hub: this repo clone (any path).
+- Runtime hub: `$FLOYD_RUNTIME_ROOT`, default `~/.floyd`.
 - Floyd Core is the sole durable ecosystem authority.
 - Upstream OpenCode is the managed coding engine, never a deep fork by default.
 - **The first-party cockpit is retired.** The active unified surface is
@@ -47,7 +47,7 @@ Label work as proposed, implemented, or runtime-verified. A test must show real
 command output before claiming pass. Every implementation turn ends with exact
 changes, commands, output, verification, and remaining work.
 
-## Claimed ports (recorded in /Volumes/SanDisk1Tb/SSOT/port-registry.json)
+## Claimed ports
 
 | Port | Service |
 |---|---|

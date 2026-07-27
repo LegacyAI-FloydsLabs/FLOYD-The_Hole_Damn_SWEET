@@ -26,14 +26,18 @@ clone_remote ide https://github.com/CaptainPhantasy/mobile-web-IDE.git
 clone_remote tui https://github.com/CaptainPhantasy/OhMyFloyd.git
 clone_remote pty https://github.com/CaptainPhantasy/TerminalOne.git
 
-LAUNCHER_SOURCE=${LAUNCHER_SOURCE:-/Volumes/Storage/harness-launcher}
+# The launcher has no public remote yet: set LAUNCHER_SOURCE to a local git
+# checkout to (re)create the intake copy. Skipped when unset and copy exists.
+LAUNCHER_SOURCE=${LAUNCHER_SOURCE:-}
 LAUNCHER_TARGET="$DEST/launcher"
 if [ -d "$LAUNCHER_TARGET/.git" ]; then
-  git -C "$LAUNCHER_TARGET" fetch --prune origin
-else
+  git -C "$LAUNCHER_TARGET" fetch --prune origin || true
+elif [ -n "$LAUNCHER_SOURCE" ]; then
   # --no-local prohibits Git's local hardlink optimization. This is a real
   # writable copy, not a linked view of the canonical launcher donor.
   git clone --no-local "$LAUNCHER_SOURCE" "$LAUNCHER_TARGET"
+else
+  echo "launcher: no intake copy and LAUNCHER_SOURCE unset — skipping" >&2
 fi
 
 printf '%-10s %-12s %-12s %s\n' surface branch head clean
@@ -45,21 +49,25 @@ for id in desktop ide tui pty launcher; do
   printf '%-10s %-12s %-12s %s\n' "$id" "${branch:-detached}" "$head" "$clean"
   test "$clean" = yes
 
-  # A donor copy may contain relative project symlinks, but it may not link
-  # back to any protected original path.
+  # A donor copy may contain relative project symlinks, but never absolute
+  # links reaching outside this repo (no ties back to donor originals).
   if find "$target" -type l -exec sh -c '
+    root=$1; shift
     for link do
       resolved=$(readlink "$link")
       case "$resolved" in
-        /Volumes/Storage/FloydDesktopWeb-v2*|/Volumes/SanDisk1Tb/MWIDE/mobile-web-IDE*|/Volumes/SanDisk1Tb/OhMyFloyd*|/Volumes/SanDisk1Tb/TerminalOne*|/Volumes/Storage/harness-launcher*|/Volumes/applebottom/AGENTS\ FRAMEWORK/ADKv2Agent*)
-          printf "protected donor symlink: %s -> %s\n" "$link" "$resolved" >&2
-          exit 1
+        /*)
+          case "$resolved" in
+            "$root"*) ;;
+            *) printf "external absolute symlink: %s -> %s\n" "$link" "$resolved" >&2; exit 1 ;;
+          esac
           ;;
       esac
     done
-  ' sh {} +; then :; else exit 1; fi
+  ' sh "$ROOT" {} +; then :; else exit 1; fi
 done
 
+[ -z "$LAUNCHER_SOURCE" ] && exit 0
 relative_probe=$(git -C "$LAUNCHER_SOURCE" ls-files | sed -n '1p')
 test -n "$relative_probe"
 source_probe="$LAUNCHER_SOURCE/$relative_probe"

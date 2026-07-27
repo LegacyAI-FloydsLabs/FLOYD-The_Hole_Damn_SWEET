@@ -21,11 +21,8 @@ const FRAME_DIR = resolve(ROOT, "..");
 // Repo root: everything the frame serves or spawns is addressed relative to
 // this clone, never to a machine-specific absolute path.
 const REPO_ROOT = resolve(FRAME_DIR, "..", "..");
-// Runtime home (vault, browser profile, tokens): env override first, then the
-// legacy external-drive hub if it exists, else ~/.floyd on this machine.
-const LEGACY_RUNTIME_ROOT = "/Volumes/Storage/FLOYD_RUNTIME";
-const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT
-  || (existsSync(LEGACY_RUNTIME_ROOT) ? LEGACY_RUNTIME_ROOT : join(homedir(), ".floyd"));
+// Runtime home (vault, browser profile, tokens): env override or ~/.floyd.
+const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT || join(homedir(), ".floyd");
 const PUBLIC_DIR = join(FRAME_DIR, "public");
 const BACKGROUNDS_DIR = join(FRAME_DIR, "backgrounds");
 const REGISTRY_PATH = join(FRAME_DIR, "registry.json");

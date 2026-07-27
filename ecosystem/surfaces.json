@@ -14,7 +14,7 @@
       "id": "desktop",
       "role": "primary desktop container",
       "remote": "https://github.com/CaptainPhantasy/floyd-desktop-web-v2.git",
-      "local_source": "/Volumes/Storage/FloydDesktopWeb-v2",
+      "local_source": null,
       "observed_branch": "add-ons",
       "observed_head": "68ba064",
       "source_state": "modified donor; copy required before admission",
@@ -32,8 +32,21 @@
         "experience": {
           "status": "verified",
           "surface_id": "desktop",
-          "restore": ["active-context", "composer-draft", "durable-transcript", "selected-artifact", "pending-questions", "pending-permissions", "model-route"],
-          "publish": ["active-context", "composer-draft", "selected-view", "surface-presence"],
+          "restore": [
+            "active-context",
+            "composer-draft",
+            "durable-transcript",
+            "selected-artifact",
+            "pending-questions",
+            "pending-permissions",
+            "model-route"
+          ],
+          "publish": [
+            "active-context",
+            "composer-draft",
+            "selected-view",
+            "surface-presence"
+          ],
           "watch": true,
           "optimistic_conflicts": "preserve-409-no-blind-retry",
           "automated_proof": true
@@ -46,7 +59,7 @@
       "id": "ide",
       "role": "mobile and web IDE",
       "remote": "https://github.com/CaptainPhantasy/mobile-web-IDE.git",
-      "local_source": "/Volumes/SanDisk1Tb/MWIDE/mobile-web-IDE",
+      "local_source": null,
       "observed_branch": null,
       "observed_head": "1bec219",
       "source_state": "donor; copy and provenance verification required",
@@ -62,12 +75,31 @@
         "rendered_proof": true,
         "admitted_runtime_url": "http://127.0.0.1:13012/",
         "folder_workspace_proof": true,
-        "local_workspace_root_propagation": ["file-explorer", "terminal", "ai"],
+        "local_workspace_root_propagation": [
+          "file-explorer",
+          "terminal",
+          "ai"
+        ],
         "experience": {
           "status": "verified",
           "surface_id": "ide",
-          "restore": ["active-context", "composer-draft", "durable-transcript", "workspace", "selected-artifact", "pending-questions", "pending-permissions", "model-route"],
-          "publish": ["active-context", "composer-draft", "selected-view", "workspace", "surface-presence"],
+          "restore": [
+            "active-context",
+            "composer-draft",
+            "durable-transcript",
+            "workspace",
+            "selected-artifact",
+            "pending-questions",
+            "pending-permissions",
+            "model-route"
+          ],
+          "publish": [
+            "active-context",
+            "composer-draft",
+            "selected-view",
+            "workspace",
+            "surface-presence"
+          ],
           "watch": true,
           "optimistic_conflicts": "preserve-409-no-blind-retry",
           "automated_proof": true
@@ -80,7 +112,7 @@
       "id": "tui",
       "role": "coding TUI",
       "remote": "https://github.com/CaptainPhantasy/OhMyFloyd.git",
-      "local_source": "/Volumes/SanDisk1Tb/OhMyFloyd",
+      "local_source": null,
       "observed_branch": "omf-16",
       "observed_head": "c5d2b2",
       "source_state": "modified donor; copy required before admission",
@@ -106,8 +138,23 @@
         "experience": {
           "status": "verified",
           "surface_id": "tui",
-          "restore": ["active-context", "composer-draft", "durable-transcript", "transcript-cursor", "selected-artifact", "pending-questions", "pending-permissions", "model-route"],
-          "publish": ["active-context", "composer-draft", "selected-view", "transcript-cursor", "surface-presence"],
+          "restore": [
+            "active-context",
+            "composer-draft",
+            "durable-transcript",
+            "transcript-cursor",
+            "selected-artifact",
+            "pending-questions",
+            "pending-permissions",
+            "model-route"
+          ],
+          "publish": [
+            "active-context",
+            "composer-draft",
+            "selected-view",
+            "transcript-cursor",
+            "surface-presence"
+          ],
           "watch": true,
           "optimistic_conflicts": "preserve-409-no-blind-retry",
           "automated_proof": true
@@ -120,7 +167,7 @@
       "id": "pty",
       "role": "web terminal",
       "remote": "https://github.com/CaptainPhantasy/TerminalOne.git",
-      "local_source": "/Volumes/SanDisk1Tb/TerminalOne",
+      "local_source": null,
       "observed_branch": "ci/harden-first-run",
       "observed_head": "b3a4d9",
       "source_state": "modified donor; copy required before admission",
@@ -140,8 +187,12 @@
         "experience": {
           "status": "verified_transport",
           "surface_id": "pty",
-          "restore": ["active-context"],
-          "publish": ["surface-presence"],
+          "restore": [
+            "active-context"
+          ],
+          "publish": [
+            "surface-presence"
+          ],
           "watch": true,
           "semantic_transcript_owner": false,
           "optimistic_conflicts": "preserve-409-no-blind-retry",
@@ -155,10 +206,10 @@
       "id": "launcher",
       "role": "local harness launcher",
       "remote": null,
-      "local_source": "/Volumes/Storage/harness-launcher",
+      "local_source": "${REPO_ROOT}/intake/surfaces/launcher",
       "observed_branch": "main",
       "observed_head": "30d6717",
-      "source_state": "clean local donor; copy required before admission",
+      "source_state": "intake copy is canonical; original donor retired with the dev drives",
       "intake_copy": "${REPO_ROOT}/intake/surfaces/launcher",
       "copy_verified": true,
       "integration": {
@@ -182,8 +233,12 @@
         "experience": {
           "status": "verified_transport",
           "surface_id": "launcher",
-          "restore": ["active-context"],
-          "publish": ["surface-presence"],
+          "restore": [
+            "active-context"
+          ],
+          "publish": [
+            "surface-presence"
+          ],
           "watch": true,
           "semantic_transcript_owner": false,
           "optimistic_conflicts": "preserve-409-no-blind-retry",

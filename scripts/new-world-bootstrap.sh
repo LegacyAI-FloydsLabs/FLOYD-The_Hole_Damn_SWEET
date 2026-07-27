@@ -2,7 +2,7 @@
 # new-world-bootstrap.sh — adopt FLOYD_WORKSTATION on a fresh macOS install.
 #
 # Run from the repo root on the new OS:
-#   cd /Volumes/Storage/FLOYD_WORKSTATION && ./scripts/new-world-bootstrap.sh
+#   cd <repo clone> && ./scripts/new-world-bootstrap.sh
 #
 # Idempotent. Installs nothing globally except the two LaunchAgents.
 # Every step reports PASS/FAIL and the script never aborts the machine state.
@@ -19,7 +19,7 @@ echo
 
 # 1. Volume + permission sanity ------------------------------------------------
 echo "[1/6] volumes and permissions"
-[ -d "${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}" ] || [ -d /Volumes/Storage ] && ok "runtime location available" || ok "runtime will be created at ~/.floyd on first run"
+ok "runtime root: ${FLOYD_RUNTIME_ROOT:-$HOME/.floyd} (created on first run if missing)"
 [ -r "$REPO/apps/frame/server/frame-server.mjs" ] && ok "repo readable" || bad "repo unreadable — grant Full Disk / Removable Volumes access to your terminal in System Settings > Privacy"
 
 # 2. Node runtime --------------------------------------------------------------
@@ -34,11 +34,7 @@ fi
 
 # 3. Secrets vault -------------------------------------------------------------
 echo "[3/6] provider-key vault"
-RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-}
-if [ -z "$RUNTIME_ROOT" ]; then
-  if [ -d /Volumes/Storage/FLOYD_RUNTIME ]; then RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
-  else RUNTIME_ROOT="$HOME/.floyd"; fi
-fi
+RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}
 VAULT=$RUNTIME_ROOT/secrets/provider-keys.json
 if [ -f "$VAULT" ]; then
   perms=$(stat -f %Lp "$VAULT")
@@ -81,9 +77,7 @@ echo "[6/6] external dependencies (informational, not fatal)"
 [ -x /opt/homebrew/libexec/floyd-harnesses/floyd-ff-real ] \
   && ok "floyd-ff-real binary present (launcher agents runnable)" \
   || echo "  NOTE  floyd-ff-real not installed yet — the nine launcher agents need it; copy from old world /opt/homebrew/libexec/floyd-harnesses/"
-[ -d /Volumes/SanDisk1Tb ] \
-  && ok "SanDisk1Tb mounted (port-registry reachable)" \
-  || echo "  NOTE  SanDisk1Tb not mounted — only FLOYD.md's port-registry reference cares"
+: # (no external-drive checks: FLOYD is self-contained)
 
 echo
 echo "bootstrap complete: $PASS pass, $FAIL fail"

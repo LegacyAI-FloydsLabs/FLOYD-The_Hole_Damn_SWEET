@@ -104,10 +104,7 @@ supervisor = ProcessSupervisor()
 # MCP Bridge Configuration
 # ---------------------------------------------------------------------------
 
-MCP_SERVER_PATH = os.environ.get(
-    "MCP_SERVER_PATH",
-    "/Volumes/Storage/A-TEAM/open-anvil/mcp-server/server.js",
-)
+MCP_SERVER_PATH = os.environ.get("MCP_SERVER_PATH", "")
 MCP_SPAWN_TIMEOUT = 5  # seconds to wait for MCP server to start
 MCP_RESTART_DELAY = 2  # seconds before restarting crashed MCP server
 MCP_MAX_RESTARTS = 5  # max restart attempts before giving up

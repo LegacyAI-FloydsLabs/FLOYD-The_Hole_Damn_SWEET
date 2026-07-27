@@ -7,15 +7,13 @@ import { homedir } from "node:os";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const REPO_ROOT = join(HERE, "..", "..", "..");
-const LEGACY_RUNTIME_ROOT = "/Volumes/Storage/FLOYD_RUNTIME";
 export const RUNTIME_ROOT =
-  process.env.FLOYD_RUNTIME_ROOT ??
-  (existsSync(LEGACY_RUNTIME_ROOT) ? LEGACY_RUNTIME_ROOT : join(homedir(), ".floyd"));
+  process.env.FLOYD_RUNTIME_ROOT ?? join(homedir(), ".floyd");
 
 export const CORE_PORT = Number(process.env.FLOYD_CORE_PORT ?? 41414);
 export const REMOTE_CORE_PORT = Number(process.env.FLOYD_REMOTE_CORE_PORT ?? 41416);
 export const REMOTE_PUBLIC_ORIGIN = normalizeRemoteOrigin(
-  process.env.FLOYD_REMOTE_ORIGIN ?? "https://douglass-mac-mini.tail58d565.ts.net:8443",
+  process.env.FLOYD_REMOTE_ORIGIN ?? "https://floyd-remote.invalid",
 );
 export const REMOTE_SURFACE_RELAY_PORTS = Object.freeze({
   desktop: Number(process.env.FLOYD_REMOTE_DESKTOP_RELAY_PORT ?? 41420),

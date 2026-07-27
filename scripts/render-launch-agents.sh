@@ -11,11 +11,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-}
-if [ -z "$RUNTIME_ROOT" ]; then
-  if [ -d /Volumes/Storage/FLOYD_RUNTIME ]; then RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
-  else RUNTIME_ROOT="$HOME/.floyd"; fi
-fi
+RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}
 if [ -x /opt/homebrew/bin/node ]; then NODE_BIN=/opt/homebrew/bin/node
 elif command -v node >/dev/null 2>&1; then NODE_BIN=$(command -v node)
 else echo "no node found — install node first" >&2; exit 1; fi

@@ -274,7 +274,7 @@ const envelopeId = "primary";
 const FLOYD_SURFACES = Object.freeze([
   { id: "desktop", name: "Floyd Desktop", kind: "url", target: "http://127.0.0.1:13010/", detail: "Admitted desktop copy. Open is enabled only after Core proves its source identity." },
   { id: "ide", name: "Floyd IDE", kind: "url", target: "http://127.0.0.1:13012/", detail: "Admitted IDE copy and folder workspace. Open is provenance-gated." },
-  { id: "tui", name: "Floyd TUI continuity", kind: "command", target: "/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui", detail: "Admitted semantic TUI launch pinned to the exact Core project, session, run, and event cursor." },
+  { id: "tui", name: "Floyd TUI continuity", kind: "command", target: "$HOME/.floyd/bin/floyd-tui", detail: "Admitted semantic TUI launch pinned to the exact Core project, session, run, and event cursor." },
   { id: "pty", name: "TerminalOne", kind: "url", target: "http://127.0.0.1:13013/", detail: "Admitted TerminalOne copy. Its Floyd action launches the admitted semantic TUI from the Core-owned project root." },
   { id: "launcher", name: "Harness Launcher", kind: "url", target: "http://127.0.0.1:13014/", detail: "Admitted Launcher copy with a run-scoped Core CLI attach action." },
 ]);
@@ -952,7 +952,7 @@ function safeSurfaceUrl(surface) {
 function continuationCommand(project, active) {
   if (!project?.id || !project?.root_path || !active?.session_id || !active?.run_id) return null;
   const cursor = active.last_event_id && /^\d+$/.test(String(active.last_event_id)) ? ` --event ${shellQuote(active.last_event_id)}` : "";
-  return `cd -- ${shellQuote(project.root_path)} && ${shellQuote("/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui")} floyd --project-id ${shellQuote(project.id)} --session ${shellQuote(active.session_id)} --run ${shellQuote(active.run_id)}${cursor}`;
+  return `cd -- ${shellQuote(project.root_path)} && "$HOME/.floyd/bin/floyd-tui" floyd --project-id ${shellQuote(project.id)} --session ${shellQuote(active.session_id)} --run ${shellQuote(active.run_id)}${cursor}`;
 }
 
 function activeSurfaceProject() {

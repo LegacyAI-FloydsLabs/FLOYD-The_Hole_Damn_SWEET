@@ -68,15 +68,16 @@ const engine = {
   replyQuestion: async () => {},
   steer: async () => {},
 } as never;
-const surfaceManifest = JSON.parse(readFileSync(join(import.meta.dirname, "../../../ecosystem/surfaces.json"), "utf8")) as {
+const REPO_ROOT = join(import.meta.dirname, "../../..");
+const surfaceManifest = JSON.parse(readFileSync(join(REPO_ROOT, "ecosystem/surfaces.json"), "utf8")) as {
   surfaces: Array<{ id: string; integration: { commit: string } }>;
 };
 const surfaceCommit = (id: string) => surfaceManifest.surfaces.find((surface) => surface.id === id)!.integration.commit;
 const expectedSurfaceIdentity = new Map([
-  ["http://127.0.0.1:13010/api/health", { surface_id: "desktop", source_root: "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/desktop", source_commit: surfaceCommit("desktop") }],
-  ["http://127.0.0.1:13012/api/health", { surface_id: "ide", source_root: "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/ide", source_commit: surfaceCommit("ide") }],
-  ["http://127.0.0.1:13013/health", { surface_id: "pty", source_root: "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/pty", source_commit: surfaceCommit("pty") }],
-  ["http://127.0.0.1:13014/health", { surface_id: "launcher", source_root: "/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/launcher", source_commit: surfaceCommit("launcher") }],
+  ["http://127.0.0.1:13010/api/health", { surface_id: "desktop", source_root: join(REPO_ROOT, "intake/surfaces/desktop"), source_commit: surfaceCommit("desktop") }],
+  ["http://127.0.0.1:13012/api/health", { surface_id: "ide", source_root: join(REPO_ROOT, "intake/surfaces/ide"), source_commit: surfaceCommit("ide") }],
+  ["http://127.0.0.1:13013/health", { surface_id: "pty", source_root: join(REPO_ROOT, "intake/surfaces/pty"), source_commit: surfaceCommit("pty") }],
+  ["http://127.0.0.1:13014/health", { surface_id: "launcher", source_root: join(REPO_ROOT, "intake/surfaces/launcher"), source_commit: surfaceCommit("launcher") }],
 ]);
 const observedSurfaceHealthUrls: string[] = [];
 let mismatchedSurfaceId: string | null = null;

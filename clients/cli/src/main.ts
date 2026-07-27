@@ -10,9 +10,7 @@ import { homedir } from "node:os";
 import { FloydApiError, FloydClient } from "@floyd/sdk";
 import { parseAttachArguments } from "./attach-args.ts";
 
-const LEGACY_RUNTIME_ROOT = "/Volumes/Storage/FLOYD_RUNTIME";
-const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT
-  ?? (existsSync(LEGACY_RUNTIME_ROOT) ? LEGACY_RUNTIME_ROOT : join(homedir(), ".floyd"));
+const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT ?? join(homedir(), ".floyd");
 const CORE = `http://127.0.0.1:${process.env.FLOYD_CORE_PORT ?? 41414}`;
 const client = new FloydClient({ baseUrl: CORE, token });
 

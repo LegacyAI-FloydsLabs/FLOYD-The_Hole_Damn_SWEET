@@ -20,7 +20,7 @@ import json, os, subprocess, sys, threading, time, urllib.request
 NONCE = str(int(time.time()))
 
 CORE = "http://127.0.0.1:41414"
-RUNTIME = os.environ.get("FLOYD_RUNTIME_ROOT", "/Volumes/Storage/FLOYD_RUNTIME")
+RUNTIME = os.environ.get("FLOYD_RUNTIME_ROOT", os.path.expanduser("~/.floyd"))
 TOKEN = open(f"{RUNTIME}/core/gateway.token").read().strip()
 HDR = {"authorization": f"Bearer {TOKEN}", "content-type": "application/json"}
 EXTERNAL_PROBE = "/private/tmp/floyd-parity-note.txt"

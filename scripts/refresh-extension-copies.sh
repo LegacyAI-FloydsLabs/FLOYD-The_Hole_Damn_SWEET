@@ -20,7 +20,7 @@ copy() {
   echo "OK: $2 <- $src ($name v$ver)"
 }
 
-# Donor originals: overridable per machine; skipped when the donor is absent
-# (the committed copies under apps/frame/extensions remain authoritative).
-copy "${OPEN_ANVIL_SRC:-/Volumes/SanDisk1Tb/open-anvil/extension}" open-anvil
-copy "${TTY_BRIDGE_SRC:-/Volumes/Storage/Floyd TTY Bridge for Chrome/extension}" floyd-tty-bridge
+# Donor originals: set env vars pointing at your working copies. The committed
+# copies under apps/frame/extensions remain authoritative; this is a dev tool.
+[ -n "${OPEN_ANVIL_SRC:-}" ] && copy "$OPEN_ANVIL_SRC" open-anvil || echo "SKIP open-anvil (set OPEN_ANVIL_SRC to refresh)"
+[ -n "${TTY_BRIDGE_SRC:-}" ] && copy "$TTY_BRIDGE_SRC" floyd-tty-bridge || echo "SKIP floyd-tty-bridge (set TTY_BRIDGE_SRC to refresh)"

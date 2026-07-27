@@ -10,8 +10,7 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 
 const repoRoot = process.argv[2].replace(/\/ecosystem\/surfaces\.json$/, "");
-const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT
-  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT ?? `${process.env.HOME}/.floyd`;
 const expand = (v) => typeof v === "string"
   ? v.replaceAll("${REPO_ROOT}", repoRoot).replaceAll("${RUNTIME_ROOT}", runtimeRootForManifest) : v;
 const manifest = JSON.parse(
@@ -51,8 +50,7 @@ node --input-type=module <<'NODE'
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
-const runtimeRoot = process.env.FLOYD_RUNTIME_ROOT
-  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const runtimeRoot = process.env.FLOYD_RUNTIME_ROOT ?? `${process.env.HOME}/.floyd`;
 const token = (await readFile(`${runtimeRoot}/core/gateway.token`, "utf8")).trim();
 const response = await fetch("http://127.0.0.1:41414/api/health", {
   headers: { authorization: `Bearer ${token}` },
@@ -83,8 +81,7 @@ node --input-type=module - "$MANIFEST" <<'NODE' | while IFS="$tab" read -r id co
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 const repoRoot = process.argv[2].replace(/\/ecosystem\/surfaces\.json$/, "");
-const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT
-  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT ?? `${process.env.HOME}/.floyd`;
 const expand = (v) => typeof v === "string"
   ? v.replaceAll("${REPO_ROOT}", repoRoot).replaceAll("${RUNTIME_ROOT}", runtimeRootForManifest) : v;
 const manifest = JSON.parse(
@@ -114,8 +111,7 @@ node --input-type=module - "$MANIFEST" <<'NODE' | while IFS="$tab" read -r id co
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 const repoRoot = process.argv[2].replace(/\/ecosystem\/surfaces\.json$/, "");
-const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT
-  ?? (existsSync("/Volumes/Storage/FLOYD_RUNTIME") ? "/Volumes/Storage/FLOYD_RUNTIME" : `${process.env.HOME}/.floyd`);
+const runtimeRootForManifest = process.env.FLOYD_RUNTIME_ROOT ?? `${process.env.HOME}/.floyd`;
 const expand = (v) => typeof v === "string"
   ? v.replaceAll("${REPO_ROOT}", repoRoot).replaceAll("${RUNTIME_ROOT}", runtimeRootForManifest) : v;
 const manifest = JSON.parse(

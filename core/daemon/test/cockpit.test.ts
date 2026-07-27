@@ -65,7 +65,7 @@ test("Surface Hub launch targets are credential-free and TUI continuation is she
     { id: "project-'one", root_path: "/tmp/Floyd's work" },
     { session_id: "session-'one", run_id: "run-1", last_event_id: "42" },
   );
-  assert.equal(command, "cd -- '/tmp/Floyd'\"'\"'s work' && '/Volumes/Storage/FLOYD_RUNTIME/bin/floyd-tui' floyd --project-id 'project-'\"'\"'one' --session 'session-'\"'\"'one' --run 'run-1' --event '42'");
+  assert.equal(command, `cd -- '/tmp/Floyd'"'"'s work' && "$HOME/.floyd/bin/floyd-tui" floyd --project-id 'project-'"'"'one' --session 'session-'"'"'one' --run 'run-1' --event '42'`);
   assert.equal(helpers.continuationCommand(null, null), null);
   assert.doesNotMatch(command!, /(token|api[_-]?key|credential|secret)/i);
   assert.match(command!, /floyd --project-id/);

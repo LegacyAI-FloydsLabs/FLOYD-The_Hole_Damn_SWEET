@@ -1,7 +1,8 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-const serverPath = '/Volumes/Storage/MCP/hivemind-v2/dist/index.js';
+const serverPath = process.env.HIVEMIND_SERVER_PATH || '';
+if (!serverPath) { console.error('HIVEMIND_SERVER_PATH not set'); process.exit(1); }
 const toolName = process.argv[2];
 const toolArgs = JSON.parse(process.argv[3] || '{}');
 
