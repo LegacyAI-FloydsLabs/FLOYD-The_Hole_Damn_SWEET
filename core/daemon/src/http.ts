@@ -49,8 +49,6 @@ import type {
 } from "@floyd/contracts";
 
 const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const COCKPIT_DIR = join(ROOT_DIR, "quarantine", "cockpit", "public");
-const BROWSER_SDK = join(ROOT_DIR, "packages", "sdk", "browser", "floyd-sdk.js");
 const SURFACE_MANIFEST = join(ROOT_DIR, "ecosystem", "surfaces.json");
 
 type ReleaseIdentity = {
@@ -1934,24 +1932,8 @@ function createGateway(
         return send(res, 202, { run_id: runId, steered: true });
       }
 
-      // ---------- cockpit static ----------
-      if (isStatic) {
-        // Cockpit and its browser SDK are served directly from the active Core
-        // checkout. Never let a long-lived developer tab resurrect an older UI
-        // or continuity contract after Core has restarted on a new commit.
-        res.setHeader("cache-control", "no-store");
-        if (path === "/floyd-sdk.js") {
-          return send(res, 200, readFileSync(BROWSER_SDK, "utf8"), "text/javascript; charset=utf-8");
-        }
-        const file = path === "/" ? "index.html" : path.slice(1);
-        const full = join(COCKPIT_DIR, file);
-        if (!full.startsWith(COCKPIT_DIR)) return send(res, 403, { error: "forbidden" });
-        if (existsSync(full)) {
-          const mime = file.endsWith(".html") ? "text/html; charset=utf-8" : file.endsWith(".js") ? "text/javascript" : "text/plain";
-          return send(res, 200, readFileSync(full, "utf8"), mime);
-        }
-        return send(res, 404, { error: "not found" });
-      }
+      // Core serves no static UI. The frame (apps/frame) is the only shell;
+      // the deprecated cockpit was removed and must not ship.
       return send(res, 404, { error: "not found" });
     } catch (err) {
       if (res.headersSent || res.destroyed) {

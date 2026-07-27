@@ -254,11 +254,10 @@ test("Core health identifies whether it is running from a pinned release", async
   });
 });
 
-test("Cockpit and browser SDK cannot be reused from a stale browser cache after Core restart", async () => {
-  for (const path of ["/", "/floyd-sdk.js"]) {
+test("Core serves no static UI: the deprecated cockpit and its SDK route are gone", async () => {
+  for (const path of ["/", "/floyd-sdk.js", "/index.html"]) {
     const response = await fetch(`${baseUrl}${path}`);
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.status, 404);
     await response.body?.cancel();
   }
 });
