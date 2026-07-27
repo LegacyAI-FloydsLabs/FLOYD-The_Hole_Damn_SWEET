@@ -64,7 +64,14 @@ export interface UpstreamLock {
 }
 
 export function readUpstreamLock(): UpstreamLock {
-  return JSON.parse(readFileSync(join(REPO_ROOT, "upstream.lock"), "utf8")) as UpstreamLock;
+  const lock = JSON.parse(readFileSync(join(REPO_ROOT, "upstream.lock"), "utf8")) as UpstreamLock;
+  // A relative binary_path resolves against the runtime root, so the same
+  // lock works on every machine. The installer places the engine binary at
+  // engines/opencode/bin/opencode; the sha256 gate stays authoritative.
+  if (!lock.opencode.binary_path.startsWith("/")) {
+    lock.opencode = { ...lock.opencode, binary_path: join(RUNTIME_ROOT, lock.opencode.binary_path) };
+  }
+  return lock;
 }
 
 /** Handoff requirement: runtime root ownership/mode checks on startup. Fail closed. */
