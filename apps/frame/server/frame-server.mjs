@@ -15,6 +15,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import net from "node:net";
+import { createVaultProxy } from "./vault-proxy.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const FRAME_DIR = resolve(ROOT, "..");
@@ -104,53 +105,54 @@ function writeVault(vault) {
   writeFileSync(VAULT_PATH, JSON.stringify(vault, null, 2), { mode: 0o600 });
   chmodSync(VAULT_PATH, 0o600);
 }
-/** Env block injected into every managed app: vault keys never override an
- * explicitly exported process env var (explicit always wins). */
-function vaultEnv() {
-  const vault = readVault();
-  const env = {};
+/** Env block injected into every managed app. Real keys NEVER enter an app's
+ * environment: each app gets a per-app proxied token plus base URLs that point
+ * at the loopback vault proxy, which swaps in the real credential upstream. */
+function vaultEnv(appId) {
+  const token = vaultProxy.store.ensure(appId);
+  const base = VAULT_PROXY_BASE;
+  const env = {
+    // Generic handles for FLOYD-aware apps.
+    FLOYD_VAULT_PROXY_URL: base,
+    FLOYD_VAULT_PROXY_TOKEN: token,
+    // OpenAI/Anthropic SDK conventions: base-URL override + proxied key.
+    OPENAI_BASE_URL: `${base}/v1`,
+    ANTHROPIC_BASE_URL: base,
+    // CURSEM's credential-proxy contract (see ide/server/credential-proxy.mjs).
+    CURSEM_CREDENTIAL_PROXY_URL: base,
+    CURSEM_CREDENTIAL_PROXY_TOKEN: token,
+  };
+  // Every provider env name resolves to the proxied token, so an app that
+  // reads e.g. GLM_API_KEY gets a fv_ token, never the real key. Explicitly
+  // exported process env always wins.
   for (const p of PROVIDERS) {
-    const key = vault[p.id]?.key;
-    if (!key) continue;
     for (const name of [p.env, ...(p.envAliases || [])]) {
-      if (!process.env[name]) env[name] = key;
+      if (!process.env[name]) env[name] = token;
     }
   }
   return env;
 }
 const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 8)}…${k.slice(-4)}`);
-/** Apps that read keys from their own .env.local files rather than the
- * environment (CURSEM, Floyd Desktop). Upsert KEY=value lines in place. */
-function upsertEnvFile(path, updates) {
-  let lines = [];
-  try { lines = readFileSync(path, "utf8").split("\n"); } catch {}
-  for (const [k, v] of Object.entries(updates)) {
-    const line = `${k}=${v}`;
-    const i = lines.findIndex((l) => l.startsWith(`${k}=`));
-    if (i >= 0) lines[i] = line; else lines.push(line);
-  }
-  writeFileSync(path, lines.filter((l, i) => l !== "" || i < lines.length - 1).join("\n"), { mode: 0o600 });
-}
+
+// ---- vault credential proxy -------------------------------------------------
+// Loopback listener that holds the ONLY path to real provider keys. Apps get
+// per-app fv_ tokens (see vault-proxy.mjs); the proxy swaps in the vault key
+// on the way upstream. OpenAI rides the ChatGPT subscription exclusively.
+const VAULT_PROXY_PORT = Number(process.env.FLOYD_VAULT_PROXY_PORT || 13031);
+const VAULT_PROXY_BASE = `http://127.0.0.1:${VAULT_PROXY_PORT}`;
+const vaultProxy = createVaultProxy({
+  secretsDir: SECRETS_DIR,
+  realKey: (providerId) => readVault()[providerId]?.key || null,
+  port: VAULT_PROXY_PORT,
+});
+
 /** Some consumers read keys from their own config files, not the environment.
  * Propagate on save so ONE paste updates the whole stack. Best-effort: failures
- * are reported but never block the vault save. */
+ * are reported but never block the vault save.
+ * NOTE: surface .env.local files are deliberately NOT written. Real keys stay
+ * inside the vault; managed apps receive proxied fv_ tokens via vaultEnv(). */
 function propagateKey(providerId, key) {
   const notes = [];
-  const provider = PROVIDERS.find((p) => p.id === providerId);
-  const envNames = provider ? [provider.env, ...(provider.envAliases || [])] : [];
-  // .env.local consumers (CURSEM IDE + Floyd Desktop read these at boot).
-  const envFiles = [
-    join(SURFACES, "ide", ".env.local"),
-    join(SURFACES, "desktop", ".env.local"),
-  ];
-  for (const file of envFiles) {
-    try {
-      upsertEnvFile(file, Object.fromEntries(envNames.map((n) => [n, key])));
-      notes.push(`${file.split("/surfaces/")[1]} updated`);
-    } catch (err) {
-      notes.push(`${file}: ${String(err?.message ?? err).slice(0, 60)}`);
-    }
-  }
   if (providerId === "zai") {
     // Floyd Core validates provider.zai-coding-plan.options.apiKey from the
     // user's opencode config at startup (fail-closed).
@@ -278,7 +280,7 @@ async function ensureApp(id) {
   if (!spec) return { id, managed: false };
   if (await portOpen(spec.port)) return { id, managed: true, up: true, port: spec.port };
   if (!existsSync(spec.cwd)) return { id, managed: true, up: false, error: `missing cwd ${spec.cwd}` };
-  const env = { ...process.env, ...vaultEnv(), ...(typeof spec.env === "function" ? spec.env() : spec.env) };
+  const env = { ...process.env, ...vaultEnv(id), ...(typeof spec.env === "function" ? spec.env() : spec.env) };
   const child = spawn(spec.cmd, spec.args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   children.set(id, child);
   child.stdout.on("data", (d) => process.stdout.write(`[${id}] ${d}`));
@@ -616,6 +618,35 @@ const server = http.createServer(async (req, res) => {
       writeVault(vault);
       return json(res, 200, { removed: id });
     }
+    // ---- vault proxy management ----------------------------------------
+    // Proxied tokens for third-party apps: issue/rotate shows the plaintext
+    // exactly once; list/alerts expose usage + leak-detection signals.
+    if (path === "/api/vault/tokens" && req.method === "GET") {
+      return json(res, 200, { proxy: VAULT_PROXY_BASE, tokens: vaultProxy.store.list() });
+    }
+    if (path === "/api/vault/tokens" && req.method === "POST") {
+      let body = ""; for await (const c of req) body += c;
+      const app = (JSON.parse(body || "{}").app || "").trim();
+      try {
+        const token = vaultProxy.store.issue(app);
+        return json(res, 201, {
+          app, token, proxy: VAULT_PROXY_BASE,
+          note: "shown once — point the app's base URL at the proxy and use this as its API key",
+          openaiBaseUrl: `${VAULT_PROXY_BASE}/v1`,
+          anthropicBaseUrl: VAULT_PROXY_BASE,
+        });
+      } catch (err) {
+        return json(res, 400, { error: String(err?.message ?? err) });
+      }
+    }
+    if (path.startsWith("/api/vault/tokens/") && req.method === "DELETE") {
+      const app = decodeURIComponent(path.slice("/api/vault/tokens/".length));
+      const revoked = vaultProxy.store.revoke(app);
+      return revoked ? json(res, 200, { revoked: app, count: revoked }) : json(res, 404, { error: `no active token for ${app}` });
+    }
+    if (path === "/api/vault/alerts" && req.method === "GET") {
+      return json(res, 200, { alerts: vaultProxy.store.alerts(Number(url.searchParams.get("limit")) || 100) });
+    }
     if (path === "/api/action/open-chrome" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
       const target = body ? (JSON.parse(body).url ?? null) : null;
@@ -653,5 +684,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => console.log(`[frame] FLOYD frame at http://${HOST}:${PORT}`));
+vaultProxy.listen().then(() => console.log(`[frame] vault proxy at ${VAULT_PROXY_BASE} (loopback only)`))
+  .catch((err) => { console.error(`[frame] FATAL: vault proxy failed to bind: ${err?.message ?? err}`); process.exit(1); });
 process.on("SIGTERM", () => { for (const c of children.values()) c.kill(); process.exit(0); });
 process.on("SIGINT", () => { for (const c of children.values()) c.kill(); process.exit(0); });
