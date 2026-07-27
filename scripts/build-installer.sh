@@ -27,6 +27,7 @@ mkdir -p "$APP/Contents/MacOS" "$WS" "$DIST"
 echo "==> staging repo (tracked files only)"
 (cd "$ROOT" && git archive HEAD) | tar -x -C "$WS"
 rm -rf "$WS/scripts"   # build tooling never ships
+printf '%s\n' "$VERSION" > "$WS/VERSION"   # updater reads installed version here
 # Workspace deps (small; @floyd/* are relative symlinks that survive rsync -a).
 rsync -a "$ROOT/node_modules/" "$WS/node_modules/"
 

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import net from "node:net";
 import { createVaultProxy } from "./vault-proxy.mjs";
+import { createUpdater } from "./self-update.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const FRAME_DIR = resolve(ROOT, "..");
@@ -143,6 +144,14 @@ const vaultProxy = createVaultProxy({
   secretsDir: SECRETS_DIR,
   realKey: (providerId) => readVault()[providerId]?.key || null,
   port: VAULT_PROXY_PORT,
+});
+
+// Self-updater: no-op in dev checkouts (no VERSION file); the installed app
+// checks www.floydslabs.com for a newer signed pkg on demand.
+const updater = createUpdater({
+  repoRoot: REPO_ROOT,
+  runtimeRoot: RUNTIME_ROOT,
+  manifestUrl: process.env.FLOYD_UPDATE_MANIFEST_URL || undefined,
 });
 
 /** Some consumers read keys from their own config files, not the environment.
@@ -662,6 +671,23 @@ const server = http.createServer(async (req, res) => {
       if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) return json(res, 400, { error: "expected an object" });
       writeFileSync(join(RUNTIME_ROOT, "agent-models.json"), JSON.stringify(prefs, null, 2));
       return json(res, 200, { ok: true, prefs });
+    }
+    // ---- self-update ----------------------------------------------------
+    // GET  /api/update         -> current/available/downloaded state (checks)
+    // POST /api/update/install -> download verified pkg, open Installer.app
+    if (path === "/api/update" && req.method === "GET") {
+      return json(res, 200, await updater.check());
+    }
+    if (path === "/api/update/install" && req.method === "POST") {
+      try {
+        if (!updater.state.available) await updater.check();
+        if (!updater.state.available) return json(res, 409, { error: updater.state.error || "already up to date", state: updater.state });
+        const pkg = await updater.download();
+        spawn("open", [pkg], { detached: true, stdio: "ignore" }).unref();
+        return json(res, 200, { ok: true, pkg, note: "Installer.app opened; user completes the install" });
+      } catch (err) {
+        return json(res, 500, { error: String(err?.message ?? err) });
+      }
     }
     if (path === "/api/action/open-chrome" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
