@@ -224,7 +224,7 @@
   <span class="app-name" id="titleAppName"></span>
   <span class="spacer"></span>
   <button class="chip" id="chipChrono" title="Chrono sandbox: snapshots, rewinds, forks">⏱ Chrono</button>
-  <button class="chip" id="chipKeys" title="Vendor API keys: paste once, every app gets them">🔑 Keys</button>
+  <button class="chip" id="chipKeys" title="Floyd Vault credentials and ChatGPT/Codex subscription">🔑 Vault</button>
   <button class="chip" id="chipTerminal" title="Summon TerminalOne">Terminal</button>
   <button class="chip" id="chipBrowser" title="Open Chrome with Floyd TTY Bridge">Browser</button>
   <button class="chip" id="chipBg" title="Cycle background">BG</button>
@@ -282,14 +282,14 @@
 </aside>
 <div class="toast" id="toast" role="alert"></div>
 
-<aside class="keys" id="keysPanel" aria-label="Vendor API keys">
+<aside class="keys" id="keysPanel" aria-label="Floyd Vault credentials">
   <div class="keys-head">
-    <strong>🔑 API KEYS</strong>
+    <strong>🔑 VAULT CREDENTIALS</strong>
     <button class="chip" id="keysClose">×</button>
   </div>
   <div class="keys-body">
     <section class="keys-paste">
-      <label for="keyInput">Paste any vendor key — Floyd figures out whose it is</label>
+      <label for="keyInput">Paste a provider key — OpenAI uses your ChatGPT/Codex subscription</label>
       <div class="row">
         <input id="keyInput" type="password" placeholder="sk-… / AIza… / gsk_… / hf_… / ghp_…"
                autocomplete="off" spellcheck="false" autocapitalize="off">
@@ -303,10 +303,9 @@
     <section>
       <div class="keys-list" id="keysList"></div>
     </section>
-    <p class="keys-note">Keys are live-tested against the vendor before saving, stored only on this
-      machine (owner-read-only file), and handed to every Floyd app at launch as standard
-      environment variables. They never appear unmasked again. Restart a running app
-      (shift-click its × in the drawer, then reopen) to feed it a new key.</p>
+    <p class="keys-note">Provider keys are live-tested and stored only in the macOS Keychain by
+      Floyd Vault. Apps receive only their fv_ proxy credential and loopback Vault routes.
+      OpenAI is subscription-only: Floyd never accepts or distributes an OpenAI API key.</p>
   </div>
 </aside>
 
@@ -689,14 +688,18 @@ async function keysRefresh() {
   for (const p of sorted) {
     const d = document.createElement("div");
     d.className = `key-item ${p.configured ? "configured" : ""}`;
+    const subscription = p.credentialMode === "chatgpt-subscription";
     d.innerHTML = `<span class="k-dot"></span>
       <div class="k-meta"><strong></strong><span></span></div>
-      ${p.configured ? `<button class="k-del" title="Remove ${p.name} key">×</button>`
+      ${subscription ? `<button class="k-get k-subscription" type="button">manage subscription</button>`
+        : p.configured ? `<button class="k-del" title="Remove ${p.name} key">×</button>`
                      : `<a class="k-get" href="${p.url}" target="_blank" rel="noreferrer noopener">get key ↗</a>`}
-      ${p.endpoint ? `<div class="k-endpoint"><span class="ep ${p.customEndpoint ? "custom" : ""}"></span><button class="k-ep-btn">edit</button>${p.customEndpoint ? `<button class="k-ep-reset">reset</button>` : ""}</div>` : ""}`;
+      ${p.endpoint ? `<div class="k-endpoint"><span class="ep ${p.customEndpoint ? "custom" : ""}"></span>${subscription ? "" : `<button class="k-ep-btn">edit</button>${p.customEndpoint ? `<button class="k-ep-reset">reset</button>` : ""}`}</div>` : ""}`;
     d.querySelector("strong").textContent = p.name;
-    d.querySelector(".k-meta span").textContent = p.configured
-      ? `${p.masked}${p.verified ? " · verified" : ""} · ${p.env}`
+    d.querySelector(".k-meta span").textContent = subscription
+      ? `${p.configured ? "configured in Vault" : "not configured in Vault"}${p.routable ? " · routed" : ""}${p.applicationTested?.length ? ` · apps: ${p.applicationTested.join(", ")}` : ""}`
+      : p.configured
+      ? `${p.masked}${p.verified ? " · verified" : ""}${p.routable ? " · routed" : ""}${p.applicationTested?.length ? ` · apps: ${p.applicationTested.join(", ")}` : ""} · ${p.env}`
       : p.env;
     const epLabel = d.querySelector(".k-endpoint .ep");
     if (epLabel) { epLabel.textContent = p.endpoint; epLabel.title = p.endpoint; }
@@ -722,6 +725,12 @@ async function keysRefresh() {
     d.querySelector(".k-ep-reset")?.addEventListener("click", async () => {
       const r = await (await fetch(`/api/keys/${p.id}/endpoint`, { method: "PUT", body: JSON.stringify({ endpoint: "" }) })).json();
       keysMsg(r.error ? `✗ ${r.error}` : `✓ ${p.name} endpoint reset to default`, r.error ? "err" : "ok");
+      keysRefresh();
+    });
+    d.querySelector(".k-subscription")?.addEventListener("click", async () => {
+      const r = await (await fetch(p.managementAction, { method: "POST", body: "{}" })).json();
+      if (r.error) { keysMsg(`✗ ${r.error}`, "err"); return; }
+      keysMsg(`${r.configured ? "✓ Vault subscription configured" : "Vault subscription is not configured"} · opened ${r.launched}`, r.configured ? "ok" : "");
       keysRefresh();
     });
     d.querySelector(".k-del")?.addEventListener("click", async () => {
@@ -795,6 +804,14 @@ el("chipKeys").addEventListener("click", () => {
   if (keys.panel.classList.contains("open")) { keysRefresh(); el("keyInput").focus(); }
 });
 el("keysClose").addEventListener("click", () => keys.panel.classList.remove("open"));
+function followManagementLocation() {
+  if (location.hash !== "#vault") return;
+  keys.panel.classList.add("open");
+  keysRefresh();
+  requestAnimationFrame(() => el("keyInput").focus());
+}
+addEventListener("hashchange", followManagementLocation);
+followManagementLocation();
 
 el("chipBg").addEventListener("click", cycleBackground);
 el("chipTerminal").addEventListener("click", () => openApp("terminalone"));

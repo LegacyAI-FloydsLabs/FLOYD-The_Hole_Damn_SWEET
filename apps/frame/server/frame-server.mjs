@@ -14,9 +14,23 @@ import { chmodSync, createReadStream, existsSync, mkdirSync, readdirSync, readFi
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 import net from "node:net";
 import { createVaultProxy } from "./vault-proxy.mjs";
+import { createConnectedAppVault } from "./connected-app-vault.mjs";
+import { createModelConnectorVault } from "./model-connector-vault.mjs";
+import { createVaultMcpManagement } from "./vault-mcp-management.mjs";
+import { createVaultMcpRouter } from "./vault-mcp-router.mjs";
+import { createVaultOmpBroker } from "./vault-omf-broker.mjs";
+import { createVaultLeakMonitor } from "./vault-leak-monitor.mjs";
 import { createUpdater } from "./self-update.mjs";
+import { applyVaultEnvironment, buildVaultProfile } from "../../../lib/vault-routing.mjs";
+import { publicProviderCatalog, VAULT_PROVIDER_CATALOG } from "../../../lib/vault-provider-catalog.mjs";
+import { authorizeManagementBootstrap, authorizeVaultManagement } from "./management-auth.mjs";
+import {
+  FLOYD_KEYCHAIN_ACCOUNTS,
+  MacOSKeychainVault,
+} from "./keychain-vault.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const FRAME_DIR = resolve(ROOT, "..");
@@ -53,13 +67,14 @@ function wrapperFor(id, execLine) {
 }
 
 // ---- provider key vault ------------------------------------------------------
-// One place for vendor API keys. Stored 0600 in FLOYD_RUNTIME/secrets, injected
-// into every managed app's environment at launch, never returned unmasked.
+// One place for vendor API keys. Stored in the macOS login Keychain. Managed
+// apps receive only owner-scoped fv_ capabilities and the loopback proxy URL.
 const SECRETS_DIR = join(RUNTIME_ROOT, "secrets");
-const VAULT_PATH = join(SECRETS_DIR, "provider-keys.json");
+const keychainVault = new MacOSKeychainVault();
+let providerVault = keychainVault.readJson(FLOYD_KEYCHAIN_ACCOUNTS.providers);
 const PROVIDERS = [
-  { id: "openai",     name: "OpenAI",       env: "OPENAI_API_KEY",       prefixes: ["sk-proj-", "sk-svcacct-"], ambiguous: ["sk-"], url: "https://platform.openai.com/api-keys",
-    test: (k) => ({ url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${k}` } }) },
+  { id: "openai", name: "OpenAI (ChatGPT/Codex)", env: "ChatGPT/Codex subscription",
+    prefixes: [], url: null, credentialMode: "chatgpt-subscription" },
   { id: "anthropic",  name: "Anthropic",    env: "ANTHROPIC_API_KEY",    prefixes: ["sk-ant-"], url: "https://console.anthropic.com/settings/keys",
     test: (k) => ({ url: "https://api.anthropic.com/v1/models", headers: { "x-api-key": k, "anthropic-version": "2023-06-01" } }) },
   { id: "google",     name: "Google Gemini", env: "GEMINI_API_KEY",      prefixes: ["AIza"], url: "https://aistudio.google.com/apikey",
@@ -98,39 +113,40 @@ const PROVIDERS = [
 ];
 
 function readVault() {
-  try { return JSON.parse(readFileSync(VAULT_PATH, "utf8")); } catch { return {}; }
+  return structuredClone(providerVault);
 }
 function writeVault(vault) {
-  mkdirSync(SECRETS_DIR, { recursive: true, mode: 0o700 });
-  writeFileSync(VAULT_PATH, JSON.stringify(vault, null, 2), { mode: 0o600 });
-  chmodSync(VAULT_PATH, 0o600);
+  keychainVault.writeJson(FLOYD_KEYCHAIN_ACCOUNTS.providers, vault);
+  providerVault = structuredClone(vault);
 }
+const APP_PROFILES_DIR = join(SECRETS_DIR, "proxy-app-profiles");
+const CANONICAL_VAULT_APP = Object.freeze({
+  "cursem-ide": "cursem",
+  "floyd-desktop": "desktop",
+  browork: "desktop",
+  "harness-launcher": "launcher",
+  "floyd-code-cli": "ff",
+  ohmyfloyd: "omf",
+  terminalone: "terminalone",
+  "floyd-tty-bridge": "ttybridge",
+  core: "core",
+});
+function managementToken() {
+  return keychainVault.ensureManagementToken();
+}
+const VAULT_MANAGEMENT_TOKEN = managementToken();
 /** Env block injected into every managed app. Real keys NEVER enter an app's
  * environment: each app gets a per-app proxied token plus base URLs that point
  * at the loopback vault proxy, which swaps in the real credential upstream. */
-function vaultEnv(appId) {
-  const token = vaultProxy.store.ensure(appId);
+function vaultEnv(appId, inherited = {}) {
+  const app = CANONICAL_VAULT_APP[appId] || appId;
+  const token = vaultProxy.store.ensure(app);
   const base = VAULT_PROXY_BASE;
-  const env = {
-    // Generic handles for FLOYD-aware apps.
-    FLOYD_VAULT_PROXY_URL: base,
-    FLOYD_VAULT_PROXY_TOKEN: token,
-    // OpenAI/Anthropic SDK conventions: base-URL override + proxied key.
-    OPENAI_BASE_URL: `${base}/v1`,
-    ANTHROPIC_BASE_URL: base,
-    // CURSEM's credential-proxy contract (see ide/server/credential-proxy.mjs).
-    CURSEM_CREDENTIAL_PROXY_URL: base,
-    CURSEM_CREDENTIAL_PROXY_TOKEN: token,
-  };
-  // Every provider env name resolves to the proxied token, so an app that
-  // reads e.g. GLM_API_KEY gets a fv_ token, never the real key. Explicitly
-  // exported process env always wins.
-  for (const p of PROVIDERS) {
-    for (const name of [p.env, ...(p.envAliases || [])]) {
-      if (!process.env[name]) env[name] = token;
-    }
-  }
-  return env;
+  mkdirSync(APP_PROFILES_DIR, { recursive: true, mode: 0o700 });
+  const profilePath = join(APP_PROFILES_DIR, `${app}.json`);
+  writeFileSync(profilePath, JSON.stringify(buildVaultProfile(app, token, base), null, 2), { mode: 0o600 });
+  chmodSync(profilePath, 0o600);
+  return applyVaultEnvironment(inherited, app, token, base, profilePath);
 }
 const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 8)}…${k.slice(-4)}`);
 
@@ -140,11 +156,105 @@ const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 8
 // on the way upstream. OpenAI rides the ChatGPT subscription exclusively.
 const VAULT_PROXY_PORT = Number(process.env.FLOYD_VAULT_PROXY_PORT || 13031);
 const VAULT_PROXY_BASE = `http://127.0.0.1:${VAULT_PROXY_PORT}`;
+function connectedAppMasterKey() {
+  const account = FLOYD_KEYCHAIN_ACCOUNTS.connectedAppMaster;
+  const existing = keychainVault.get(account);
+  if (existing) {
+    const decoded = Buffer.from(existing, "base64");
+    if (decoded.byteLength !== 32) throw new Error("Vault connected-app Keychain master key is invalid");
+    return decoded;
+  }
+  const created = randomBytes(32);
+  keychainVault.set(account, created.toString("base64"));
+  return created;
+}
+const connectedApps = createConnectedAppVault({
+  secretsDir: SECRETS_DIR,
+  masterKey: connectedAppMasterKey(),
+  returnUrl: `http://127.0.0.1:${PORT}/?settings=connections`,
+});
+function modelConnectorMasterKey() {
+  const account = FLOYD_KEYCHAIN_ACCOUNTS.modelConnectorMaster;
+  const existing = keychainVault.get(account);
+  if (existing) {
+    const decoded = Buffer.from(existing, "base64");
+    if (decoded.byteLength !== 32) throw new Error("Vault model-connector Keychain master key is invalid");
+    return decoded;
+  }
+  const created = randomBytes(32);
+  keychainVault.set(account, created.toString("base64"));
+  return created;
+}
+const modelConnectors = createModelConnectorVault({
+  secretsDir: SECRETS_DIR,
+  masterKey: modelConnectorMasterKey(),
+  returnUrl: `http://127.0.0.1:${PORT}/?settings=connections`,
+});
+const mcpManagement = createVaultMcpManagement({
+  readTargets: () => keychainVault.readJson(
+    FLOYD_KEYCHAIN_ACCOUNTS.remoteMcpTargets,
+    { version: 1, targets: {} },
+  ),
+  writeTargets: (targets) => keychainVault.writeJson(
+    FLOYD_KEYCHAIN_ACCOUNTS.remoteMcpTargets,
+    targets,
+  ),
+});
+const mcpRouter = createVaultMcpRouter({
+  resolveTarget: (input) => mcpManagement.resolveTarget(input),
+});
+const omfBroker = createVaultOmpBroker({
+  providers: PROVIDERS.map((provider) => provider.id),
+  getProviderState: async () => {
+    const vault = readVault();
+    const disabled = new Set(vault.__omf?.disabledProviders || []);
+    const subscriptionConfigured = vaultProxy.subscription.configured();
+    return Object.fromEntries(PROVIDERS.map(({ id }) => [
+      id,
+      {
+        configured: id === "openai" ? subscriptionConfigured : Boolean(vault[id]?.key),
+        enabled: !disabled.has(id),
+      },
+    ]));
+  },
+  setProviderEnabled: async (providerId, enabled) => {
+    const vault = readVault();
+    const disabled = new Set(vault.__omf?.disabledProviders || []);
+    if (enabled) disabled.delete(providerId); else disabled.add(providerId);
+    vault.__omf = { disabledProviders: [...disabled].sort() };
+    writeVault(vault);
+    vaultProxy.store.clearProviderRoutes(providerId);
+  },
+});
+function vaultRouteTarget(providerId, defaultTarget) {
+  const custom = readVault()[providerId]?.endpoint;
+  if (!custom) return defaultTarget;
+  const provider = PROVIDERS.find((entry) => entry.id === providerId);
+  const defaultRoot = (provider && defaultEndpoint(provider))
+    || VAULT_PROVIDER_CATALOG[providerId]?.upstream;
+  if (!defaultRoot || !defaultTarget.startsWith(defaultRoot)) {
+    throw new Error(`Vault custom endpoint cannot map provider ${providerId}`);
+  }
+  return `${custom}${defaultTarget.slice(defaultRoot.length)}`;
+}
 const vaultProxy = createVaultProxy({
   secretsDir: SECRETS_DIR,
   realKey: (providerId) => readVault()[providerId]?.key || null,
+  subscriptionStore: {
+    read: () => keychainVault.readJson(FLOYD_KEYCHAIN_ACCOUNTS.subscription),
+    write: (auth) => keychainVault.writeJson(FLOYD_KEYCHAIN_ACCOUNTS.subscription, auth),
+  },
+  connectedApps,
+  modelConnectors,
+  mcpRouter,
+  omfBroker,
+  routeTarget: vaultRouteTarget,
   port: VAULT_PROXY_PORT,
 });
+// Core is launchd-managed rather than a Frame child, so materialize its
+// owner-only capability profile at Vault startup.
+vaultEnv("core", {});
+vaultEnv("ttybridge", {});
 
 // Self-updater: no-op in dev checkouts (no VERSION file); the installed app
 // checks www.floydslabs.com for a newer signed pkg on demand.
@@ -154,40 +264,16 @@ const updater = createUpdater({
   manifestUrl: process.env.FLOYD_UPDATE_MANIFEST_URL || undefined,
 });
 
-/** Some consumers read keys from their own config files, not the environment.
- * Propagate on save so ONE paste updates the whole stack. Best-effort: failures
- * are reported but never block the vault save.
- * NOTE: surface .env.local files are deliberately NOT written. Real keys stay
- * inside the vault; managed apps receive proxied fv_ tokens via vaultEnv(). */
-function propagateKey(providerId, key) {
-  const notes = [];
-  if (providerId === "zai") {
-    // Floyd Core validates provider.zai-coding-plan.options.apiKey from the
-    // user's opencode config at startup (fail-closed).
-    const cfgPath = join(process.env.HOME, ".config/opencode/opencode.json");
-    try {
-      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
-      cfg.provider ??= {};
-      cfg.provider["zai-coding-plan"] ??= {};
-      cfg.provider["zai-coding-plan"].options ??= {};
-      cfg.provider["zai-coding-plan"].options.apiKey = key;
-      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-      notes.push("opencode config updated — restart Floyd Core to pick it up");
-    } catch (err) {
-      notes.push(`opencode config not updated: ${String(err?.message ?? err).slice(0, 80)}`);
-    }
-  }
-  return notes;
-}
 /** Vendor auto-detection from key shape. Returns {match} on a unique prefix hit,
  * {candidates} when the shape fits several vendors (e.g. bare "sk-"). */
 function detectProvider(key) {
-  const exact = PROVIDERS.filter((p) => p.prefixes.some((x) => key.startsWith(x)));
+  const apiKeyProviders = PROVIDERS.filter((provider) => provider.credentialMode !== "chatgpt-subscription");
+  const exact = apiKeyProviders.filter((p) => p.prefixes.some((x) => key.startsWith(x)));
   if (exact.length === 1) return { match: exact[0] };
-  const loose = PROVIDERS.filter((p) => (p.ambiguous || []).some((x) => key.startsWith(x)));
+  const loose = apiKeyProviders.filter((p) => (p.ambiguous || []).some((x) => key.startsWith(x)));
   if (exact.length === 0 && loose.length === 1) return { match: loose[0] };
   const candidates = [...new Set([...exact, ...loose])];
-  return { candidates: candidates.length ? candidates : PROVIDERS };
+  return { candidates: candidates.length ? candidates : apiKeyProviders };
 }
 async function testProviderKey(provider, key, endpointOverride) {
   if (!provider.test) return { tested: false, note: "no live test for this vendor" };
@@ -195,6 +281,14 @@ async function testProviderKey(provider, key, endpointOverride) {
   // A custom endpoint replaces the URL's origin+path root while keeping the
   // vendor-specific auth headers and request shape.
   const url = endpointOverride ? spec.url.replace(defaultEndpoint(provider), endpointOverride) : spec.url;
+  const publicEndpoint = (() => {
+    const parsed = new URL(url);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  })();
   try {
     const res = await fetch(url, {
       method: spec.method || "GET",
@@ -202,10 +296,10 @@ async function testProviderKey(provider, key, endpointOverride) {
       body: spec.body,
       signal: AbortSignal.timeout(10000),
     });
-    if (res.ok) return { tested: true, valid: true, endpoint: url };
-    return { tested: true, valid: false, status: res.status, endpoint: url, note: res.status === 401 || res.status === 403 ? "rejected by vendor (bad or expired key)" : `vendor answered HTTP ${res.status}` };
+    if (res.ok) return { tested: true, valid: true, endpoint: publicEndpoint };
+    return { tested: true, valid: false, status: res.status, endpoint: publicEndpoint, note: res.status === 401 || res.status === 403 ? "rejected by vendor (bad or expired key)" : `vendor answered HTTP ${res.status}` };
   } catch (err) {
-    return { tested: false, endpoint: url, note: `could not reach vendor: ${String(err?.message ?? err).slice(0, 120)}` };
+    return { tested: false, endpoint: publicEndpoint, note: `could not reach vendor: ${String(err?.message ?? err).slice(0, 120)}` };
   }
 }
 /** The endpoint root a provider talks to (origin + base path, no method-specific
@@ -215,6 +309,22 @@ function defaultEndpoint(provider) {
   const u = new URL(provider.test("x").url);
   // strip the terminal resource segment (/models, /chat/completions, /user, …)
   return `${u.origin}${u.pathname.replace(/\/(models|chat\/completions|messages|user|whoami-v2|health)$/, "")}`;
+}
+
+function normalizeCustomEndpoint(input) {
+  const value = String(input || "").trim();
+  if (!value) return "";
+  const endpoint = new URL(value);
+  const host = endpoint.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const loopback = ["127.0.0.1", "localhost", "::1"].includes(host);
+  if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) {
+    throw new Error("custom endpoint must use HTTPS or loopback HTTP");
+  }
+  if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+    throw new Error("custom endpoint cannot contain credentials, query, or fragment");
+  }
+  endpoint.pathname = endpoint.pathname.replace(/\/+$/, "");
+  return endpoint.toString().replace(/\/$/, "");
 }
 
 const MANAGED = {
@@ -233,7 +343,7 @@ const MANAGED = {
     port: 13010,
     cwd: join(SURFACES, "desktop"),
     cmd: NODE_BIN, args: ["dist-server/index.js"],
-    env: { PORT: "13010" },
+    env: { PORT: "13010", MCP_WS_PORT: "13011" },
   },
   "harness-launcher": {
     port: 13014,
@@ -288,7 +398,8 @@ async function ensureApp(id) {
   if (!spec) return { id, managed: false };
   if (await portOpen(spec.port)) return { id, managed: true, up: true, port: spec.port };
   if (!existsSync(spec.cwd)) return { id, managed: true, up: false, error: `missing cwd ${spec.cwd}` };
-  const env = { ...process.env, FLOYD_RUNTIME_ROOT: RUNTIME_ROOT, ...vaultEnv(id), ...(typeof spec.env === "function" ? spec.env() : spec.env) };
+  const requested = { ...process.env, FLOYD_RUNTIME_ROOT: RUNTIME_ROOT, ...(typeof spec.env === "function" ? spec.env() : spec.env) };
+  const env = vaultEnv(id, requested);
   const child = spawn(spec.cmd, spec.args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   children.set(id, child);
   child.stdout.on("data", (d) => process.stdout.write(`[${id}] ${d}`));
@@ -300,6 +411,102 @@ async function ensureApp(id) {
   }
   return { id, managed: true, up: false, error: "did not open its port within 10s" };
 }
+
+async function stopManagedSurface(id) {
+  const spec = MANAGED[id];
+  if (!spec) return { stopped: false, reason: "not-frame-managed" };
+  const child = children.get(id);
+  if (child) {
+    try { child.kill("SIGTERM"); } catch {}
+    children.delete(id);
+  } else {
+    await new Promise((done) => {
+      execFile("lsof", ["-nP", "-ti", `tcp:${spec.port}`, "-sTCP:LISTEN"], (_error, stdout) => {
+        const pid = Number((stdout || "").trim().split("\n")[0]);
+        if (pid) { try { process.kill(pid, "SIGTERM"); } catch {} }
+        done();
+      });
+    });
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!(await portOpen(spec.port))) return { stopped: true };
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  return { stopped: false, reason: "port-still-open" };
+}
+
+function routeStatusByProvider() {
+  const tokens = vaultProxy.store.list();
+  const status = {};
+  for (const provider of PROVIDERS) {
+    const applications = tokens
+      .filter((token) => !token.revoked && Number(token.routes?.[provider.id]?.success_count || 0) > 0)
+      .map((token) => token.app)
+      .sort();
+    status[provider.id] = {
+      routable: applications.length > 0,
+      applicationTested: applications,
+    };
+  }
+  return status;
+}
+
+async function rotateCompromisedApplication(app, detail = {}) {
+  const canonical = CANONICAL_VAULT_APP[app] || app;
+  const surfaceId = Object.keys(CANONICAL_VAULT_APP)
+    .find((id) => id !== "browork" && CANONICAL_VAULT_APP[id] === canonical && MANAGED[id]);
+  const wasRunning = surfaceId ? await portOpen(MANAGED[surfaceId].port) : false;
+  const rotation = vaultProxy.store.rotate(canonical, {
+    source: detail.source || "vault-compromise-report",
+    reason: detail.reason || "proxied credential reported leaked",
+    alertId: detail.alertId,
+  });
+  vaultEnv(canonical, {});
+  let restart = { attempted: false, ok: true, reason: "application-not-running" };
+  if (canonical === "core") {
+    restart = await new Promise((resolveRestart) => {
+      execFile("launchctl", ["kickstart", "-k", `gui/${process.getuid()}/com.floyd.core`], (error) => {
+        resolveRestart({ attempted: true, ok: !error, reason: error ? "launchctl-kickstart-failed" : "launchctl-kickstart" });
+      });
+    });
+  } else if (canonical === "ttybridge") {
+    const browserWasRunning = await portOpen(INTERNAL_BROWSER_CDP_PORT);
+    if (browserWasRunning) {
+      const stopped = await closeInternalBrowser();
+      const launched = stopped ? await openChrome("") : null;
+      restart = {
+        attempted: true,
+        ok: Boolean(stopped && launched?.loaded?.length === INTERNAL_EXTENSIONS.length),
+        reason: stopped ? "internal-browser-restarted" : "internal-browser-close-failed",
+      };
+    }
+  } else if (surfaceId && wasRunning) {
+    const stopped = await stopManagedSurface(surfaceId);
+    const launched = stopped.stopped ? await ensureApp(surfaceId) : { up: false, error: stopped.reason };
+    restart = { attempted: true, ok: launched.up === true, reason: launched.error || "frame-restarted" };
+  }
+  return {
+    application: canonical,
+    replacementTime: new Date().toISOString(),
+    previousTokenRevocation: {
+      ok: rotation.revokedCount > 0,
+      count: rotation.revokedCount,
+      terminatedConnections: rotation.terminatedConnections,
+    },
+    restart,
+  };
+}
+
+const leakMonitor = createVaultLeakMonitor({
+  roots: [
+    REPO_ROOT,
+    join(RUNTIME_ROOT, "logs"),
+    join(homedir(), "Library", "Logs", "floyd"),
+  ],
+  getActiveCapabilities: () => vaultProxy.store.activeCapabilities(),
+  recordAlert: (kind, detail) => vaultProxy.store.alert(kind, detail),
+  onConfirmedLeak: (app, detail) => rotateCompromisedApplication(app, detail),
+});
 
 // Internal browser: these extensions are PERMANENT. Every launch loads them;
 // a launch that cannot load both is an error, not a degraded browser.
@@ -314,7 +521,7 @@ const INTERNAL_EXTENSIONS = [
 // the human's Chrome, plus a fixed CDP port so the frame (and every agent via
 // the MCP gateway) can drive it.
 const INTERNAL_BROWSER_PROFILE = join(RUNTIME_ROOT, "internal-browser-profile");
-const INTERNAL_BROWSER_CDP_PORT = 9223;
+const INTERNAL_BROWSER_CDP_PORT = 13032;
 const CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 function cdpHttp(pathName, method = "GET") {
@@ -328,6 +535,31 @@ function cdpHttp(pathName, method = "GET") {
     req.on("timeout", () => req.destroy(new Error("CDP timeout")));
     req.end();
   });
+}
+
+/** Closing the dedicated browser terminates extension WebSockets immediately.
+ * It is used after a confirmed TTY Bridge capability compromise so an already
+ * authenticated Live session cannot outlive the revoked fv_ credential. */
+async function closeInternalBrowser() {
+  let version;
+  try { version = await cdpHttp("/json/version"); } catch { return true; }
+  const ws = new WebSocket(version.webSocketDebuggerUrl);
+  try {
+    await new Promise((done, fail) => {
+      ws.onopen = done;
+      ws.onerror = () => fail(new Error("CDP websocket failed"));
+    });
+    ws.send(JSON.stringify({ id: 1, method: "Browser.close" }));
+  } catch {
+    try { ws.close(); } catch {}
+    return false;
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!(await portOpen(INTERNAL_BROWSER_CDP_PORT))) return true;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  try { ws.close(); } catch {}
+  return false;
 }
 
 /** Load both permanent extensions over CDP. Branded Chrome ships with
@@ -468,6 +700,10 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
   try {
+    if ((path.startsWith("/api/keys") || (path.startsWith("/api/vault") && path !== "/api/vault/catalog"))
+      && !authorizeVaultManagement(req.headers, VAULT_MANAGEMENT_TOKEN)) {
+      return json(res, 403, { error: "Vault management authorization required" });
+    }
     if (path === "/api/registry") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(readFileSync(REGISTRY_PATH));
@@ -480,6 +716,26 @@ const server = http.createServer(async (req, res) => {
         out[app.id] = spec ? { managed: true, up: await portOpen(spec.port), port: spec.port } : { managed: false, up: null };
       }
       return json(res, 200, { apps: out, backgrounds: listBackgrounds() });
+    }
+    if (path === "/api/vault/catalog" && req.method === "GET") {
+      const vault = readVault();
+      const routeStatus = routeStatusByProvider();
+      return json(res, 200, {
+        version: 1,
+        proxyUrl: VAULT_PROXY_BASE,
+        providers: publicProviderCatalog(Object.fromEntries(PROVIDERS.map((provider) => [
+          provider.id,
+          {
+            configured: provider.id === "openai"
+              ? vaultProxy.subscription.configured()
+              : Boolean(vault[provider.id]?.key),
+            verified: provider.id === "openai"
+              ? vaultProxy.subscription.configured()
+              : vault[provider.id]?.verified ?? null,
+            ...routeStatus[provider.id],
+          },
+        ]))),
+      });
     }
     if (path === "/api/heartbeat" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
@@ -544,32 +800,57 @@ const server = http.createServer(async (req, res) => {
     // DELETE /api/keys/:provider     -> remove
     if (path === "/api/keys" && req.method === "GET") {
       const vault = readVault();
-      // ChatGPT subscription (OAuth) — credential REFERENCE only. The durable
-      // token store is ~/.codex/auth.json (Codex-owned, auto-refreshed). Raw
-      // tokens are never copied into the vault or returned by this API.
-      let chatgptSubscription = { configured: false, authFile: join(homedir(), ".codex", "auth.json"), accountId: null };
-      try {
-        const auth = JSON.parse(readFileSync(chatgptSubscription.authFile, "utf8"));
-        if (auth?.tokens?.access_token && auth?.tokens?.refresh_token) {
-          chatgptSubscription = {
-            configured: true,
-            authFile: chatgptSubscription.authFile,
-            accountId: auth.tokens.account_id ? `${String(auth.tokens.account_id).slice(0, 8)}…` : null,
-          };
-        }
-      } catch { /* not signed in */ }
+      const routeStatus = routeStatusByProvider();
+      const subscriptionConfigured = vaultProxy.subscription.configured();
+      const chatgptSubscription = { configured: subscriptionConfigured, authority: "floyd-vault-keychain" };
       return json(res, 200, {
         chatgptSubscription,
         providers: PROVIDERS.map((p) => ({
           id: p.id, name: p.name, env: p.env, envAliases: p.envAliases || [], url: p.url, testable: Boolean(p.test),
-          endpoint: vault[p.id]?.endpoint || defaultEndpoint(p),
+          credentialMode: p.credentialMode || "api-key",
+          managementAction: p.id === "openai" ? "/api/keys/openai/subscription" : null,
+          endpoint: p.id === "openai"
+            ? "ChatGPT subscription via Floyd Vault"
+            : vault[p.id]?.endpoint || defaultEndpoint(p),
           defaultEndpoint: defaultEndpoint(p),
-          customEndpoint: Boolean(vault[p.id]?.endpoint),
-          configured: Boolean(vault[p.id]?.key),
-          masked: vault[p.id]?.key ? maskKey(vault[p.id].key) : null,
-          verified: vault[p.id]?.verified ?? null,
-          savedAt: vault[p.id]?.savedAt ?? null,
+          customEndpoint: p.id !== "openai" && Boolean(vault[p.id]?.endpoint),
+          configured: p.id === "openai" ? subscriptionConfigured : Boolean(vault[p.id]?.key),
+          masked: p.id === "openai" ? null : vault[p.id]?.key ? maskKey(vault[p.id].key) : null,
+          verified: p.id === "openai" ? subscriptionConfigured : vault[p.id]?.verified ?? null,
+          routable: routeStatus[p.id]?.routable ?? false,
+          applicationTested: routeStatus[p.id]?.applicationTested ?? [],
+          active: (p.id === "openai"
+            ? subscriptionConfigured
+            : Boolean(vault[p.id]?.key) && vault[p.id]?.verified === true)
+            && routeStatus[p.id]?.routable === true,
+          savedAt: p.id === "openai" ? null : vault[p.id]?.savedAt ?? null,
         })),
+      });
+    }
+    if (path === "/api/keys/openai/subscription" && req.method === "POST") {
+      const handoffScript = join(REPO_ROOT, "scripts", "vault-provider-handoff.mjs");
+      const handoffEnv = Object.fromEntries(
+        ["HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_CTYPE"]
+          .filter((name) => typeof process.env[name] === "string")
+          .map((name) => [name, process.env[name]]),
+      );
+      handoffEnv.FRAME_PORT = String(PORT);
+      const launched = await new Promise((done) => {
+        const child = spawn(NODE_BIN, [handoffScript, "frame", "chatgpt-subscription"], {
+          env: handoffEnv,
+          stdio: "ignore",
+          shell: false,
+        });
+        child.once("error", (error) => done({ ok: false, error: error.message }));
+        child.once("exit", (code) => done(code === 0
+          ? { ok: true }
+          : { ok: false, error: `native handoff exited ${code ?? 1}` }));
+      });
+      if (!launched.ok) return json(res, 500, { error: launched.error });
+      return json(res, 200, {
+        configured: vaultProxy.subscription.configured(),
+        authority: "floyd-vault-keychain",
+        launched: "ChatGPT/Codex",
       });
     }
     if (path === "/api/keys/detect" && req.method === "POST") {
@@ -584,12 +865,16 @@ const server = http.createServer(async (req, res) => {
     // PUT /api/keys/:provider/endpoint -> {endpoint} -> set/reset custom endpoint (re-tests stored key)
     if (path.startsWith("/api/keys/") && path.endsWith("/endpoint") && req.method === "PUT") {
       const id = decodeURIComponent(path.slice("/api/keys/".length, -"/endpoint".length));
-      const provider = PROVIDERS.find((p) => p.id === id);
-      if (!provider) return json(res, 404, { error: `unknown provider ${id}` });
-      let body = ""; for await (const c of req) body += c;
-      let endpoint = (JSON.parse(body || "{}").endpoint || "").trim().replace(/\/+$/, "");
-      if (endpoint && !/^https?:\/\/[\w.-]+(:\d+)?(\/[\w./-]*)?$/.test(endpoint)) return json(res, 400, { error: "endpoint must be a plain http(s) URL" });
-      if (endpoint === defaultEndpoint(provider)) endpoint = ""; // resetting to default clears the override
+      const provider = PROVIDERS.find((entry) => entry.id === id);
+      if (!provider || id === "openai") return json(res, 404, { error: `unknown provider ${id}` });
+      let body = ""; for await (const chunk of req) body += chunk;
+      let endpoint;
+      try {
+        endpoint = normalizeCustomEndpoint(JSON.parse(body || "{}").endpoint);
+      } catch (error) {
+        return json(res, 400, { error: String(error?.message ?? error) });
+      }
+      if (endpoint === defaultEndpoint(provider)) endpoint = "";
       const vault = readVault();
       const entry = vault[id] || {};
       if (endpoint) entry.endpoint = endpoint; else delete entry.endpoint;
@@ -600,30 +885,42 @@ const server = http.createServer(async (req, res) => {
       }
       vault[id] = entry;
       writeVault(vault);
-      return json(res, 200, { provider: id, endpoint: endpoint || defaultEndpoint(provider), custom: Boolean(endpoint), check });
+      vaultProxy.store.clearProviderRoutes(id);
+      return json(res, 200, {
+        provider: id,
+        endpoint: endpoint || defaultEndpoint(provider),
+        custom: Boolean(endpoint),
+        check,
+      });
     }
     if (path.startsWith("/api/keys/") && req.method === "POST") {
       const id = decodeURIComponent(path.slice("/api/keys/".length));
       const provider = PROVIDERS.find((p) => p.id === id);
       if (!provider) return json(res, 404, { error: `unknown provider ${id}` });
+      if (id === "openai") {
+        return json(res, 409, { error: "OpenAI uses the configured ChatGPT subscription exclusively; API keys are not accepted" });
+      }
       let body = ""; for await (const c of req) body += c;
       const key = (JSON.parse(body || "{}").key || "").trim();
       if (!key || key.length < 8 || /\s/.test(key)) return json(res, 400, { error: "that does not look like an API key" });
       const vault = readVault();
-      const endpointOverride = vault[id]?.endpoint;
-      const check = await testProviderKey(provider, key, endpointOverride);
+      const check = await testProviderKey(provider, key, readVault()[id]?.endpoint);
       if (check.tested && check.valid === false) return json(res, 400, { error: `${provider.name} ${check.note}`, check });
       vault[id] = { ...(vault[id] || {}), key, savedAt: new Date().toISOString(), verified: check.tested ? true : null };
       writeVault(vault);
-      const propagated = propagateKey(id, key);
-      return json(res, 200, { saved: true, provider: id, masked: maskKey(key), check, propagated });
+      vaultProxy.store.clearProviderRoutes(id);
+      return json(res, 200, { saved: true, provider: id, masked: maskKey(key), check, propagated: [] });
     }
     if (path.startsWith("/api/keys/") && req.method === "DELETE") {
       const id = decodeURIComponent(path.slice("/api/keys/".length));
+      if (id === "openai") {
+        return json(res, 409, { error: "OpenAI is controlled by the ChatGPT subscription; there is no Vault API key to delete" });
+      }
       const vault = readVault();
       if (!vault[id]) return json(res, 404, { error: "no key stored" });
       delete vault[id];
       writeVault(vault);
+      vaultProxy.store.clearProviderRoutes(id);
       return json(res, 200, { removed: id });
     }
     // ---- vault proxy management ----------------------------------------
@@ -654,6 +951,40 @@ const server = http.createServer(async (req, res) => {
     }
     if (path === "/api/vault/alerts" && req.method === "GET") {
       return json(res, 200, { alerts: vaultProxy.store.alerts(Number(url.searchParams.get("limit")) || 100) });
+    }
+    if (path === "/api/vault/mcp-targets" && req.method === "GET") {
+      return json(res, 200, { targets: await mcpManagement.list() });
+    }
+    if (path.startsWith("/api/vault/mcp-targets/") && req.method === "PUT") {
+      const id = decodeURIComponent(path.slice("/api/vault/mcp-targets/".length));
+      let body = ""; for await (const chunk of req) body += chunk;
+      try {
+        return json(res, 200, await mcpManagement.upsert(id, JSON.parse(body || "{}")));
+      } catch (error) {
+        return json(res, 400, { error: String(error?.message ?? error) });
+      }
+    }
+    if (path.startsWith("/api/vault/mcp-targets/") && req.method === "DELETE") {
+      const id = decodeURIComponent(path.slice("/api/vault/mcp-targets/".length));
+      try {
+        return await mcpManagement.remove(id)
+          ? json(res, 200, { removed: id })
+          : json(res, 404, { error: `no MCP target ${id}` });
+      } catch (error) {
+        return json(res, 400, { error: String(error?.message ?? error) });
+      }
+    }
+    if (path === "/api/vault/compromise" && req.method === "POST") {
+      let body = ""; for await (const chunk of req) body += chunk;
+      let report;
+      try { report = JSON.parse(body || "{}"); } catch { return json(res, 400, { error: "invalid JSON" }); }
+      const app = String(report.app || "").trim();
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(app)) return json(res, 400, { error: "invalid application" });
+      try {
+        return json(res, 200, await rotateCompromisedApplication(app));
+      } catch (error) {
+        return json(res, 404, { error: String(error?.message ?? error) });
+      }
     }
     // ---- agent model preferences ---------------------------------------
     // Shipped agent.json model pins are defaults only. Users override them
@@ -718,7 +1049,15 @@ const server = http.createServer(async (req, res) => {
     const file = path === "/" ? "index.html" : path.slice(1);
     const full = join(PUBLIC_DIR, file);
     if (!full.startsWith(PUBLIC_DIR) || !existsSync(full) || !statSync(full).isFile()) return json(res, 404, { error: "not found" });
-    res.writeHead(200, { "content-type": MIME[extname(full).toLowerCase()] || "text/plain", "cache-control": "no-store" });
+    res.writeHead(200, {
+      "content-type": MIME[extname(full).toLowerCase()] || "text/plain",
+      "cache-control": "no-store",
+      ...(file === "index.html" ? {
+        "set-cookie": authorizeManagementBootstrap(req.headers, VAULT_MANAGEMENT_TOKEN)
+          ? `floyd_management=${VAULT_MANAGEMENT_TOKEN}; HttpOnly; SameSite=Strict; Path=/api`
+          : "floyd_management=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0",
+      } : {}),
+    });
     return createReadStream(full).pipe(res);
   } catch (err) {
     return json(res, 500, { error: String(err) });
@@ -728,5 +1067,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => console.log(`[frame] FLOYD frame at http://${HOST}:${PORT}`));
 vaultProxy.listen().then(() => console.log(`[frame] vault proxy at ${VAULT_PROXY_BASE} (loopback only)`))
   .catch((err) => { console.error(`[frame] FATAL: vault proxy failed to bind: ${err?.message ?? err}`); process.exit(1); });
-process.on("SIGTERM", () => { for (const c of children.values()) c.kill(); process.exit(0); });
-process.on("SIGINT", () => { for (const c of children.values()) c.kill(); process.exit(0); });
+leakMonitor.start();
+process.on("SIGTERM", () => { leakMonitor.close(); for (const c of children.values()) c.kill(); process.exit(0); });
+process.on("SIGINT", () => { leakMonitor.close(); for (const c of children.values()) c.kill(); process.exit(0); });
