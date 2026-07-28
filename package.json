@@ -16,7 +16,7 @@
   },
   "scripts": {
     "typecheck": "node scripts/ensure-deps.mjs && tsc -b packages/contracts packages/sdk engines/opencode core/daemon clients/cli",
-    "test": "node --test \"packages/sdk/test/*.test.*\" \"engines/opencode/test/*.test.ts\" \"core/daemon/test/*.test.ts\" \"clients/cli/test/*.test.ts\" \"apps/frame/test/*.test.mjs\"",
+    "test": "node --test \"packages/sdk/test/*.test.*\" \"engines/opencode/test/*.test.ts\" \"core/daemon/test/*.test.ts\" \"clients/cli/test/*.test.ts\" \"apps/frame/test/*.test.mjs\" \"tests/*.test.mjs\"",
     "verify:surfaces": "sh scripts/verify-active-surfaces.sh",
     "core:install": "sh scripts/install-core-launch-agent.sh",
     "core": "node core/daemon/src/main.ts",
