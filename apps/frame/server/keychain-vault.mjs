@@ -30,6 +30,11 @@ export class MacOSKeychainVault {
     }
     this.service = service;
     this.exec = exec;
+    // If a previous process died between delete-generic-password and
+    // add-generic-password, the only copy of that secret is the staged
+    // envelope in the migration-backup account. Restore it before anything
+    // else touches the Keychain.
+    MacOSKeychainVault.recoverStagedWrite(this);
   }
 
   get(account) {
@@ -54,9 +59,39 @@ export class MacOSKeychainVault {
     validateAccount(account);
     if (typeof secret !== "string" || !secret) throw new Error("Keychain secret must be a non-empty string");
     if (/[\r\n]/.test(secret)) throw new Error("Keychain secret must be a single line");
-    // Always delete-then-create. Updating an existing item (-U) rewrites its
-    // ACL, and SecKeychainItemSetAccess prompts the user for the login
-    // password every time. Creating a fresh item sets the ACL silently.
+    const backupAccount = FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups;
+    let staged = false;
+    if (account !== backupAccount) {
+      // Crash safety: delete-then-create has a window where the process can
+      // die with the item deleted but not yet re-created, and the Keychain is
+      // the ONLY storage for these secrets. Stage the old value in the backup
+      // account first; recoverStagedWrite() replays it at startup if the swap
+      // never completed. The backup account itself is written with the plain
+      // raw path (it IS the backup), which also breaks the recursion.
+      const existing = this.get(account);
+      if (existing !== null) {
+        this.#writeRaw(backupAccount, JSON.stringify({
+          account,
+          value: existing,
+          staged_at: new Date().toISOString(),
+        }));
+        staged = true;
+      }
+    }
+    this.#writeRaw(account, secret);
+    if (staged) {
+      // The new value is verified in place, so the staged copy is spent.
+      this.delete(backupAccount);
+    }
+  }
+
+  /**
+   * The raw swap: delete-then-create plus read-back verification, with no
+   * staging. Updating an existing item (-U) rewrites its ACL, and
+   * SecKeychainItemSetAccess prompts the user for the login password every
+   * time. Creating a fresh item sets the ACL silently, so never use -U here.
+   */
+  #writeRaw(account, secret) {
     this.delete(account);
     if (secret.length <= INTERACTIVE_LINE_SAFE_LIMIT) {
       // Interactive mode: the full command line arrives on stdin, so the
@@ -103,6 +138,42 @@ export class MacOSKeychainVault {
     if (written !== secret) {
       throw new Error(`macOS Keychain write verification failed for ${account}`);
     }
+  }
+
+  /**
+   * Replay a write that crashed between delete-generic-password and
+   * add-generic-password. Runs automatically at construction; safe to call
+   * again at any time (idempotent, returns the restored account or null).
+   */
+  static recoverStagedWrite(vault) {
+    const backupAccount = FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups;
+    const raw = vault.get(backupAccount);
+    if (raw === null) return null;
+    let envelope;
+    try {
+      envelope = JSON.parse(raw);
+    } catch {
+      // Not a staged envelope (the account is also usable as scratch space);
+      // leave unfamiliar data alone.
+      return null;
+    }
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return null;
+    const { account, value } = envelope;
+    if (typeof account !== "string" || typeof value !== "string" || !value) return null;
+    if (!Object.values(FLOYD_KEYCHAIN_ACCOUNTS).includes(account) || account === backupAccount) {
+      return null;
+    }
+    let restored = null;
+    if (vault.get(account) === null) {
+      // The crash landed mid-swap: the target was deleted but never
+      // re-created. The staged copy is the only surviving value.
+      vault.#writeRaw(account, value);
+      restored = account;
+    }
+    // Either we just restored it or the newer write completed (target
+    // present) and only the cleanup was lost. The envelope is spent.
+    vault.delete(backupAccount);
+    return restored;
   }
 
   delete(account) {

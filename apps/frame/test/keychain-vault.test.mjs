@@ -114,3 +114,62 @@ test("large secrets round-trip through the argv path and quoted values survive -
     /single line/,
   );
 });
+
+test("a crash between delete and create is recoverable via the staged backup", () => {
+  const fake = fakeKeychain();
+  const vault = new MacOSKeychainVault({ exec: fake.exec, platform: "darwin" });
+  vault.set(FLOYD_KEYCHAIN_ACCOUNTS.providers, "irreplaceable-provider-keys");
+  // Simulate the process dying between delete-generic-password and
+  // add-generic-password for the target account: the add call itself throws
+  // (the backup account's own add must still succeed, it is the safety net).
+  const crashyExec = (command, args, options = {}) => {
+    const line = args[0] === "-i" ? String(options.input || "") : args.join(" ");
+    if (line.includes("add-generic-password")
+      && line.includes(FLOYD_KEYCHAIN_ACCOUNTS.providers)
+      && !line.includes(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups)) {
+      throw new Error("simulated crash mid-swap");
+    }
+    return fake.exec(command, args, options);
+  };
+  const dying = new MacOSKeychainVault({ exec: crashyExec, platform: "darwin" });
+  assert.throws(
+    () => dying.set(FLOYD_KEYCHAIN_ACCOUNTS.providers, "never-lands"),
+    /simulated crash mid-swap/,
+  );
+  // The target item is gone; only the staged envelope survives.
+  assert.equal(fake.values.has(FLOYD_KEYCHAIN_ACCOUNTS.providers), false);
+  const envelope = JSON.parse(fake.values.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups));
+  assert.equal(envelope.account, FLOYD_KEYCHAIN_ACCOUNTS.providers);
+  assert.equal(envelope.value, "irreplaceable-provider-keys");
+  assert.ok(envelope.staged_at);
+  // A fresh vault (next startup) restores the old value and clears the stage.
+  const recovered = new MacOSKeychainVault({ exec: fake.exec, platform: "darwin" });
+  assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), "irreplaceable-provider-keys");
+  assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+  // Explicit helper call is idempotent once the stage is spent.
+  assert.equal(MacOSKeychainVault.recoverStagedWrite(recovered), null);
+});
+
+test("successful overwrites stage the old value and then clear the backup", () => {
+  const fake = fakeKeychain();
+  const vault = new MacOSKeychainVault({ exec: fake.exec, platform: "darwin" });
+  vault.set(FLOYD_KEYCHAIN_ACCOUNTS.providers, "old-value");
+  const callsBefore = fake.calls.length;
+  vault.set(FLOYD_KEYCHAIN_ACCOUNTS.providers, "new-value");
+  // The overwrite staged the old value into the backup account mid-flight...
+  const flight = fake.calls.slice(callsBefore).map((call) => call.join(" "));
+  assert.ok(flight.some((line) => line.includes(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups)));
+  // ...and cleared it after the verified write, leaving only the new value.
+  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), "new-value");
+  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+  assert.equal(fake.values.size, 1);
+  // Recovery does nothing when the completed write is already in place: a
+  // stale envelope must never roll back a newer verified value.
+  fake.values.set(
+    FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups,
+    JSON.stringify({ account: FLOYD_KEYCHAIN_ACCOUNTS.providers, value: "old-value", staged_at: "x" }),
+  );
+  assert.equal(MacOSKeychainVault.recoverStagedWrite(vault), null);
+  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), "new-value");
+  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+});
