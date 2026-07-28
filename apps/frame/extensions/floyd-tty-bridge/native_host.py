@@ -38,6 +38,8 @@ import threading
 import time
 import atexit
 import shutil
+import stat
+from urllib.parse import urlparse
 from typing import Optional
 
 CHROME_NATIVE_MSG_MAX = 1024 * 1024  # 1 MB Chrome native messaging hard limit
@@ -55,6 +57,106 @@ OSC_RESPONSE_PREFIX = "7702;"
 _SESSION_ID = secrets.token_hex(8)
 TEMP_DIR = os.path.join(tempfile.gettempdir(), f"floyd-{_SESSION_ID}")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_CREDENTIAL_ENV_RE = re.compile(
+    r"(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|CREDENTIALS?|PASSWORD|PASS|PASSWD|COOKIE|AUTHORIZATION|PAT)(?:_|$)"
+)
+_PROVIDER_ADDRESS_ENV_RE = re.compile(r"(?:_BASE_URL|_ENDPOINT|_API_URL)$")
+_PROVIDER_CREDENTIAL_ENV = {
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"),
+    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "mistral": ("MISTRAL_API_KEY",),
+    "huggingface": ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN"),
+    "github": ("GITHUB_TOKEN", "GH_TOKEN", "COPILOT_GITHUB_TOKEN"),
+    "elevenlabs": ("ELEVENLABS_API_KEY",),
+    "zai": ("GLM_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY", "FLOYD_GLM_API_KEY"),
+    "minimax": ("MINIMAX_API_KEY", "MINIMAX_CODE_API_KEY", "MINIMAX_CODE_CN_API_KEY"),
+    "moonshot": ("MOONSHOT_API_KEY", "KIMI_API_KEY"),
+    "tavily": ("TAVILY_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "groq": ("GROQ_API_KEY",),
+    "fal": ("FAL_KEY",),
+}
+
+
+def _runtime_root():
+    configured = os.environ.get("FLOYD_RUNTIME_ROOT")
+    if configured:
+        return configured
+    installed = "/Volumes/Storage/FLOYD_RUNTIME"
+    return installed if os.path.isdir(installed) else os.path.join(os.path.expanduser("~"), ".floyd")
+
+
+def _load_vault_capability():
+    profile_path = os.path.join(_runtime_root(), "secrets", "proxy-app-profiles", "ttybridge.json")
+    metadata = os.stat(profile_path, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or metadata.st_mode & 0o077
+    ):
+        raise ValueError("TTY Bridge Vault profile must be an owner-only regular file")
+    with open(profile_path, "rb") as profile_file:
+        profile = orjson.loads(profile_file.read())
+    token = str(profile.get("proxyToken") or profile.get("token") or "").strip()
+    proxy_url = str(profile.get("proxyUrl") or profile.get("proxy") or "").strip().rstrip("/")
+    parsed = urlparse(proxy_url)
+    if not re.fullmatch(r"fv_ttybridge_[0-9a-f]{32,}", token):
+        raise ValueError("TTY Bridge Vault capability is invalid")
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in ("localhost", "127.0.0.1", "::1")
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("TTY Bridge Vault address must be loopback HTTP")
+    routes = profile.get("providerRoutes")
+    if not isinstance(routes, dict):
+        raise ValueError("TTY Bridge Vault profile has no provider routes")
+    for provider, route in routes.items():
+        route_url = urlparse(str(route))
+        if route_url.scheme != "http" or route_url.hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError(f"TTY Bridge Vault route is invalid for {provider}")
+    return token, proxy_url, routes
+
+
+def _vault_child_env(source):
+    """Vault wins last for every terminal and MCP child."""
+    env = {
+        key: value
+        for key, value in source.items()
+        if not _CREDENTIAL_ENV_RE.search(key.upper())
+        and not _PROVIDER_ADDRESS_ENV_RE.search(key.upper())
+        and key.upper() not in (
+            "AWS_ACCESS_KEY_ID",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "AZURE_CLIENT_SECRET",
+            "FAL_KEY",
+        )
+        and not key.upper().startswith((
+            "FLOYD_VAULT_",
+            "CURSEM_CREDENTIAL_PROXY_",
+            "OMP_AUTH_BROKER_",
+        ))
+    }
+    token, proxy_url, routes = _load_vault_capability()
+    env["FLOYD_VAULT_APP_ID"] = "ttybridge"
+    env["FLOYD_VAULT_PROXY_URL"] = proxy_url
+    env["FLOYD_VAULT_PROXY_TOKEN"] = token
+    env["OPENAI_BASE_URL"] = str(routes["openai"])
+    env["ANTHROPIC_BASE_URL"] = str(routes["anthropic"])
+    env["GOOGLE_GENERATIVE_AI_BASE_URL"] = str(routes["google"])
+    for provider, names in _PROVIDER_CREDENTIAL_ENV.items():
+        route = str(routes[provider])
+        env[f"FLOYD_VAULT_{provider.upper()}_BASE_URL"] = route
+        for name in names:
+            env[name] = token
+    return env
 
 # ---------------------------------------------------------------------------
 # Process Supervisor — manages background and orphaned processes
@@ -179,7 +281,7 @@ class MCPBridge:
                 return False
 
             try:
-                mcp_env = os.environ.copy()
+                mcp_env = _vault_child_env(os.environ)
                 mcp_env["MCP_TRANSPORT"] = "stdio"
 
                 self.proc = subprocess.Popen(
@@ -631,6 +733,24 @@ def chrome_to_pty(master_fd, msg):
             except OSError:
                 pass
 
+    elif msg_type == "tool_call" and msg.get("tool") == "get_vault_capability":
+        request_id = str(msg.get("requestId", "vault_" + secrets.token_hex(4)))
+        try:
+            token, proxy_url, _routes = _load_vault_capability()
+            send_message({
+                "type": "tool_response",
+                "requestId": request_id,
+                "success": True,
+                "result": {"token": token, "proxyUrl": proxy_url},
+            })
+        except Exception as error:
+            send_message({
+                "type": "tool_response",
+                "requestId": request_id,
+                "success": False,
+                "error": str(error)[:300],
+            })
+
     elif msg_type in ("browser_refresh", "execute_shell") or msg.get("tool") == "execute_shell":
         request_id = str(msg.get("requestId", "shell_" + str(int(time.time()))))
         command = str(msg.get("command", msg.get("args", {}).get("command", "")))
@@ -665,6 +785,7 @@ def chrome_to_pty(master_fd, msg):
                     stderr=subprocess.PIPE,
                     text=True,
                     preexec_fn=os.setsid,
+                    env=_vault_child_env(os.environ),
                 )
                 supervisor.add_process(proc)
                 stdout, stderr = proc.communicate(timeout=30)
@@ -771,7 +892,8 @@ def main() -> None:
         env1 = {}
 
     try:
-        # Interactive login: .zshrc vars (API keys, custom vars)
+        # Interactive login supplies normal shell conveniences. Vault routing
+        # is applied after this read, so credential variables cannot win.
         r2 = subprocess.run(
             [shell, "-li", "-c", "printenv"],
             capture_output=True,
@@ -788,6 +910,7 @@ def main() -> None:
     env = {**env2, **env1}
     if not env or "PATH" not in env:
         env = os.environ.copy()
+    env = _vault_child_env(env)
 
     # Fill in session vars that macOS injects but shells don't export
     if "TMPDIR" not in env:

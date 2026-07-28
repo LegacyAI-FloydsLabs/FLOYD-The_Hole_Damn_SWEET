@@ -3,6 +3,7 @@
 
 // Dynamic imports for xterm addons and Gemini Live
 let LiveSession = null;
+let configureVaultCapability = null;
 let FitAddon = null;
 let WebglAddon = null;
 let CanvasAddon = null;
@@ -18,8 +19,14 @@ Promise.all([
 ]).catch(err => console.warn('[Floyd] Addon loading error:', err.message));
 
 import('./live-service.js')
-  .then(mod => { LiveSession = mod.LiveSession; })
+  .then(mod => {
+    LiveSession = mod.LiveSession;
+    configureVaultCapability = mod.configureVaultCapability;
+  })
   .catch(err => console.warn('[Floyd] Live service unavailable:', err.message));
+
+// Remove the retired direct-key setting as soon as the upgraded extension runs.
+void chrome.storage.local.remove('gemini_api_key');
 
 // ─── Terminal Theme ──────────────────────────────────────────────────────────
 const TERM_THEME = {
@@ -778,12 +785,14 @@ document.getElementById('btn-live')?.addEventListener('click', async () => {
     return;
   }
 
-  const data = await chrome.storage.local.get(['gemini_api_key', 'live_voice']);
-  if (!data.gemini_api_key) {
-    showToast('Set your Gemini API key first');
-    document.getElementById('settings-modal').classList.add('visible');
+  const capability = await sendToolCall('get_vault_capability');
+  if (!capability.success || !capability.result) {
+    showToast('Vault capability unavailable');
+    session1.term.writeln(`\x1b[1;31m[Live failed: ${capability.error || 'Vault capability unavailable'}]\x1b[0m`);
     return;
   }
+  configureVaultCapability(capability.result);
+  const data = await chrome.storage.local.get('live_voice');
 
   session1.term.writeln('\x1b[1;33m[Starting Gemini Live session...]\x1b[0m');
   btnLive.classList.add('live-active');
@@ -948,21 +957,19 @@ document.getElementById('btn-camera')?.addEventListener('click', async () => {
 
 document.getElementById('btn-settings')?.addEventListener('click', async () => {
   const modal = document.getElementById('settings-modal');
-  const keyInput = document.getElementById('input-api-key');
   const voiceInput = document.getElementById('input-voice');
-  const data = await chrome.storage.local.get(['gemini_api_key', 'live_voice']);
-  keyInput.value = data.gemini_api_key || '';
+  const data = await chrome.storage.local.get('live_voice');
   voiceInput.value = data.live_voice || 'Puck';
   modal.classList.add('visible');
 });
 
 document.getElementById('btn-settings-save')?.addEventListener('click', async () => {
-  const key = document.getElementById('input-api-key').value.trim();
   const voice = document.getElementById('input-voice').value.trim() || 'Puck';
-  await chrome.storage.local.set({ gemini_api_key: key, live_voice: voice });
+  await chrome.storage.local.set({ live_voice: voice });
+  await chrome.storage.local.remove('gemini_api_key');
   document.getElementById('settings-modal').classList.remove('visible');
   showToast('Settings saved');
-  session1.term.writeln(`\x1b[1;32m[Settings saved — key ${key ? 'set' : 'cleared'}, voice: ${voice}]\x1b[0m`);
+  session1.term.writeln(`\x1b[1;32m[Settings saved — Vault managed, voice: ${voice}]\x1b[0m`);
 });
 
 document.getElementById('btn-settings-cancel')?.addEventListener('click', () => {

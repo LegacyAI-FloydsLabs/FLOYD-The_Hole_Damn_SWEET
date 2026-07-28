@@ -218,7 +218,7 @@ function handlePanelMessage(port, msg) {
 
   if (msg.type === 'tool_call') {
     // Shell commands route to native host (session 1 by default)
-    if (msg.tool === 'execute_shell') {
+    if (msg.tool === 'execute_shell' || msg.tool === 'get_vault_capability') {
       const np = nativePorts[1] || nativePorts[2];
       if (np) {
         np.postMessage(msg);

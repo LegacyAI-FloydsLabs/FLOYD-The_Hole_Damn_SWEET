@@ -15,18 +15,28 @@ import { LIVE_VISION_TOOLS } from './vision-tools.js';
 // ---------------------------------------------------------------------------
 
 let _genAI = null;
+let _vaultCapability = null;
+
+export function configureVaultCapability(capability) {
+  const token = String(capability?.token || '').trim();
+  const proxyUrl = String(capability?.proxyUrl || '').trim().replace(/\/+$/, '');
+  if (!/^fv_ttybridge_[0-9a-f]{32,}$/.test(token)) throw new Error('TTY Bridge Vault capability is invalid.');
+  const parsed = new URL(proxyUrl);
+  if (parsed.protocol !== 'http:' || !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+      || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('TTY Bridge Vault address must be loopback HTTP.');
+  }
+  if (_vaultCapability?.token !== token || _vaultCapability?.proxyUrl !== proxyUrl) _genAI = null;
+  _vaultCapability = { token, proxyUrl };
+}
 
 async function getGenAI() {
   if (_genAI) return _genAI;
-
-  const result = await chrome.storage.local.get('gemini_api_key');
-  const apiKey = result.gemini_api_key;
-  if (!apiKey) {
-    throw new Error(
-      'Missing Gemini API key. Set "gemini_api_key" in chrome.storage.local before calling Gemini services.',
-    );
-  }
-  _genAI = new GoogleGenAI({ apiKey });
+  if (!_vaultCapability) throw new Error('TTY Bridge Vault capability is unavailable.');
+  _genAI = new GoogleGenAI({
+    apiKey: _vaultCapability.token,
+    httpOptions: { baseUrl: `${_vaultCapability.proxyUrl}/p/google` },
+  });
   return _genAI;
 }
 
