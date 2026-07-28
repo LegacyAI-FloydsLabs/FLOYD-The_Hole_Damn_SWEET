@@ -3,45 +3,57 @@
  *
  * This module deliberately uses only web-platform JavaScript so the browser
  * driver and the Node loopback relay execute the exact same routing rules.
- * API keys are never accepted here: credentials remain HTTP headers and are
- * handled only at the browser/relay boundary.
+ * API keys and vendor origins are never accepted here. Every definition is a
+ * Vault loopback route; the relay owns the application capability.
  */
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 
 export const PROVIDERS = Object.freeze({
-  'opencode-go': Object.freeze({
-    id: 'opencode-go',
-    label: 'OpenCode Go',
-    baseUrl: 'https://opencode.ai/zen/go/v1',
-    model: 'deepseek-v4-flash',
-    dialect: 'auto',
-  }),
-  'opencode-zen': Object.freeze({
-    id: 'opencode-zen',
-    label: 'OpenCode Zen',
-    baseUrl: 'https://opencode.ai/zen/v1',
-    model: 'deepseek-v4-flash-free',
-    dialect: 'auto',
-  }),
   openai: Object.freeze({
     id: 'openai',
     label: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4.1-mini',
+    baseUrl: 'http://127.0.0.1:13031/v1',
+    model: 'gpt-5.2-codex',
     dialect: 'openai',
   }),
   anthropic: Object.freeze({
     id: 'anthropic',
     label: 'Anthropic',
-    baseUrl: 'https://api.anthropic.com/v1',
+    baseUrl: 'http://127.0.0.1:13031/p/anthropic/v1',
     model: 'claude-sonnet-4-6',
     dialect: 'anthropic',
+  }),
+  deepseek: Object.freeze({
+    id: 'deepseek', label: 'DeepSeek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'deepseek-chat', dialect: 'openai',
+  }),
+  mistral: Object.freeze({
+    id: 'mistral', label: 'Mistral', baseUrl: 'http://127.0.0.1:13031/p/mistral/v1', model: 'mistral-large-latest', dialect: 'openai',
+  }),
+  huggingface: Object.freeze({
+    id: 'huggingface', label: 'Hugging Face', baseUrl: 'http://127.0.0.1:13031/p/huggingface/v1', model: '', dialect: 'openai',
+  }),
+  zai: Object.freeze({
+    id: 'zai', label: 'Z.ai', baseUrl: 'http://127.0.0.1:13031/p/zai/api/coding/paas/v4', model: 'glm-4.7', dialect: 'openai',
+  }),
+  minimax: Object.freeze({
+    id: 'minimax', label: 'MiniMax', baseUrl: 'http://127.0.0.1:13031/p/minimax/anthropic/v1', model: 'MiniMax-M3', dialect: 'anthropic',
+  }),
+  moonshot: Object.freeze({
+    id: 'moonshot', label: 'Kimi', baseUrl: 'http://127.0.0.1:13031/p/moonshot/v1', model: 'kimi-k2.5', dialect: 'openai',
+  }),
+  openrouter: Object.freeze({
+    id: 'openrouter', label: 'OpenRouter', baseUrl: 'http://127.0.0.1:13031/p/openrouter/v1', model: '', dialect: 'openai',
+  }),
+  xai: Object.freeze({
+    id: 'xai', label: 'xAI', baseUrl: 'http://127.0.0.1:13031/p/xai/v1', model: 'grok-4', dialect: 'openai',
+  }),
+  groq: Object.freeze({
+    id: 'groq', label: 'Groq', baseUrl: 'http://127.0.0.1:13031/p/groq/openai/v1', model: '', dialect: 'openai',
   }),
 });
 
 const ANTHROPIC_MODEL = /(^|[/:._-])(anthropic|claude|minimax-m(?:2(?:\.5|\.7)?|3)|qwen3\.(?:6|7)(?:-max|-plus)?)([/:._-]|$)/i;
-const RESPONSES_ONLY_MODEL = /^(gpt-5(?:\.\d+)?(?:-codex)?|gpt-5-pro)$/i;
 const KNOWN_SUFFIX = /\/(?:chat\/completions|messages)\/?$/i;
 
 export class RoutingConfigurationError extends Error {
@@ -67,8 +79,8 @@ export function normalizeBaseUrl(value) {
   } catch {
     throw new RoutingConfigurationError('API base URL must be an absolute URL.');
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new RoutingConfigurationError('API base URL must use http or https.');
+  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) {
+    throw new RoutingConfigurationError('Provider routes must use the local Vault listener.');
   }
   if (url.username || url.password || url.hash || url.search) {
     throw new RoutingConfigurationError('API base URL cannot contain credentials, a query, or a fragment.');
@@ -105,9 +117,6 @@ export function buildUpstreamRequest(config, request) {
   const model = String(config.model || '').trim();
   if (!model) throw new RoutingConfigurationError('Model is required.');
   const dialect = detectDialect({ ...config, model });
-  if (dialect === 'openai' && RESPONSES_ONLY_MODEL.test(model) && /opencode\.ai/i.test(baseUrl)) {
-    throw new RoutingConfigurationError(`${model} uses the Responses API on OpenCode. Choose a Chat Completions model or set a compatible endpoint.`);
-  }
   const messages = Array.isArray(request.messages) ? request.messages.map(coerceMessage) : [];
   if (!messages.some((message) => message.role !== 'system')) {
     throw new RoutingConfigurationError('At least one user or assistant message is required.');

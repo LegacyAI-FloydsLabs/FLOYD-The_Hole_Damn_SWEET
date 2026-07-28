@@ -65,4 +65,21 @@ if [ -f "$AGENT_HOME/env.sh" ]; then
 fi
 
 export FLOYD_GLOBAL_DATA="$RUNTIME/config"
-exec "$REAL" -D "$RUNTIME/data" "$@"
+PROFILE=${FLOYD_VAULT_APP_PROFILE:-"$HOME/.floyd/secrets/proxy-app-profiles/launcher.json"}
+for a in "$@"; do
+  case "$a" in
+    login)
+      exec "$NODE" "$AGENTS_DIR/../../../../scripts/vault-provider-handoff.mjs" launcher login
+      ;;
+    update-providers)
+      exec "$NODE" "$AGENTS_DIR/../../../../scripts/update-floyd-providers-with-vault.mjs" \
+        launcher "$PROFILE" "$REAL" "$RUNTIME/config" "$@"
+      ;;
+    -D|-D=*|--data-dir|--data-dir=*)
+      echo "floyd-agent: alternate data-dir controls can bypass the managed Vault configuration" >&2
+      exit 64
+      ;;
+  esac
+done
+exec "$NODE" "$AGENTS_DIR/../../../../scripts/run-with-vault-environment.mjs" \
+  launcher "$PROFILE" "$REAL" -D "$RUNTIME/data" "$@"

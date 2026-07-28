@@ -3,8 +3,6 @@ import { ProviderHttpError, UnifiedModelClient } from './UnifiedModelClient';
 import type { RoutingPolicy } from './runtimeConfig';
 
 export type PolicyRoutingConfig = RoutingConfig & {
-  apiKey: string;
-  credentialMode?: 'user' | 'host';
   routingPolicy?: RoutingPolicy;
 };
 
@@ -34,9 +32,7 @@ function publish(decision: RoutingDecision): void {
 /**
  * Policy layer for every interactive AI surface. A fallback is allowed only
  * before the provider emits text, so a partial answer is never silently mixed
- * with a second provider's output. User-key mode intentionally stays on the
- * configured endpoint because CURSEM has no authority to reuse that key at a
- * different vendor. Host-key mode may route among configured host providers.
+ * with a second provider's output. Every candidate uses the Vault-owned relay.
  */
 export class PolicyModelClient {
   private readonly latencyEma = new Map<ProviderId, number>();
@@ -66,7 +62,7 @@ export class PolicyModelClient {
         lastError = error;
         const elapsedMs = Math.round(performance.now() - startedAt);
         publish({ policy, providerId: candidate.providerId, model: candidate.model, attempt: index + 1, reason: 'failed', elapsedMs, error: error instanceof Error ? error.message : String(error) });
-        if (signal?.aborted || emittedText || index === candidates.length - 1 || !isRetryable(error, candidate.credentialMode === 'host')) throw error;
+        if (signal?.aborted || emittedText || index === candidates.length - 1 || !isRetryable(error)) throw error;
       }
     }
     throw lastError instanceof Error ? lastError : new Error('No model provider was available.');
@@ -78,15 +74,13 @@ export class PolicyModelClient {
 
   private candidates(config: PolicyRoutingConfig, policy: RoutingPolicy): PolicyRoutingConfig[] {
     const active = { ...config, routingPolicy: policy };
-    if (policy === 'manual' || config.credentialMode !== 'host') return [active];
+    if (policy === 'manual') return [active];
 
     const defaults = (Object.values(PROVIDERS) as Array<(typeof PROVIDERS)[ProviderId]>).map((provider) => ({
       providerId: provider.id,
       baseUrl: provider.baseUrl,
       model: provider.model,
       dialect: provider.dialect,
-      apiKey: '',
-      credentialMode: 'host' as const,
       routingPolicy: policy,
     }));
     const preferred = policy === 'cost-first'
@@ -120,13 +114,13 @@ function deduplicate(candidates: PolicyRoutingConfig[]): PolicyRoutingConfig[] {
 }
 
 function costRank(providerId: ProviderId): number {
-  return providerId === 'opencode-go' ? 0 : providerId === 'opencode-zen' ? 1 : providerId === 'openai' ? 2 : 3;
+  return providerId === 'groq' ? 0 : providerId === 'deepseek' ? 1 : providerId === 'openai' ? 2 : 3;
 }
 
-function isRetryable(error: unknown, hostManaged: boolean): boolean {
+function isRetryable(error: unknown): boolean {
   if (error instanceof DOMException && error.name === 'AbortError') return false;
   if (error instanceof ProviderHttpError) {
-    if (hostManaged && (error.status === 401 || error.status === 403)) return true;
+    if (error.status === 401 || error.status === 403) return true;
     return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
   }
   return error instanceof TypeError;

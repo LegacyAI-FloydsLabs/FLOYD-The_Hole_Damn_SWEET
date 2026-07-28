@@ -1,7 +1,5 @@
 import {
-  ANTHROPIC_VERSION,
   SSEDecoder,
-  detectDialect,
   normalizeUsageMetrics,
   type ConversationRequest,
   type RoutingConfig,
@@ -30,9 +28,8 @@ export class ProviderHttpError extends Error {
 
 /**
  * Browser-side provider driver. It never contacts a vendor origin directly:
- * every request is sent to the same-origin loopback relay. Credentials stay in
- * component memory and in transit headers; they are not placed in JSON or any
- * browser storage mechanism.
+ * every request is sent to the same-origin loopback relay. The browser never
+ * accepts or transmits provider credentials.
  */
 export class UnifiedModelClient {
   constructor(
@@ -41,28 +38,17 @@ export class UnifiedModelClient {
   ) {}
 
   async *stream(
-    config: RoutingConfig & { apiKey: string; credentialMode?: 'user' | 'host' },
+    config: RoutingConfig,
     request: ConversationRequest,
     signal?: AbortSignal,
   ): AsyncGenerator<UnifiedEvent> {
-    const credentialMode = 'credentialMode' in config && config.credentialMode === 'host' ? 'host' : 'user';
-    const apiKey = config.apiKey.trim();
-    if (credentialMode === 'user' && !apiKey) throw new Error('An API key is required for the selected provider.');
-    const dialect = detectDialect(config);
     const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (credentialMode === 'user' && dialect === 'anthropic') {
-      headers['x-api-key'] = apiKey;
-      headers['anthropic-version'] = ANTHROPIC_VERSION;
-    } else if (credentialMode === 'user') {
-      headers.authorization = `Bearer ${apiKey}`;
-    }
 
     const response = await this.fetchImpl(this.gatewayPath, {
       method: 'POST',
       headers,
       signal,
       body: JSON.stringify({
-        credentialMode,
         provider: {
           providerId: config.providerId,
           baseUrl: config.baseUrl,

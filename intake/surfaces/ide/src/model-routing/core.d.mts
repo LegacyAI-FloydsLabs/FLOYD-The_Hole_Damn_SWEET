@@ -1,4 +1,4 @@
-export type ProviderId = 'opencode-go' | 'opencode-zen' | 'openai' | 'anthropic';
+export type ProviderId = 'openai' | 'anthropic' | 'deepseek' | 'mistral' | 'huggingface' | 'zai' | 'minimax' | 'moonshot' | 'openrouter' | 'xai' | 'groq';
 export type Dialect = 'auto' | 'openai' | 'anthropic';
 export type ResolvedDialect = Exclude<Dialect, 'auto'>;
 export interface ProviderDefinition { id: ProviderId; label: string; baseUrl: string; model: string; dialect: Dialect }

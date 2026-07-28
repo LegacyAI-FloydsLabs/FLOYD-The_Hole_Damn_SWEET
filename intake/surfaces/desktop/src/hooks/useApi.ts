@@ -39,22 +39,14 @@ export function useApi() {
 
   const updateSettings = useCallback(async (settings: Partial<{
     provider: 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
-    apiKey: string;
+    connectorId: string;
     model: string;
     systemPrompt: string;
     maxTokens: number;
-    baseURL: string;
   }>) => {
     return fetchJson<{ success: boolean }>('/settings', {
       method: 'POST',
       body: JSON.stringify(settings),
-    });
-  }, [fetchJson]);
-
-  const testApiKey = useCallback(async (apiKey: string, provider?: string) => {
-    return fetchJson<{ success: boolean; model?: string; message?: string; error?: string }>('/test-key', {
-      method: 'POST',
-      body: JSON.stringify({ apiKey, provider: provider || 'anthropic' }),
     });
   }, [fetchJson]);
 
@@ -228,7 +220,6 @@ export function useApi() {
     checkHealth,
     getSettings,
     updateSettings,
-    testApiKey,
     getSessions,
     createSession,
     getSession,

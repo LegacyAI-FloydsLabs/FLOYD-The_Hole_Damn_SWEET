@@ -285,7 +285,20 @@ function forwardPtyData(session, ws, data) {
 function resolvePtyConfig(cwd, env = {}) {
   let workingDir = cwd || process.env.HOME || os.homedir();
   if (!fs.existsSync(workingDir)) workingDir = os.homedir();
-  const ptyEnv = { ...process.env, TERM: 'xterm-256color', ...env };
+  const requested = { ...process.env, TERM: 'xterm-256color', ...env };
+  const protectedEnvironment = (name) => {
+    const normalized = String(name).toUpperCase();
+    return /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|CREDENTIALS?|PASSWORD|PASS|PASSWD|COOKIE|AUTHORIZATION|PAT)(?:_|$)/.test(normalized)
+      || /(?:_BASE_URL|_ENDPOINT|_API_URL)$/.test(normalized)
+      || normalized.startsWith('FLOYD_VAULT_')
+      || normalized.startsWith('CURSEM_CREDENTIAL_PROXY_')
+      || normalized.startsWith('OMP_AUTH_BROKER_')
+      || ['AWS_ACCESS_KEY_ID', 'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_SECRET', 'FAL_KEY'].includes(normalized);
+  };
+  for (const name of Object.keys(requested)) {
+    if (protectedEnvironment(name)) delete requested[name];
+  }
+  const ptyEnv = requested;
   const shell = process.env.SHELL || SHELL_FALLBACK;
   return { workingDir, ptyEnv, shell };
 }
@@ -501,7 +514,18 @@ app.post('/admin/sessions/:id/kill', (req, res) => {
 // ─── HTTP + WebSocket server ────────────────────────────────────────────────
 
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const allowedWebSocketOrigins = new Set([
+  `http://127.0.0.1:${PORT}`,
+  `http://localhost:${PORT}`,
+]);
+const wss = new WebSocket.Server({
+  server,
+  verifyClient: ({ origin, req }, done) => {
+    const hostAllowed = [`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(String(req.headers.host || ''));
+    const testOverride = process.env.FLOYD_LAUNCHER_TEST_ALLOW_NO_ORIGIN === '1' && !origin;
+    done(Boolean(hostAllowed && (allowedWebSocketOrigins.has(origin) || testOverride)), 403, 'same-origin launcher WebSocket required');
+  },
+});
 
 wss.on('connection', (ws) => {
   const sessionId = crypto.randomUUID();

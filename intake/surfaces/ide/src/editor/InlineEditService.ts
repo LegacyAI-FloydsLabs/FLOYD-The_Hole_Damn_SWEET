@@ -9,7 +9,6 @@ export class InlineEditService {
 
   async rewrite(request: InlineEditRequestDetail, instruction: string, signal: AbortSignal): Promise<string> {
     const config = getRuntimeModelConfig();
-    if (config.credentialMode === 'user' && !config.apiKey.trim()) throw new Error('Enter a one-off provider key or enable the credential proxy in the CURSEM coding partner before using Inline Edit.');
     const start = offsetAt(request.fullContent, request.startLine, request.startCol);
     const end = offsetAt(request.fullContent, request.endLine, request.endCol);
     const prefix = request.fullContent.slice(Math.max(0, start - 8000), start);

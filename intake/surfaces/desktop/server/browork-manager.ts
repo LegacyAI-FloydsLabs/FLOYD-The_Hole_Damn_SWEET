@@ -17,6 +17,7 @@ import {
   toolResult as chatgptToolResult,
   type ResponseInputItem,
 } from './chatgpt-subscription.js';
+import { vaultConnectorBaseURL } from './vault-model-connectors.js';
 
 export type Provider = 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
 
@@ -63,9 +64,11 @@ export class BroworkManager {
   private runningCount = 0;
   private config: BroworkConfig = DEFAULT_CONFIG;
   private toolExecutor: ToolExecutor;
-  private apiKey: string = '';
+  private vaultToken: string = '';
+  private vaultUrl: string = '';
   private model: string = 'claude-sonnet-4-5-20250514';
   private provider: Provider = 'anthropic';
+  private connectorId?: string;
   private chatgptClient: ChatGPTSubscriptionClient | null = null;
   private onUpdate?: (task: AgentTask) => void;
 
@@ -73,10 +76,14 @@ export class BroworkManager {
     this.toolExecutor = toolExecutor;
   }
 
-  setApiKey(key: string) { this.apiKey = key; }
-  setBaseURL(url: string | undefined) { /* no-op for now unless we add support */ }
+  configureVault(token: string, url: string) {
+    if (!/^fv_/.test(token) || !/^http:\/\/127\.0\.0\.1:\d+$/.test(url)) throw new Error('Browork requires Vault routing');
+    this.vaultToken = token;
+    this.vaultUrl = url.replace(/\/+$/, '');
+  }
   setModel(model: string) { this.model = model; }
   setProvider(provider: Provider) { this.provider = provider; }
+  setConnector(connectorId?: string) { this.connectorId = connectorId; }
   setChatGPTClient(client: ChatGPTSubscriptionClient) { this.chatgptClient = client; }
   setConfig(config: Partial<BroworkConfig>) { this.config = { ...this.config, ...config }; }
   setUpdateCallback(cb: (task: AgentTask) => void) { this.onUpdate = cb; }
@@ -105,7 +112,10 @@ export class BroworkManager {
     }
     if (this.provider === 'chatgpt-subscription') {
       if (!this.chatgptClient) throw new Error('ChatGPT client not configured');
-    } else if (!this.apiKey) throw new Error('API key not configured');
+    } else if (!this.vaultToken || !this.vaultUrl) throw new Error('Vault route not configured');
+    if (this.provider === 'anthropic-compatible' && !this.connectorId) {
+      throw new Error('Anthropic-compatible Browork requires a configured Vault connector');
+    }
 
     task.status = 'running';
     task.started = Date.now();
@@ -216,7 +226,12 @@ Work step by step and complete the task.`;
   }
 
   private async runAnthropicAgent(task: AgentTask, systemPrompt: string): Promise<void> {
-    const client = new Anthropic({ apiKey: this.apiKey });
+    const client = new Anthropic({
+      apiKey: this.vaultToken,
+      baseURL: this.provider === 'anthropic-compatible'
+        ? vaultConnectorBaseURL(this.vaultUrl, this.connectorId ?? '')
+        : `${this.vaultUrl}/p/anthropic`,
+    });
     const agentTools = [...BUILTIN_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
     const tools = agentTools.map(tool => ({
       name: tool.name,
@@ -357,8 +372,8 @@ Work step by step and complete the task.`;
 
   private async runOpenAIAgent(task: AgentTask, systemPrompt: string): Promise<void> {
     const client = new OpenAI({ 
-      apiKey: this.apiKey,
-      baseURL: this.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+      apiKey: this.vaultToken,
+      baseURL: this.provider === 'glm' ? `${this.vaultUrl}/p/zai/api/coding/paas/v4` : `${this.vaultUrl}/v1`,
     });
     const agentTools = [...BUILTIN_TOOLS, ...(gatewayAvailable() ? GATEWAY_TOOLS : [])];
     const tools = agentTools.map(tool => ({

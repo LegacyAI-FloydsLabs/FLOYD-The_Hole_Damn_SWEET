@@ -1,61 +1,80 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AIChatPane, buildSystemPrompt, selectConversationHistory } from '@/opencode';
 import { HostProvider } from '@/platform/HostProvider';
 import { MockHostGateway } from '@/platform/host';
 
+const VAULT_CATALOG = {
+  proxyUrl: 'http://127.0.0.1:13031',
+  providers: [
+    { id: 'anthropic', configured: true, protocol: 'anthropic', proxyPath: '/p/anthropic/v1', models: ['claude-sonnet-4-6'] },
+    { id: 'zai', configured: true, protocol: 'openai', proxyPath: '/p/zai/api/coding/paas/v4', models: ['glm-4.7'] },
+  ],
+};
+
+function catalogResponse(): Response {
+  return new Response(JSON.stringify(VAULT_CATALOG), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 describe('CURSEM coding partner pane', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/vault/catalog') return catalogResponse();
+      throw new Error(`unexpected request: ${String(input)}`);
+    }));
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it('exposes all four providers, memory-only key input, dialect override, and context control', async () => {
+  it('exposes only configured Vault routes and no direct credential controls', async () => {
     const gateway = new MockHostGateway();
     render(<HostProvider config={gateway.config} gateway={gateway}><AIChatPane /></HostProvider>);
-    await act(async () => undefined);
+    await waitFor(() => expect(screen.getByLabelText('Provider')).toBeEnabled());
     const provider = screen.getByLabelText('Provider') as HTMLSelectElement;
-    expect(Array.from(provider.options).map((option) => option.text)).toEqual(['OpenCode Go', 'OpenCode Zen', 'OpenAI', 'Anthropic']);
-    expect(screen.getByLabelText('Provider API key')).toHaveAttribute('type', 'password');
-    expect(screen.getByLabelText('Use credential proxy')).toBeChecked();
-    expect(screen.getByLabelText('Provider API key')).toBeDisabled();
-    expect(screen.getByLabelText('Dialect')).toBeInTheDocument();
+    expect(Array.from(provider.options).map((option) => option.text)).toEqual(['Anthropic', 'Z.ai']);
+    expect(screen.queryByLabelText('Provider API key')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('API base URL')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Dialect')).not.toBeInTheDocument();
     expect(Array.from((screen.getByLabelText('Mode') as HTMLSelectElement).options).map((option) => option.text)).toEqual(['Ask', 'Edit active file', 'Agent']);
     expect(screen.getByLabelText('Model')).toHaveValue('claude-sonnet-4-6');
-    expect(screen.getByText(/Provider credentials remain in the credential proxy/)).toBeInTheDocument();
+    expect(screen.getByText(/credentials, addresses, and protocol are supplied by the local Vault/)).toBeInTheDocument();
     expect(screen.getByLabelText('include context')).toBeEnabled();
   });
 
-  it('switches provider invariants and refuses to send without a key', async () => {
+  it('fails closed when the Vault catalog is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unavailable', { status: 503 })));
     const gateway = new MockHostGateway();
     render(<HostProvider config={gateway.config} gateway={gateway}><AIChatPane /></HostProvider>);
-    await act(async () => undefined);
-    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'anthropic' } });
-    expect(screen.getByLabelText('API base URL')).toHaveValue('https://api.anthropic.com/v1');
-    expect(screen.getByLabelText('Model')).toHaveValue('claude-sonnet-4-6');
-    fireEvent.click(screen.getByLabelText('Use credential proxy'));
     fireEvent.change(screen.getByLabelText('Message CURSEM'), { target: { value: 'Review this code' } });
-    fireEvent.click(screen.getByRole('button', { name: /Send/ }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter the provider API key');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Vault catalog HTTP 503'));
+    expect(screen.getByRole('button', { name: /Send/ })).toBeDisabled();
+    expect(screen.getByLabelText('Provider')).toBeDisabled();
   });
 
-  it('streams a response through the gateway when a user API key is supplied', async () => {
+  it('streams through the same-origin gateway without a browser credential', async () => {
     const encoder = new TextEncoder();
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(encoder.encode('event: delta\ndata: {"type":"delta","text":"assistant works"}\n\n'));
-        controller.enqueue(encoder.encode('event: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
-        controller.close();
-      },
-    }), { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input) === '/api/vault/catalog') return catalogResponse();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: delta\ndata: {"type":"delta","text":"assistant works"}\n\n'));
+          controller.enqueue(encoder.encode('event: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
+          controller.close();
+        },
+      }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
     vi.stubGlobal('fetch', fetchMock);
     const gateway = new MockHostGateway();
     const appendEvent = vi.spyOn(gateway, 'agentAppendEvent');
     render(<HostProvider config={gateway.config} gateway={gateway}><AIChatPane /></HostProvider>);
-    await act(async () => undefined);
+    await waitFor(() => expect(screen.getByText('Vault ready')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByLabelText('Use credential proxy'));
-    fireEvent.change(screen.getByLabelText('Provider API key'), { target: { value: 'fake-key' } });
     fireEvent.change(screen.getByLabelText('Message CURSEM'), { target: { value: 'Say hello' } });
     vi.spyOn(performance, 'now').mockReturnValueOnce(1_000).mockReturnValue(1_025);
     fireEvent.click(screen.getByRole('button', { name: /Send/ }));
@@ -63,32 +82,44 @@ describe('CURSEM coding partner pane', () => {
     await waitFor(() => expect(screen.getByText('assistant works')).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledWith('/gateway', expect.objectContaining({
       method: 'POST',
-      headers: expect.objectContaining({ 'x-api-key': 'fake-key', 'anthropic-version': '2023-06-01' }),
+      headers: { 'content-type': 'application/json' },
     }));
-    expect(String(fetchMock.mock.calls[0][1]?.body)).not.toContain('fake-key');
+    const gatewayCall = fetchMock.mock.calls.find(([input]) => String(input) === '/gateway');
+    expect(gatewayCall).toBeDefined();
+    expect(String(gatewayCall?.[1]?.body)).not.toMatch(/apiKey|api_key|credentialMode|authorization/i);
+    expect(JSON.parse(String(gatewayCall?.[1]?.body))).toMatchObject({
+      provider: {
+        providerId: 'anthropic',
+        baseUrl: 'http://127.0.0.1:13031/p/anthropic/v1',
+      },
+    });
     expect(appendEvent).toHaveBeenCalledWith(expect.any(String), 'model.first_token', { elapsedMs: 25 });
   });
 
-  it('uses the credential proxy by default, transmits no browser key, and rejects an empty provider completion', async () => {
+  it('rejects an empty completion while transmitting no browser credential', async () => {
     const encoder = new TextEncoder();
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(new ReadableStream({
-      start(controller) {
-        controller.enqueue(encoder.encode('event: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
-        controller.close();
-      },
-    }), { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input) === '/api/vault/catalog') return catalogResponse();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
+          controller.close();
+        },
+      }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
     vi.stubGlobal('fetch', fetchMock);
     const gateway = new MockHostGateway();
     render(<HostProvider config={gateway.config} gateway={gateway}><AIChatPane /></HostProvider>);
-    await act(async () => undefined);
+    await waitFor(() => expect(screen.getByText('Vault ready')).toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText('Message CURSEM'), { target: { value: 'Use the saved key' } });
     fireEvent.click(screen.getByRole('button', { name: /Send/ }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/gateway', expect.any(Object)));
+    const gatewayCall = fetchMock.mock.calls.find(([input]) => String(input) === '/gateway');
+    const init = gatewayCall?.[1] as RequestInit;
     expect(init.headers).not.toHaveProperty('authorization');
-    expect(JSON.parse(String(init.body))).toMatchObject({ credentialMode: 'host' });
+    expect(String(init.body)).not.toMatch(/apiKey|api_key|credentialMode|authorization/i);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('without returning visible text'));
     expect(screen.queryByText('The provider completed without returning text.')).not.toBeInTheDocument();
   });
@@ -145,7 +176,7 @@ describe('CURSEM coding partner pane', () => {
     fireEvent.change(screen.getByLabelText('Conversation history'), { target: { value: 'old-thread' } });
     await waitFor(() => expect(screen.getByText('stale mock transcript')).toBeInTheDocument());
     expect(getThread).toHaveBeenCalledWith('old-thread');
-    expect(screen.getByText('proxy ready')).toBeInTheDocument();
+    expect(screen.getByText('Vault ready')).toBeInTheDocument();
     expect(screen.queryByText(/preparing ·/)).not.toBeInTheDocument();
   });
 

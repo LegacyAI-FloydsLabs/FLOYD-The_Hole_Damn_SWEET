@@ -21,7 +21,7 @@ describe('foreground Agent tool loop', () => {
     const output: string[] = [];
     const result = await runner.run({
       gateway, client: client as never, runId: 'run-1', workspaceRoot: '/test/workspace',
-      routing: { providerId: 'opencode-go', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'test', dialect: 'openai', apiKey: 'key' },
+      routing: { providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'test', dialect: 'openai' },
       messages: [{ role: 'system', content: 'tools' }, { role: 'user', content: 'find main' }], signal: new AbortController().signal,
       onDelta: (text) => output.push(text),
     });
@@ -46,7 +46,7 @@ describe('foreground Agent tool loop', () => {
     const runner = new AgentRunner();
     const pending = runner.run({
       gateway, client: client as never, runId: 'run-1', workspaceRoot: '/test/workspace',
-      routing: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'test', dialect: 'openai', apiKey: 'key' },
+      routing: { providerId: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'test', dialect: 'openai' },
       messages: [{ role: 'user', content: 'start' }], signal: new AbortController().signal,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -70,7 +70,7 @@ describe('foreground Agent tool loop', () => {
     const runner = new AgentRunner();
     const result = await runner.run({
       gateway, client: client as never, runId: 'run-edit', workspaceRoot: '/test/workspace',
-      routing: { providerId: 'opencode-go', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'test', dialect: 'openai', apiKey: 'key' },
+      routing: { providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'test', dialect: 'openai' },
       messages: [{ role: 'system', content: 'edit with tools' }, { role: 'user', content: 'change main' }],
       signal: new AbortController().signal,
       validateFinal: (text) => text.includes('<cursem-patch>') ? null : 'Return exactly one typed <cursem-patch> proposal.',
@@ -91,7 +91,7 @@ describe('foreground Agent tool loop', () => {
 
     await expect(new AgentRunner().run({
       gateway, client: client as never, runId: 'run-bounded', workspaceRoot: '/test/workspace',
-      routing: { providerId: 'opencode-go', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'test', dialect: 'openai', apiKey: 'key' },
+      routing: { providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'test', dialect: 'openai' },
       messages: [{ role: 'system', content: 'tools' }, { role: 'user', content: 'find main' }],
       signal: new AbortController().signal,
     })).rejects.toThrow('after 2 correction attempts');
@@ -103,7 +103,7 @@ describe('foreground Agent tool loop', () => {
 
     await expect(new AgentRunner().run({
       gateway, client: client as never, runId: 'run-empty', workspaceRoot: '/test/workspace',
-      routing: { providerId: 'opencode-go', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'test', dialect: 'openai', apiKey: 'key' },
+      routing: { providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'test', dialect: 'openai' },
       messages: [{ role: 'user', content: 'respond' }], signal: new AbortController().signal,
     })).rejects.toThrow('without returning visible text');
   });

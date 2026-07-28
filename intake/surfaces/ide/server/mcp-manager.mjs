@@ -1,13 +1,19 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import {
+  assertVaultToken,
+  buildVaultEnvironment,
+  normalizeVaultProxyUrl,
+  providerProxyUrl,
+} from '../../../../lib/vault-routing.mjs';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const PROTOCOL_VERSION = '2025-06-18';
 
 /** MCP manager with explicit activation and redacted configuration exposure. */
-export function createMcpManager({ workspaceRoot }) {
+export function createMcpManager({ workspaceRoot, environment = process.env }) {
   let root = workspaceRoot;
   const sessions = new Map();
 
@@ -21,7 +27,9 @@ export function createMcpManager({ workspaceRoot }) {
     for (const source of sources) {
       try {
         const parsed = JSON.parse(await readFile(source.path, 'utf8'));
-        for (const [id, raw] of Object.entries(parsed?.mcpServers || {})) merged.set(id, normalizeConfig(id, raw, source));
+        for (const [id, raw] of Object.entries(parsed?.mcpServers || {})) {
+          merged.set(id, normalizeConfig(id, raw, source, environment));
+        }
       } catch (error) {
         if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
       }
@@ -34,6 +42,7 @@ export function createMcpManager({ workspaceRoot }) {
     return Array.from(configs.values()).map((config) => ({
       id: config.id, scope: config.scope, transport: config.transport, source: config.source,
       command: config.command, args: config.args, url: config.url, envKeys: Object.keys(config.env || {}),
+      vaultTarget: config.vaultTarget,
       status: sessions.has(config.id) ? 'connected' : 'disconnected',
     }));
   }
@@ -42,7 +51,9 @@ export function createMcpManager({ workspaceRoot }) {
     if (sessions.has(id)) return sessions.get(id).info();
     const config = (await configurations()).get(id);
     if (!config) throw httpError(404, `MCP server not configured: ${id}`);
-    const session = config.transport === 'stdio' ? createStdioSession(config, root) : createHttpSession(config);
+    const session = config.transport === 'stdio'
+      ? createStdioSession(config, root, environment)
+      : createHttpSession(config);
     try { await session.initialize(); sessions.set(id, session); return session.info(); }
     catch (error) { session.close(); throw error; }
   }
@@ -71,7 +82,7 @@ export function createMcpManager({ workspaceRoot }) {
   };
 }
 
-function createStdioSession(config, workspaceRoot) {
+function createStdioSession(config, workspaceRoot, environment) {
   let child = null; let nextId = 1; let buffer = Buffer.alloc(0); const pending = new Map();
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
   const handle = (message) => {
@@ -99,7 +110,12 @@ function createStdioSession(config, workspaceRoot) {
 
   return {
     async initialize() {
-      child = spawn(config.command, config.args, { cwd: workspaceRoot, env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
+      child = spawn(config.command, config.args, {
+        cwd: workspaceRoot,
+        env: vaultWinsEnvironment(environment, config.env, config.vaultEnv),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
+      });
       child.stdout.on('data', decode); child.once('exit', (code, signal) => rejectAll(`MCP server exited (${code ?? signal}).`)); child.once('error', (error) => rejectAll(error.message));
       await new Promise((resolvePromise, reject) => { child.once('spawn', resolvePromise); child.once('error', reject); });
       await this.request('initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'CURSEM', version: '1.0.0' } });
@@ -145,22 +161,127 @@ function createHttpSession(config) {
   };
 }
 
-function normalizeConfig(id, raw, source) {
+function normalizeConfig(id, raw, source, environment) {
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(id)) throw httpError(400, `Invalid MCP server id: ${id}`);
   if (!raw || typeof raw !== 'object') throw httpError(400, `Invalid MCP configuration: ${id}`);
   if (raw.command) {
     if (typeof raw.command !== 'string' || raw.command.includes('\0')) throw httpError(400, `Invalid MCP command: ${id}`);
     const args = Array.isArray(raw.args) ? raw.args.map(String) : [];
     const env = Object.fromEntries(Object.entries(raw.env || {}).map(([key, value]) => [key, String(value)]));
-    return { id, scope: source.scope, source: source.path, transport: 'stdio', command: raw.command, args, env };
+    for (const [key, value] of Object.entries(env)) {
+      if (isCredentialName(key) || looksLikeCredential(value) || looksLikeRemoteDestination(value)) {
+        throw httpError(409, `MCP ${id} contains a direct credential or remote destination in env.${key}; import it into Floyd Vault.`);
+      }
+    }
+    const vaultEnv = normalizeVaultEnv(id, raw.vaultEnv);
+    return {
+      id, scope: source.scope, source: source.path, transport: 'stdio',
+      command: raw.command, args, env, vaultEnv,
+    };
+  }
+  const vaultTarget = raw.vault?.target;
+  if (vaultTarget !== undefined) {
+    if (typeof vaultTarget !== 'string' || !/^[A-Za-z0-9._-]{1,100}$/.test(vaultTarget)) {
+      throw httpError(400, `Invalid Vault MCP target: ${id}`);
+    }
+    if (raw.url || raw.headers) {
+      throw httpError(409, `Vault MCP ${id} cannot also contain a direct URL or headers.`);
+    }
+    const proxy = normalizeVaultProxyUrl(environment.FLOYD_VAULT_PROXY_URL);
+    const token = assertVaultToken(environment.FLOYD_VAULT_PROXY_TOKEN);
+    return {
+      id, scope: source.scope, source: source.path, transport: 'http',
+      url: `${proxy}/mcp/${encodeURIComponent(vaultTarget)}`,
+      headers: { authorization: `Bearer ${token}` },
+      vaultTarget,
+    };
   }
   if (raw.url) {
     const url = new URL(raw.url);
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1'].includes(url.hostname))) throw httpError(400, `MCP HTTP URL must use HTTPS or loopback HTTP: ${id}`);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) {
+      throw httpError(409, `Remote MCP ${id} must be imported into Floyd Vault and referenced with vault.target.`);
+    }
     const headers = Object.fromEntries(Object.entries(raw.headers || {}).map(([key, value]) => [key, String(value)]));
+    if (Object.entries(headers).some(([key, value]) => isCredentialName(key) || looksLikeCredential(value))) {
+      throw httpError(400, `MCP credentials must be provided by Floyd Vault: ${id}`);
+    }
     return { id, scope: source.scope, source: source.path, transport: 'http', url: url.toString(), headers };
   }
   throw httpError(400, `MCP server requires command or url: ${id}`);
+}
+
+function vaultWinsEnvironment(inherited, requested, vaultEnv = {}) {
+  const token = assertVaultToken(inherited.FLOYD_VAULT_PROXY_TOKEN);
+  const proxy = normalizeVaultProxyUrl(inherited.FLOYD_VAULT_PROXY_URL);
+  const env = {};
+  for (const [name, value] of Object.entries({ ...inherited, ...requested })) {
+    if (!isProtectedEnvironmentName(name)) env[name] = value;
+  }
+  Object.assign(
+    env,
+    buildVaultEnvironment('cursem-mcp', token, proxy, {
+      FLOYD_VAULT_APP_PROFILE: inherited.FLOYD_VAULT_APP_PROFILE || '',
+    }),
+  );
+  for (const [name, provider] of Object.entries(vaultEnv)) {
+    env[name] = isProviderAddressEnvironmentName(name)
+      ? providerProxyUrl(proxy, provider)
+      : token;
+  }
+  return env;
+}
+
+function normalizeVaultEnv(id, raw) {
+  if (raw === undefined) return {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw httpError(400, `Invalid vaultEnv mapping: ${id}`);
+  }
+  const result = {};
+  for (const [name, provider] of Object.entries(raw)) {
+    if (!/^[A-Z][A-Z0-9_]{0,99}$/.test(name) || typeof provider !== 'string') {
+      throw httpError(400, `Invalid vaultEnv mapping: ${id}.${name}`);
+    }
+    try {
+      providerProxyUrl('http://127.0.0.1:1', provider);
+    } catch {
+      throw httpError(400, `Unknown Vault provider in ${id}.vaultEnv.${name}`);
+    }
+    result[name] = provider;
+  }
+  return result;
+}
+
+function isCredentialName(name) {
+  return /authorization|api[-_]?key|token|secret|cookie/i.test(name)
+    || ['AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'FAL_KEY'].includes(name);
+}
+
+function isProtectedEnvironmentName(name) {
+  const normalized = String(name).toUpperCase();
+  return /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|CREDENTIALS?|PASSWORD|PASS|COOKIE|AUTHORIZATION|PAT)(?:_|$)/.test(normalized)
+    || /(?:_BASE_URL|_ENDPOINT|_API_URL)$/.test(normalized)
+    || normalized.startsWith('FLOYD_VAULT_')
+    || normalized.startsWith('CURSEM_CREDENTIAL_PROXY_')
+    || normalized.startsWith('OMP_AUTH_BROKER_')
+    || ['AWS_SESSION_TOKEN', 'FAL_KEY', 'GOOGLE_APPLICATION_CREDENTIALS'].includes(normalized);
+}
+
+function isProviderAddressEnvironmentName(name) {
+  return /(?:_BASE_URL|_ENDPOINT|_API_URL)$/i.test(String(name));
+}
+
+function looksLikeCredential(value) {
+  const text = String(value || '');
+  return /^(?:sk-|gh[pousr]_|github_pat_|AIzaSy|tvly-|hf_|xai-|gsk_|eyJ)[A-Za-z0-9._-]{8,}/.test(text);
+}
+
+function looksLikeRemoteDestination(value) {
+  try {
+    const url = new URL(String(value));
+    return !['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function parseHttpPayload(raw, contentType) {

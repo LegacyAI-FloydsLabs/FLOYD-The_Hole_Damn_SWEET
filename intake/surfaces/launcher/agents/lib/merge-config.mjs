@@ -4,19 +4,15 @@
  *
  * Usage: merge-config.mjs <base-floyd.json> <agent-overlay.json> <agent-home> <out-file>
  *
- * Deep-merges the agent overlay over the canonical Floyd data config
- * (which carries provider auth) and writes the result for FLOYD_GLOBAL_DATA.
+ * Deep-merges the agent overlay over the canonical Floyd data config and
+ * writes the result for FLOYD_GLOBAL_DATA.
  * The string token ${AGENT_HOME} inside the overlay is replaced with the
  * agent's absolute home directory so overlays stay relocatable.
  *
  * Merge rules: objects merge recursively, arrays and scalars from the
- * overlay replace the base. After the merge, provider API keys are
- * refreshed from the FLOYD provider-key VAULT (the frame's single source
- * of truth at /Volumes/Storage/FLOYD_RUNTIME/secrets/provider-keys.json)
- * so agents never run on stale keys copied into the base config.
- * Vault key wins over base-config key; base is untouched on disk.
- * Override the vault path with FLOYD_VAULT_PATH; disable injection
- * entirely with FLOYD_AGENT_NO_VAULT=1 (test instrument only).
+ * overlay replace the base. Provider authentication is then replaced by the
+ * launcher's persistent fv_ capability and loopback Vault routes. Missing
+ * Vault profile is fatal; old copied credentials are never a fallback.
  *
  * Optional: FLOYD_AGENT_EXTRA_OVERLAY=<path> merges one more overlay last.
  * Test instrument only (e.g. smoke-testing the pipeline against an
@@ -26,6 +22,11 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  assertVaultOnlyClientConfiguration,
+  buildFloydProviderConfig,
+  readVaultAppProfile,
+} from '../../../../../lib/vault-routing.mjs';
 
 const [basePath, overlayPath, agentHome, outPath] = process.argv.slice(2);
 if (!basePath || !overlayPath || !agentHome || !outPath) {
@@ -78,56 +79,28 @@ if (process.env.FLOYD_AGENT_EXTRA_OVERLAY) {
   merged = deepMerge(merged, extra);
 }
 
-// ---- VAULT key injection -------------------------------------------------
-// The frame's provider-key vault is the single source of truth for vendor
-// auth. Map vault provider ids -> floyd config provider ids and overwrite
-// any stale api_key the base config carried. Missing vault or unreadable
-// file degrades gracefully to base-config keys (manual operating path).
-if (process.env.FLOYD_AGENT_NO_VAULT !== '1') {
-  const VAULT_PATH = process.env.FLOYD_VAULT_PATH
-    || join(RUNTIME_ROOT, 'secrets', 'provider-keys.json');
-  // vault id -> floyd provider ids that share the same credential.
-  // ids: native provider ids for this vendor (inject unless repointed away).
-  // takeover: ids injected ONLY when their base_url is on this vendor's host
-  // (e.g. the base config's "anthropic" entry proxied to api.minimax.io).
-  const VAULT_MAP = {
-    zai:       { ids: ['zai', 'zhipu-coding', 'zhipu'], host: /z\.ai|bigmodel\.cn/ },
-    minimax:   { ids: ['minimax', 'minimax-china'], takeover: ['anthropic'], host: /minimax/ },
-    moonshot:  { ids: ['moonshot'], host: /moonshot/ },
-    anthropic: { ids: ['anthropic'], host: /anthropic\.com/ },
-    openai:    { ids: ['openai'], host: /openai\.com/ },
-    google:    { ids: ['gemini'], host: /googleapis\.com/ },
-    mistral:   { ids: ['codestral', 'mistral'], host: /mistral\.ai/ },
-    deepseek:  { ids: ['deepseek'], host: /deepseek/ },
-    openrouter:{ ids: ['openrouter'], host: /openrouter/ },
-    huggingface:{ ids: ['huggingface'], host: /huggingface/ },
-    xai:       { ids: ['xai'], host: /x\.ai/ },
-    groq:      { ids: ['groq'], host: /groq/ },
-  };
-  try {
-    const vault = JSON.parse(readFileSync(VAULT_PATH, 'utf8'));
-    merged.providers ||= {};
-    for (const [vaultId, { ids, takeover = [], host }] of Object.entries(VAULT_MAP)) {
-      const key = vault[vaultId]?.key;
-      if (!key) continue;
-      for (const fid of ids) {
-        const existing = merged.providers[fid];
-        // Respect repointed providers: a base_url on another vendor's host
-        // keeps its own credential (a takeover rule may claim it instead).
-        if (existing?.base_url && !host.test(existing.base_url)) continue;
-        if (existing) existing.api_key = key;
-        else merged.providers[fid] = { api_key: key };
-      }
-      for (const fid of takeover) {
-        const existing = merged.providers[fid];
-        if (existing?.base_url && host.test(existing.base_url)) existing.api_key = key;
-      }
-    }
-  } catch (err) {
-    console.error(`merge-config: vault unavailable (${err.message}); using base-config keys`);
-  }
+// ---- Vault-only routing --------------------------------------------------
+const profilePath = process.env.FLOYD_VAULT_APP_PROFILE
+  || join(RUNTIME_ROOT, 'secrets', 'proxy-app-profiles', 'launcher.json');
+let profile;
+try {
+  profile = readVaultAppProfile(readFileSync(profilePath, 'utf8'), 'launcher');
+} catch (err) {
+  console.error(`merge-config: Vault application profile unavailable (${err.message}); refusing to launch`);
+  process.exit(78);
 }
+const managedProviders = buildFloydProviderConfig(profile.token, profile.proxy);
+merged.providers = {};
+for (const [id, route] of Object.entries(managedProviders)) {
+  merged.providers[id] = route;
+}
+merged.options = {
+  ...(merged.options && typeof merged.options === 'object' ? merged.options : {}),
+  disable_default_providers: true,
+  disable_provider_auto_update: true,
+};
+assertVaultOnlyClientConfiguration(merged, 'launcher managed configuration');
 
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, JSON.stringify(merged, null, 2));
-chmodSync(outPath, 0o600); // merged file carries provider credentials
+chmodSync(outPath, 0o600); // merged file carries the app's fv_ capability

@@ -31,7 +31,7 @@ export class WebSocketMCPServer {
   private messageId = 0;
   private tools: MCPTool[] = [];
 
-  constructor(port: number = 3005) {
+  constructor(port: number = 13011) {
     this.port = port;
     this.server = createHttpServer();
     this.wss = new WebSocketServer({ server: this.server });

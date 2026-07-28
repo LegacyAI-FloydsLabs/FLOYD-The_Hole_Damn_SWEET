@@ -32,6 +32,8 @@ interface PendingProposal {
   runId: string;
 }
 
+type ProviderOption = (typeof PROVIDERS)[ProviderId];
+
 const SYSTEM_PROMPT = `You are the selected model running as CURSEM, the coding assistant inside CURSEM IDE.
 Your goal is to help the user understand, debug, edit, and verify the open codebase. Be precise, candid, and implementation-oriented. Use supplied workspace and file context when relevant, and distinguish verified code facts from recommendations.`;
 const EDIT_INSTRUCTIONS = `
@@ -109,12 +111,12 @@ export function AIChatPane() {
   const toggleAIChat = useUIStore((state) => state.toggleAIChat);
   const addToast = useUIStore((state) => state.addToast);
   const client = useMemo(() => new PolicyModelClient(), []);
+  const [vaultProviders, setVaultProviders] = useState<ProviderOption[]>([]);
+  const [vaultReady, setVaultReady] = useState(false);
   const [providerId, setProviderId] = useState<ProviderId>('anthropic');
   const [baseUrl, setBaseUrl] = useState(PROVIDERS.anthropic.baseUrl);
   const [model, setModel] = useState(PROVIDERS.anthropic.model);
   const [dialect, setDialect] = useState<Dialect>(PROVIDERS.anthropic.dialect);
-  const [apiKey, setApiKey] = useState('');
-  const [credentialMode, setCredentialMode] = useState<'user' | 'host'>('host');
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [includeContext, setIncludeContext] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -141,6 +143,7 @@ export function AIChatPane() {
   const runnerRef = useRef<AgentRunner | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const selectedProvider = vaultProviders.find((provider) => provider.id === providerId) || PROVIDERS[providerId];
 
   const resolvedDialect = useMemo(() => {
     try { return detectDialect({ providerId, baseUrl, model, dialect }); }
@@ -148,6 +151,49 @@ export function AIChatPane() {
   }, [baseUrl, dialect, model, providerId]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/vault/catalog', { headers: { accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Vault catalog HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((catalog) => {
+        if (cancelled) return;
+        const proxyUrl = String(catalog.proxyUrl || '').replace(/\/+$/, '');
+        const available = (Array.isArray(catalog.providers) ? catalog.providers : [])
+          .filter((provider: { id?: string; configured?: boolean; protocol?: string }) =>
+            provider.configured === true
+            && typeof provider.id === 'string'
+            && provider.id in PROVIDERS
+            && /openai|anthropic|responses/.test(String(provider.protocol || '')))
+          .map((provider: { id: ProviderId; proxyPath: string; models?: string[] }) => {
+            const fallback = PROVIDERS[provider.id];
+            return {
+              ...fallback,
+              baseUrl: `${proxyUrl}${provider.proxyPath}`,
+              model: provider.models?.[0] || fallback.model,
+            };
+          });
+        setVaultProviders(available);
+        setVaultReady(available.length > 0);
+        if (available.length && !available.some((provider: ProviderOption) => provider.id === providerId)) {
+          const first = available[0];
+          setProviderId(first.id);
+          setBaseUrl(first.baseUrl);
+          setModel(first.model);
+          setDialect(first.dialect);
+        }
+        if (!available.length) setLastError('Vault has no configured provider route available to CURSEM.');
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setVaultReady(false);
+          setLastError(error instanceof Error ? error.message : 'Vault catalog unavailable');
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     if (!requestPhase) return;
     const timer = window.setInterval(() => setRequestElapsedMs(Math.round(performance.now() - requestStartedAtRef.current)), 100);
@@ -165,8 +211,8 @@ export function AIChatPane() {
     setRoutingDecision(`${decision.reason}: ${PROVIDERS[decision.providerId].label} · attempt ${decision.attempt}${decision.elapsedMs === undefined ? '' : ` · ${decision.elapsedMs}ms`}`);
   }), []);
   useEffect(() => {
-    setRuntimeModelConfig({ providerId, baseUrl, model, dialect, apiKey, credentialMode, inlineCompletionEnabled, routingPolicy });
-  }, [apiKey, baseUrl, credentialMode, dialect, inlineCompletionEnabled, model, providerId, routingPolicy]);
+    setRuntimeModelConfig({ providerId, baseUrl, model, dialect, inlineCompletionEnabled, routingPolicy });
+  }, [baseUrl, dialect, inlineCompletionEnabled, model, providerId, routingPolicy]);
   useEffect(() => {
     let cancelled = false;
     void Promise.all([gateway.agentListThreads(), gateway.agentListCheckpoints(), gateway.agentListMemories()]).then(async ([available, checkpoints, savedMemories]) => {
@@ -182,16 +228,15 @@ export function AIChatPane() {
   }, [messages]);
 
   const changeProvider = useCallback((next: ProviderId) => {
-    const provider = PROVIDERS[next];
+    const provider = vaultProviders.find((candidate) => candidate.id === next);
+    if (!provider) return;
     abortRef.current?.abort();
     setProviderId(next);
     setBaseUrl(provider.baseUrl);
     setModel(provider.model);
     setDialect(provider.dialect);
-    setApiKey('');
-    setCredentialMode('host');
     setLastError(null);
-  }, []);
+  }, [vaultProviders]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -239,13 +284,7 @@ export function AIChatPane() {
 
   const send = useCallback(async () => {
     const prompt = input.trim();
-    if (!prompt || sending) return;
-    if (credentialMode === 'user' && !apiKey.trim()) {
-      setSettingsOpen(true);
-      setLastError('Enter the provider API key. It remains in memory and is not saved.');
-      return;
-    }
-
+    if (!prompt || sending || !vaultReady) return;
     const controller = new AbortController();
     abortRef.current = controller;
     requestStartedAtRef.current = performance.now();
@@ -325,7 +364,7 @@ export function AIChatPane() {
           mode,
           workspaceRoot: config.workspaceRoot,
           activeTabPath,
-          providerLabel: PROVIDERS[providerId].label,
+          providerLabel: selectedProvider.label,
           model,
         }) },
         ...selectConversationHistory(messages),
@@ -350,7 +389,7 @@ export function AIChatPane() {
         const runner = new AgentRunner(); runnerRef.current = runner;
         const result = await runner.run({
           gateway, client, runId: run.id, workspaceRoot: config.workspaceRoot,
-          routing: { providerId, baseUrl, model, dialect, apiKey, credentialMode, routingPolicy }, messages: conversation,
+          routing: { providerId, baseUrl, model, dialect, routingPolicy }, messages: conversation,
           request: { maxTokens: 4096, temperature: 0.2 }, signal: controller.signal,
           onDelta: appendDelta,
           onUsage: (nextUsage) => { finalUsage = nextUsage; setUsage(nextUsage); },
@@ -358,7 +397,7 @@ export function AIChatPane() {
         });
         assistantText = result.text; toolCalls = result.toolCalls; finalUsage = result.usage;
       } else {
-        for await (const event of client.stream({ providerId, baseUrl, model, dialect, apiKey, credentialMode, routingPolicy }, { messages: conversation, maxTokens: 4096, temperature: 0.2 }, controller.signal)) {
+        for await (const event of client.stream({ providerId, baseUrl, model, dialect, routingPolicy }, { messages: conversation, maxTokens: 4096, temperature: 0.2 }, controller.signal)) {
           if (event.type === 'delta') { assistantText += event.text; appendDelta(event.text); }
           else if (event.type === 'usage') { finalUsage = event.usage; setUsage(event.usage); }
           else if (event.type === 'error') throw new Error(formatUnknownError(event.error));
@@ -402,7 +441,7 @@ export function AIChatPane() {
       setRequestPhase(null);
       setRequestElapsedMs(0);
     }
-  }, [activeTabPath, addToast, apiKey, baseUrl, client, config.workspaceRoot, credentialMode, cursor.column, cursor.line, dialect, ensureThread, gateway, includeContext, input, memories, messages, mode, model, providerId, resolvedDialect, routingPolicy, sending]);
+  }, [activeTabPath, addToast, baseUrl, client, config.workspaceRoot, cursor.column, cursor.line, dialect, ensureThread, gateway, includeContext, input, memories, messages, mode, model, providerId, resolvedDialect, routingPolicy, selectedProvider.label, sending, vaultReady]);
 
   const saveMemory = useCallback(async () => {
     const content = memoryDraft.trim(); if (!content) return;
@@ -468,14 +507,14 @@ export function AIChatPane() {
   return (
     <aside className="ai-chat-pane" aria-label="CURSEM coding partner">
       <header className="ai-chat-header">
-        <div className="ai-chat-title"><p className="eyebrow">CODING PARTNER</p><strong>CURSEM</strong><span>{PROVIDERS[providerId].label}</span></div>
+        <div className="ai-chat-title"><p className="eyebrow">CODING PARTNER</p><strong>CURSEM</strong><span>{selectedProvider.label}</span></div>
         <div className="ai-header-actions">
           <select className="thread-picker" aria-label="Conversation history" value={threadId || ''} onChange={(event) => void openThread(event.target.value)} disabled={sending}>
             <option value="">New conversation</option>
             {threads.map((thread) => <option key={thread.id} value={thread.id}>{thread.title}</option>)}
           </select>
           <button className="icon-button compact" onClick={() => void newThread()} aria-label="New conversation" disabled={sending}>+</button>
-          <span className={`connection-label ${sending ? 'connected' : apiKey || credentialMode === 'host' ? 'ready' : 'offline'}`}>{requestPhase ? `${requestPhase} · ${(requestElapsedMs / 1000).toFixed(1)}s` : credentialMode === 'host' ? 'proxy ready' : apiKey ? 'ready' : 'key required'}</span>
+          <span className={`connection-label ${sending ? 'connected' : vaultReady ? 'ready' : ''}`}>{requestPhase ? `${requestPhase} · ${(requestElapsedMs / 1000).toFixed(1)}s` : vaultReady ? 'Vault ready' : 'Vault unavailable'}</span>
           <button className={`icon-button compact ${settingsOpen ? 'active' : ''}`} onClick={() => setSettingsOpen((open) => !open)} aria-label="Model routing settings" aria-pressed={settingsOpen}><Icon name="settings" size={15} /></button>
           <button className="icon-button compact" onClick={toggleAIChat} aria-label="Close coding partner"><Icon name="close" size={15} /></button>
         </div>
@@ -484,18 +523,15 @@ export function AIChatPane() {
       {settingsOpen && (
         <section className="model-routing-settings" aria-label="Model routing settings">
           <div className="routing-grid">
-            <label><span>Provider</span><select aria-label="Provider" value={providerId} onChange={(event) => changeProvider(event.target.value as ProviderId)}>{Object.values(PROVIDERS).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
-            <label><span>Dialect</span><select aria-label="Dialect" value={dialect} onChange={(event) => setDialect(event.target.value as Dialect)}><option value="auto">Auto detect</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></label>
+            <label><span>Provider</span><select aria-label="Provider" value={providerId} disabled={!vaultReady} onChange={(event) => changeProvider(event.target.value as ProviderId)}>{vaultProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
             <label><span>Mode</span><select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value as 'ask' | 'edit' | 'agent')}><option value="ask">Ask</option><option value="edit" disabled={!activeTabPath}>Edit active file</option><option value="agent">Agent</option></select></label>
             <label><span>Routing</span><select aria-label="Routing" value={routingPolicy} onChange={(event) => setRoutingPolicy(event.target.value as RoutingPolicy)}><option value="manual">Manual</option><option value="cost-first">Low-cost first</option><option value="latency-first">Fastest measured</option><option value="resilient">Resilient fallback</option></select></label>
           </div>
           <label><span>Model</span><input aria-label="Model" value={model} onChange={(event) => setModel(event.target.value)} spellCheck={false} autoComplete="off" /></label>
-          <label><span>API base URL</span><input aria-label="API base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} spellCheck={false} autoComplete="url" /></label>
-          <label><span>Provider API key</span><input aria-label="Provider API key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={credentialMode === 'host' ? 'Owned by the local credential proxy' : 'Held in memory only'} disabled={credentialMode === 'host'} autoComplete="off" /></label>
-          <label className="host-credential-toggle"><input aria-label="Use credential proxy" type="checkbox" checked={credentialMode === 'host'} onChange={(event) => setCredentialMode(event.target.checked ? 'host' : 'user')} /><span>Use credential proxy</span></label>
+          <div className="vault-routing-note">Provider credentials, addresses, and protocol are supplied by the local Vault.</div>
           <label className="host-credential-toggle"><input aria-label="Enable provider-routed CURSEM Tab ghost text" type="checkbox" checked={inlineCompletionEnabled} onChange={(event) => setInlineCompletionEnabled(event.target.checked)} /><span>Enable provider-routed CURSEM Tab ghost text</span></label>
           <details className="memory-manager"><summary>Approved project memory ({memories.length})</summary><div className="memory-entry"><input aria-label="New approved project memory" value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} maxLength={4000} placeholder="A rule or decision to reuse in future threads" /><button className="button ghost" onClick={() => void saveMemory()} disabled={!memoryDraft.trim()}>Save</button></div>{memories.map((memory) => <div className="saved-memory" key={memory.id}><span>{memory.content}</span><button className="text-button" onClick={() => void deleteMemory(memory.id)}>Delete</button></div>)}</details>
-          <footer><span className={`dialect-chip ${resolvedDialect}`}>{resolvedDialect} protocol</span><small>{routingDecision}. Policy fallback uses proxy-managed requests only; user keys stay on their selected endpoint.</small><small>Every request uses the local /gateway relay. Provider credentials remain in the credential proxy; manually entered keys remain memory-only.</small></footer>
+          <footer><span className={`dialect-chip ${resolvedDialect}`}>{resolvedDialect} protocol</span><small>{routingDecision}. Every request uses the Vault-owned local relay.</small></footer>
         </section>
       )}
 
@@ -528,7 +564,7 @@ export function AIChatPane() {
 
       <div className="ai-chat-input">
         <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (sending && mode === 'agent') steer(); else void send(); } }} placeholder={sending && mode === 'agent' ? 'Steer the active Agent run…' : activeTabPath ? `${mode === 'edit' ? 'Edit' : mode === 'agent' ? 'Agent task for' : 'Ask about'} ${activeTabPath.split('/').pop()} · @file:path @folder:path @symbol:name` : 'Ask CURSEM about the codebase · @file:path @folder:path @symbol:name'} aria-label="Message CURSEM" />
-        <div className="composer-footer"><span>{sending && mode === 'agent' ? 'Enter interrupts and steers; Stop cancels the run' : 'Enter sends; Shift+Enter adds a line'}</span><div>{messages.length > 0 && <button className="button ghost" onClick={() => void newThread()} disabled={sending}>New thread</button>}{sending ? <>{mode === 'agent' && <button className="button primary" onClick={steer} disabled={!input.trim()}>Steer now</button>}<button className="button danger" onClick={stop}><Icon name="stop" size={13} /> Stop</button></> : <button className="button primary send-button" onClick={() => void send()} disabled={!input.trim()}><Icon name="upload" size={13} /> Send</button>}</div></div>
+        <div className="composer-footer"><span>{sending && mode === 'agent' ? 'Enter interrupts and steers; Stop cancels the run' : 'Enter sends; Shift+Enter adds a line'}</span><div>{messages.length > 0 && <button className="button ghost" onClick={() => void newThread()} disabled={sending}>New thread</button>}{sending ? <>{mode === 'agent' && <button className="button primary" onClick={steer} disabled={!input.trim()}>Steer now</button>}<button className="button danger" onClick={stop}><Icon name="stop" size={13} /> Stop</button></> : <button className="button primary send-button" onClick={() => void send()} disabled={!input.trim() || !vaultReady}><Icon name="upload" size={13} /> Send</button>}</div></div>
       </div>
     </aside>
   );

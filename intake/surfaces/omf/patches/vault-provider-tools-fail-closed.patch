@@ -1,0 +1,27 @@
+diff --git a/packages/coding-agent/src/web/search/providers/tavily.ts b/packages/coding-agent/src/web/search/providers/tavily.ts
+--- a/packages/coding-agent/src/web/search/providers/tavily.ts
++++ b/packages/coding-agent/src/web/search/providers/tavily.ts
+@@ -12,10 +12,9 @@ import type { SearchParams } from "./base";
+ import { SearchProvider } from "./base";
+ import { classifyProviderHttpError, withHardTimeout } from "./utils";
+ 
+-const DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search";
+ const TAVILY_SEARCH_URL = (() => {
+ 	const configured = process.env.FLOYD_VAULT_TAVILY_BASE_URL?.trim();
+-	if (!configured) return DEFAULT_TAVILY_SEARCH_URL;
++	if (!configured) throw new Error("Floyd Vault Tavily route is required");
+ 	const url = new URL(configured);
+ 	const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+ 	if (
+diff --git a/packages/coding-agent/src/web/scrapers/github.ts b/packages/coding-agent/src/web/scrapers/github.ts
+--- a/packages/coding-agent/src/web/scrapers/github.ts
++++ b/packages/coding-agent/src/web/scrapers/github.ts
+@@ -4,7 +4,7 @@ import { buildResult, formatMediaDuration, loadPage } from "./types";
+ 
+ const GITHUB_API_BASE_URL = (() => {
+ 	const configured = $env.FLOYD_VAULT_GITHUB_BASE_URL?.trim();
+-	if (!configured) return "https://api.github.com";
++	if (!configured) throw new Error("Floyd Vault GitHub route is required");
+ 	const url = new URL(configured);
+ 	const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+ 	if (

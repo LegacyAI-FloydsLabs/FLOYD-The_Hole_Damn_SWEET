@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { useApi } from '@/hooks/useApi';
-import { X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -14,6 +14,12 @@ interface SettingsModalProps {
 }
 
 type Provider = 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
+type VaultConnector = {
+  id: string;
+  displayName: string;
+  dialect: 'openai' | 'anthropic';
+  configured: boolean;
+};
 
 const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   'chatgpt-subscription': [
@@ -66,17 +72,12 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const api = useApi();
   
   const [provider, setProvider] = useState<Provider>('anthropic');
-  const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('claude-sonnet-4-5-20250514');
+  const [connectorId, setConnectorId] = useState('');
+  const [connectors, setConnectors] = useState<VaultConnector[]>([]);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [effectivePrompt, setEffectivePrompt] = useState('');
   const [maxTokens, setMaxTokens] = useState(16384);
-  const [baseURL, setBaseURL] = useState('');
-  const [hasExistingKey, setHasExistingKey] = useState(false);
-  const [keyPreview, setKeyPreview] = useState<string | null>(null);
-  
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Load settings
@@ -85,14 +86,17 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
       api.getSettings().then((settings) => {
         setProvider(settings.provider || 'anthropic');
         setModel(settings.model);
-        setHasExistingKey(settings.hasApiKey);
-        setKeyPreview(settings.apiKeyPreview);
+        const available = (settings.connectors || [])
+          .filter((connector) => connector.dialect === 'anthropic');
+        setConnectors(available);
+        setConnectorId(
+          settings.connectorId
+          || available.find((connector) => connector.configured)?.id
+          || '',
+        );
         setSystemPrompt(settings.systemPrompt || '');
         setEffectivePrompt(settings.effectiveSystemPrompt || '');
         setMaxTokens(settings.maxTokens || 16384);
-        setBaseURL(settings.baseURL || '');
-        setApiKey('');
-        setTestResult(null);
       });
     }
   }, [isOpen]);
@@ -101,32 +105,8 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const handleProviderChange = (newProvider: Provider) => {
     setProvider(newProvider);
     setModel(PROVIDER_MODELS[newProvider][0].id);
-    setApiKey('');
-    setTestResult(null);
-    setHasExistingKey(false);
-    setKeyPreview(null);
-  };
-
-  // Test API key
-  const handleTest = async () => {
-    if (!apiKey) {
-      setTestResult({ success: false, message: 'Enter an API key to test' });
-      return;
-    }
-    
-    setTesting(true);
-    setTestResult(null);
-    
-    try {
-      const result = await api.testApiKey(apiKey, provider);
-      setTestResult({ 
-        success: result.success, 
-        message: result.success ? `Valid! ${result.message}` : (result.error || 'Invalid key')
-      });
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.message });
-    } finally {
-      setTesting(false);
+    if (newProvider === 'anthropic-compatible' && !connectorId) {
+      setConnectorId(connectors.find((connector) => connector.configured)?.id || '');
     }
   };
 
@@ -137,11 +117,10 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
     try {
       await api.updateSettings({
         provider,
-        ...(apiKey ? { apiKey } : {}),
+        ...(provider === 'anthropic-compatible' ? { connectorId } : {}),
         model,
         systemPrompt,
         maxTokens,
-        ...(provider === 'anthropic-compatible' && baseURL ? { baseURL } : {}),
       });
       onSave();
       onClose();
@@ -209,7 +188,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
                 )}
               >
                 <div className="font-medium">Anthropic-Compatible</div>
-                <div className="text-xs text-slate-400">Custom Endpoint</div>
+                <div className="text-xs text-slate-400">Vault connector</div>
               </button>
               <button
                 onClick={() => handleProviderChange('openai')}
@@ -238,69 +217,36 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
             </div>
           </div>
 
-          {/* API Key (not needed for ChatGPT subscription) */}
-          {provider === 'chatgpt-subscription' ? (
-            <div className="text-sm text-slate-400 bg-slate-700/50 border border-slate-600 rounded px-3 py-2">
-              Uses your ChatGPT sign-in (OAuth tokens from <code className="text-slate-300">~/.codex/auth.json</code>).
-              If chat fails with an auth error, run <code className="text-slate-300">codex login</code> in a terminal and retry.
-            </div>
-          ) : (
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              {provider === 'anthropic' || provider === 'anthropic-compatible' ? 'Anthropic' : provider === 'openai' ? 'OpenAI' : 'GLM'} API Key
-            </label>
-            {hasExistingKey && keyPreview && (
-              <div className="text-xs text-slate-500 mb-2">
-                Current: {keyPreview}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => {
-                  setApiKey(e.target.value);
-                  setTestResult(null);
-                }}
-                placeholder={hasExistingKey ? 'Enter new key to change' : `${provider === 'anthropic' || provider === 'anthropic-compatible' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : 'xxxxxxxx.xxxxxxxx'}`}
-                className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
-              />
-              <button
-                onClick={handleTest}
-                disabled={testing || !apiKey}
-                className="px-4 py-2 bg-slate-600 rounded text-sm hover:bg-slate-500 disabled:opacity-50 flex items-center gap-2"
-              >
-                {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Test'}
-              </button>
-            </div>
-            {testResult && (
-              <div className={cn(
-                'mt-2 text-sm flex items-center gap-2',
-                testResult.success ? 'text-green-400' : 'text-red-400'
-              )}>
-                {testResult.success ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                {testResult.message}
-              </div>
-            )}
+          <div className="text-sm text-slate-400 bg-slate-700/50 border border-slate-600 rounded px-3 py-2">
+            Credentials and provider addresses are managed by the local Vault. Desktop receives only its revocable proxy credential.
           </div>
-          )}
 
-          {/* Base URL - only for anthropic-compatible */}
           {provider === 'anthropic-compatible' && (
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                API Endpoint URL
+                Vault Connector
               </label>
-              <input
-                type="text"
-                value={baseURL}
-                onChange={(e) => setBaseURL(e.target.value)}
-                placeholder="https://api.example.com/v1/messages"
+              <select
+                value={connectorId}
+                onChange={(event) => setConnectorId(event.target.value)}
                 className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Enter the base URL of your Anthropic-compatible API endpoint.
-              </p>
+              >
+                <option value="">Select a configured connector</option>
+                {connectors.map((connector) => (
+                  <option
+                    key={connector.id}
+                    value={connector.id}
+                    disabled={!connector.configured}
+                  >
+                    {connector.displayName}{connector.configured ? '' : ' (credential required)'}
+                  </option>
+                ))}
+              </select>
+              {connectors.length === 0 && (
+                <p className="text-xs text-amber-400 mt-1">
+                  Add an Anthropic-compatible model connector in Floyd Vault first.
+                </p>
+              )}
             </div>
           )}
 
@@ -370,7 +316,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || (provider === 'anthropic-compatible' && !connectorId)}
             className="px-4 py-2 bg-sky-600 rounded hover:bg-sky-700 disabled:opacity-50 flex items-center gap-2"
           >
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}

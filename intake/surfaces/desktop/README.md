@@ -39,15 +39,12 @@ npm start
 - **Styling**: Tailwind CSS with custom CRUSH theme
 - **Testing**: Vitest + Playwright
 
-## Environment
+## Vault routing
 
-Create a `.env.local` file:
-
-```env
-ANTHROPIC_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
-# Add other provider keys as needed
-```
+Floyd Desktop accepts no provider key or vendor address. Frame launches it
+with an owner-only application profile containing a persistent `fv_...`
+capability and the loopback Vault address. Provider credentials are entered
+and rotated only in the Frame Vault panel.
 
 ## Project Structure
 

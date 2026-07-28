@@ -2,7 +2,6 @@ import http from 'node:http';
 import https from 'node:https';
 import { once } from 'node:events';
 import {
-  ANTHROPIC_VERSION,
   SSEDecoder,
   buildUpstreamRequest,
   encodeUnifiedSSE,
@@ -43,29 +42,21 @@ export async function handleGateway(req, res, options = {}) {
   }
 
   let credentialHeaders;
-  if (parsed.credentialMode === 'host') {
-    let proxy;
-    try {
-      proxy = await (options.resolveCredentialProxy || resolveDefaultCredentialProxy)();
-      const proxyPath = upstreamSpec.dialect === 'anthropic' ? '/v1/messages' : '/v1/chat/completions';
-      upstreamSpec = {
-        ...upstreamSpec,
-        url: new URL(proxyPath, proxy.url).toString(),
-        body: {
-          ...upstreamSpec.body,
-          model: qualifyProxyModel(parsed.provider.providerId, upstreamSpec.body.model),
-        },
-      };
-      assertSafeTarget(upstreamSpec.url, options.allowedCredentialProxyHosts ?? ['localhost', '127.0.0.1', '::1']);
-      credentialHeaders = { authorization: `Bearer ${proxy.token}` };
-    } catch (error) {
-      return sendJson(res, 503, { error: { message: error instanceof Error ? error.message : 'The local credential proxy is unavailable.' } });
-    }
-  } else {
-    credentialHeaders = selectUserCredentialHeaders(req.headers, upstreamSpec.dialect);
-    if (!credentialHeaders.authorization && !credentialHeaders['x-api-key']) {
-      return sendJson(res, 401, { error: { message: 'Provider API key header is required.' } });
-    }
+  try {
+    const proxy = await (options.resolveCredentialProxy || resolveDefaultCredentialProxy)();
+    const proxyPath = upstreamSpec.dialect === 'anthropic' ? '/v1/messages' : '/v1/chat/completions';
+    upstreamSpec = {
+      ...upstreamSpec,
+      url: new URL(proxyPath, proxy.url).toString(),
+      body: {
+        ...upstreamSpec.body,
+        model: qualifyProxyModel(parsed.provider.providerId, upstreamSpec.body.model),
+      },
+    };
+    assertSafeTarget(upstreamSpec.url, options.allowedCredentialProxyHosts ?? ['localhost', '127.0.0.1', '::1']);
+    credentialHeaders = { authorization: `Bearer ${proxy.token}` };
+  } catch (error) {
+    return sendJson(res, 503, { error: { message: error instanceof Error ? error.message : 'The local credential proxy is unavailable.' } });
   }
 
   const headers = { ...upstreamSpec.headers, ...credentialHeaders };
@@ -181,8 +172,7 @@ export function createNodeUpstreamRequest({ url, headers, body }) {
 function validateGatewayPayload(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Gateway body must be a JSON object.');
   const keys = Object.keys(value);
-  if (keys.some((key) => key !== 'provider' && key !== 'request' && key !== 'credentialMode')) throw new Error('Gateway body contains an unsupported field.');
-  if (value.credentialMode !== 'user' && value.credentialMode !== 'host') throw new Error('Gateway credentialMode must be user or host.');
+  if (keys.some((key) => key !== 'provider' && key !== 'request')) throw new Error('Gateway body contains an unsupported field.');
   if (!value.provider || typeof value.provider !== 'object') throw new Error('Gateway provider configuration is required.');
   if (!value.request || typeof value.request !== 'object') throw new Error('Gateway conversation request is required.');
 }
@@ -201,18 +191,6 @@ function assertSafeTarget(rawUrl, allowedHosts) {
 function isLoopbackHost(hostname) {
   const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
   return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
-}
-
-function selectUserCredentialHeaders(source, dialect) {
-  const headers = {};
-  if (typeof source.authorization === 'string') headers.authorization = source.authorization;
-  if (typeof source['x-api-key'] === 'string') headers['x-api-key'] = source['x-api-key'];
-  if (dialect === 'anthropic') {
-    headers['anthropic-version'] = typeof source['anthropic-version'] === 'string'
-      ? source['anthropic-version']
-      : ANTHROPIC_VERSION;
-  }
-  return headers;
 }
 
 function selectResponseHeaders(source) {

@@ -10,18 +10,37 @@ HERE="${0:A:h}"
 COPY_BIN="${HERE}/bin/floyd-ff-real"
 
 if [ -f "${SRC}" ] && ! cmp -s "${SRC}" "${COPY_BIN}"; then
-    mkdir -p "${HERE}/bin"
-    cp "${SRC}" "${COPY_BIN}.tmp" && mv "${COPY_BIN}.tmp" "${COPY_BIN}" && chmod 755 "${COPY_BIN}"
-    echo "[ff] runtime copy refreshed from canonical"
+    echo "[ff] canonical binary differs; keeping the packaged, Vault-verified runtime copy"
 fi
 
 [ -x "${COPY_BIN}" ] || { echo "[ff] ERROR: no runtime binary at ${COPY_BIN}"; exec /bin/zsh; }
 
 DATA_DIR="${FLOYD_DATA_DIR:-$HOME/.floyd-ff}"
 mkdir -p "${DATA_DIR}" 2>/dev/null || true
+RUNTIME_ROOT="${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}"
+PROFILE="${FLOYD_VAULT_APP_PROFILE:-${RUNTIME_ROOT}/secrets/proxy-app-profiles/ff.json}"
+MANAGED_DATA="${RUNTIME_ROOT}/client-config/ff"
+node "${HERE}/../../../scripts/materialize-vault-client-config.mjs" \
+    ff "${PROFILE}" "${DATA_DIR}" "${MANAGED_DATA}" || {
+    echo "[ff] ERROR: Vault unavailable; refusing direct-provider fallback"
+    exec /bin/zsh
+}
+export FLOYD_GLOBAL_DATA="${MANAGED_DATA}"
 for a in "$@"; do
     case "$a" in
-        -D|-D=*|--data-dir|--data-dir=*) exec "${COPY_BIN}" "$@" ;;
+        login)
+            exec node "${HERE}/../../../scripts/vault-provider-handoff.mjs" ff login
+            ;;
+        update-providers)
+            exec node "${HERE}/../../../scripts/update-floyd-providers-with-vault.mjs" \
+                ff "${PROFILE}" "${COPY_BIN}" "${MANAGED_DATA}" "$@"
+            ;;
+        -D|-D=*|--data-dir|--data-dir=*)
+            echo "[ff] ERROR: alternate data-dir controls can bypass the managed Vault configuration"
+            exit 64
+            ;;
     esac
 done
-exec "${COPY_BIN}" -D "${DATA_DIR}" "$@"
+mkdir -p "${MANAGED_DATA}/data"
+exec node "${HERE}/../../../scripts/run-with-vault-environment.mjs" \
+    ff "${PROFILE}" "${COPY_BIN}" -D "${MANAGED_DATA}/data" "$@"

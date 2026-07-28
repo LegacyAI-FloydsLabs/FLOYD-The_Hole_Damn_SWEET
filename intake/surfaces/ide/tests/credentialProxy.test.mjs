@@ -1,71 +1,57 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, expect, it, vi } from 'vitest';
 import { checkCredentialProxy, qualifyProxyModel, resolveCredentialProxy } from '../server/credential-proxy.mjs';
 
-const roots = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
-
-async function capabilityFile(mode = 0o600) {
-  const root = await mkdtemp(join(tmpdir(), 'cursem-proxy-'));
-  roots.push(root);
-  const path = join(root, 'capability.token');
-  await writeFile(path, 'app-capability\n', { mode });
-  await chmod(path, mode);
-  return path;
-}
+const TOKEN = 'fv_cursem_0123456789abcdef0123456789abcdef0123456789abcdef';
 
 describe('credential proxy capability', () => {
-  it('loads an owner-only app capability without exposing a provider credential', async () => {
-    const tokenFile = await capabilityFile();
+  it('accepts only an fv application capability and loopback Vault address', async () => {
     const result = await resolveCredentialProxy({
       env: {
-        CURSEM_CREDENTIAL_PROXY_URL: 'http://127.0.0.1:4000',
-        CURSEM_CREDENTIAL_PROXY_TOKEN_FILE: tokenFile,
+        FLOYD_VAULT_PROXY_URL: 'http://127.0.0.1:13031',
+        FLOYD_VAULT_PROXY_TOKEN: TOKEN,
       },
     });
 
-    expect(result.url.origin).toBe('http://127.0.0.1:4000');
-    expect(result.token).toBe('app-capability');
-    expect(JSON.stringify({ url: result.url.origin })).not.toContain(result.token);
+    expect(result.url.origin).toBe('http://127.0.0.1:13031');
+    expect(result.token).toBe(TOKEN);
+    expect(JSON.stringify({ url: result.url.origin })).not.toContain(TOKEN);
   });
 
-  it('rejects capability files readable by another user class', async () => {
-    const tokenFile = await capabilityFile(0o640);
+  it('does not fall back to a legacy token file or direct provider key', async () => {
     await expect(resolveCredentialProxy({
       env: {
-        CURSEM_CREDENTIAL_PROXY_URL: 'http://127.0.0.1:4000',
-        CURSEM_CREDENTIAL_PROXY_TOKEN_FILE: tokenFile,
+        CURSEM_CREDENTIAL_PROXY_URL: 'http://127.0.0.1:13031',
+        CURSEM_CREDENTIAL_PROXY_TOKEN_FILE: '/tmp/obsolete-provider-key',
+        ANTHROPIC_API_KEY: 'must-not-win',
       },
-    })).rejects.toThrow('owner-only');
+    })).rejects.toThrow('Vault capability is unavailable');
   });
 
   it('rejects non-loopback proxy destinations', async () => {
     await expect(resolveCredentialProxy({
       env: {
-        CURSEM_CREDENTIAL_PROXY_URL: 'https://proxy.example',
-        CURSEM_CREDENTIAL_PROXY_TOKEN: 'capability',
+        FLOYD_VAULT_PROXY_URL: 'https://proxy.example',
+        FLOYD_VAULT_PROXY_TOKEN: TOKEN,
       },
     })).rejects.toThrow('loopback');
   });
 
   it('returns a secret-free health receipt', async () => {
     const fetchImpl = vi.fn(async (url) => {
-      expect(String(url)).toBe('http://127.0.0.1:4000/healthz');
+      expect(String(url)).toBe('http://127.0.0.1:13031/healthz');
       return new Response(JSON.stringify({ ok: true, version: '17.0.5' }), { status: 200 });
     });
     const result = await checkCredentialProxy({
       env: {
-        CURSEM_CREDENTIAL_PROXY_URL: 'http://127.0.0.1:4000',
-        CURSEM_CREDENTIAL_PROXY_TOKEN: 'capability',
+        FLOYD_VAULT_PROXY_URL: 'http://127.0.0.1:13031',
+        FLOYD_VAULT_PROXY_TOKEN: TOKEN,
       },
       fetchImpl,
     });
 
-    expect(result).toEqual({ url: 'http://127.0.0.1:4000', version: '17.0.5' });
-    expect(JSON.stringify(result)).not.toContain('capability');
+    expect(result).toEqual({ url: 'http://127.0.0.1:13031', version: '17.0.5' });
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 
   it('qualifies ambiguous model ids with the selected provider exactly once', () => {

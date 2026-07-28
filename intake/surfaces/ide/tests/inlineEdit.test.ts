@@ -9,7 +9,7 @@ const request: InlineEditRequestDetail = {
   startLine: 2, startCol: 1, endLine: 2, endCol: 15,
 };
 
-afterEach(() => setRuntimeModelConfig({ apiKey: '', credentialMode: 'user' }));
+afterEach(() => setRuntimeModelConfig({ providerId: 'anthropic' }));
 
 describe('selection-based Inline Edit', () => {
   it('replaces exactly the selected range in the current buffer', () => {
@@ -17,7 +17,7 @@ describe('selection-based Inline Edit', () => {
   });
 
   it('uses the unified provider and extracts a typed replacement', async () => {
-    setRuntimeModelConfig({ providerId: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude', dialect: 'anthropic', apiKey: 'key', credentialMode: 'user' });
+    setRuntimeModelConfig({ providerId: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude', dialect: 'anthropic' });
     const client = { stream: async function* () { yield { type: 'delta', text: '<replacement>const two = one + 1;</replacement>' } as UnifiedEvent; yield { type: 'done', finishReason: 'stop' } as UnifiedEvent; } };
     const service = new InlineEditService(client as never);
     await expect(service.rewrite(request, 'derive two from one', new AbortController().signal)).resolves.toBe('const two = one + 1;');

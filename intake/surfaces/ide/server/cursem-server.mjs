@@ -60,6 +60,23 @@ const frameAncestorsDirective = frameAncestors.length ? frameAncestors.join(' ')
 let standalone;
 const server = http.createServer(async (req, res) => {
   if (req.url === '/gateway' || req.url?.startsWith('/gateway?')) return handleGateway(req, res, { resolveCredentialProxy });
+  if (req.url === '/api/vault/catalog' && req.method === 'GET') {
+    try {
+      const upstream = await fetch(`${process.env.FLOYD_FRAME_URL || 'http://127.0.0.1:13030'}/api/vault/catalog`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      const body = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, {
+        'content-type': upstream.headers.get('content-type') || 'application/json',
+        'content-length': body.byteLength,
+        'cache-control': 'no-store',
+      });
+      return res.end(body);
+    } catch {
+      res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ error: 'Vault catalog unavailable' }));
+    }
+  }
   if (req.url?.startsWith('/api/')) return standalone.handle(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { allow: 'GET, HEAD' }); res.end(); return; }
   const pathname = decodeURIComponent(new URL(req.url || '/', 'http://127.0.0.1').pathname);

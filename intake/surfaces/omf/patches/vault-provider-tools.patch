@@ -1,0 +1,76 @@
+diff --git a/packages/coding-agent/src/web/search/providers/tavily.ts b/packages/coding-agent/src/web/search/providers/tavily.ts
+--- a/packages/coding-agent/src/web/search/providers/tavily.ts
++++ b/packages/coding-agent/src/web/search/providers/tavily.ts
+@@ -12,7 +12,24 @@ import type { SearchParams } from "./base";
+ import { SearchProvider } from "./base";
+ import { classifyProviderHttpError, withHardTimeout } from "./utils";
+ 
+-const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
++const TAVILY_SEARCH_URL = (() => {
++	const configured = process.env.FLOYD_VAULT_TAVILY_BASE_URL?.trim();
++	if (!configured) throw new Error("Floyd Vault Tavily route is required");
++	const url = new URL(configured);
++	const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
++	if (
++		url.protocol !== "http:" ||
++		!["127.0.0.1", "localhost", "::1"].includes(host) ||
++		url.username ||
++		url.password ||
++		url.search ||
++		url.hash
++	) {
++		throw new Error("Floyd Vault Tavily route must be an HTTP loopback URL");
++	}
++	url.pathname = `${url.pathname.replace(/\/+$/, "")}/search`;
++	return url.toString();
++})();
+ const DEFAULT_NUM_RESULTS = 5;
+ const MAX_NUM_RESULTS = 20;
+ 
+diff --git a/packages/coding-agent/src/web/scrapers/github.ts b/packages/coding-agent/src/web/scrapers/github.ts
+--- a/packages/coding-agent/src/web/scrapers/github.ts
++++ b/packages/coding-agent/src/web/scrapers/github.ts
+@@ -2,6 +2,25 @@ import { $env, ptree } from "@oh-my-pi/pi-utils";
+ import type { RenderResult, SpecialHandler } from "./types";
+ import { buildResult, formatMediaDuration, loadPage } from "./types";
+ 
++const GITHUB_API_BASE_URL = (() => {
++	const configured = $env.FLOYD_VAULT_GITHUB_BASE_URL?.trim();
++	if (!configured) throw new Error("Floyd Vault GitHub route is required");
++	const url = new URL(configured);
++	const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
++	if (
++		url.protocol !== "http:" ||
++		!["127.0.0.1", "localhost", "::1"].includes(host) ||
++		url.username ||
++		url.password ||
++		url.search ||
++		url.hash
++	) {
++		throw new Error("Floyd Vault GitHub route must be an HTTP loopback URL");
++	}
++	url.pathname = url.pathname.replace(/\/+$/, "");
++	return url.toString().replace(/\/$/, "");
++})();
++
+ interface GitHubUrl {
+ 	type:
+ 		| "blob"
+@@ -130,7 +148,7 @@ export async function fetchGitHubApi(
+ 			headers.Authorization = `Bearer ${token}`;
+ 		}
+ 
+-		const response = await fetch(`https://api.github.com${endpoint}`, {
++		const response = await fetch(`${GITHUB_API_BASE_URL}${endpoint}`, {
+ 			signal: requestSignal,
+ 			headers,
+ 		});
+@@ -605,7 +623,7 @@ async function fetchGitHubJobLogs(
+ 	if (token) headers.Authorization = `Bearer ${token}`;
+ 
+ 	// 302 → signed log URL on a different origin; fetch strips Authorization on the cross-origin hop.
+-	const result = await loadPage(`https://api.github.com/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, {
++	const result = await loadPage(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, {
+ 		timeout,
+ 		headers,
+ 		signal,

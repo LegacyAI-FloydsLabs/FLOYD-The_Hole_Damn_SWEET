@@ -5,11 +5,9 @@ import type { ConversationRequest, UnifiedEvent } from '../src/model-routing/cor
 const request: ConversationRequest = { messages: [{ role: 'user', content: 'hello' }] };
 const active = {
   providerId: 'anthropic' as const,
-  baseUrl: 'https://api.anthropic.com/v1',
+  baseUrl: 'http://127.0.0.1:13031/p/anthropic/v1',
   model: 'claude-sonnet-4-6',
   dialect: 'anthropic' as const,
-  apiKey: '',
-  credentialMode: 'host' as const,
 };
 
 async function collect(stream: AsyncGenerator<UnifiedEvent>): Promise<UnifiedEvent[]> {
@@ -19,7 +17,7 @@ async function collect(stream: AsyncGenerator<UnifiedEvent>): Promise<UnifiedEve
 }
 
 describe('policy model routing', () => {
-  it('chooses OpenCode Go first for host-managed low-cost routing', async () => {
+  it('chooses the configured low-cost Vault provider first', async () => {
     const attempted: string[] = [];
     const transport = { stream: async function* (config: typeof active) {
       attempted.push(config.providerId);
@@ -27,7 +25,7 @@ describe('policy model routing', () => {
     } };
     const client = new PolicyModelClient(transport as never);
     await collect(client.stream({ ...active, routingPolicy: 'cost-first' }, request));
-    expect(attempted).toEqual(['opencode-go']);
+    expect(attempted).toEqual(['groq']);
   });
 
   it('falls back on retryable pre-output failures and reports the decision', async () => {
@@ -43,7 +41,7 @@ describe('policy model routing', () => {
     try {
       const client = new PolicyModelClient(transport as never);
       const events = await collect(client.stream({ ...active, routingPolicy: 'resilient' }, request));
-      expect(attempted).toEqual(['anthropic', 'opencode-go']);
+      expect(attempted).toEqual(['anthropic', 'openai']);
       expect(events.some((event) => event.type === 'delta' && event.text === 'ok')).toBe(true);
       expect(decisions.some((decision) => decision.reason === 'fallback' && decision.attempt === 2)).toBe(true);
     } finally { unsubscribe(); }
@@ -61,14 +59,14 @@ describe('policy model routing', () => {
     expect(attempted).toEqual(['anthropic']);
   });
 
-  it('keeps a user-supplied key on its configured endpoint', async () => {
+  it('keeps manual routing on its configured Vault provider', async () => {
     const attempted: string[] = [];
     const transport = { stream: async function* (config: typeof active) {
       attempted.push(config.providerId);
       throw new ProviderHttpError(429, 'Too Many Requests', '{"error":{"message":"exact upstream error"}}');
     } };
     const client = new PolicyModelClient(transport as never);
-    await expect(collect(client.stream({ ...active, apiKey: 'user-key', credentialMode: 'user', routingPolicy: 'resilient' }, request))).rejects.toMatchObject({ status: 429, message: 'exact upstream error' });
+    await expect(collect(client.stream({ ...active, routingPolicy: 'manual' }, request))).rejects.toMatchObject({ status: 429, message: 'exact upstream error' });
     expect(attempted).toEqual(['anthropic']);
   });
 });

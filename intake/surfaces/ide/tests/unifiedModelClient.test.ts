@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UnifiedModelClient, type RoutingConfig } from '@/model-routing';
 
-const config: RoutingConfig & { apiKey: string } = {
-  providerId: 'opencode-go', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4-flash', dialect: 'auto', apiKey: 'secret-go-key',
+const config: RoutingConfig = {
+  providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'deepseek-chat', dialect: 'auto',
 };
 
 function streamResponse(text: string, status = 200): Response {
@@ -24,7 +24,7 @@ describe('UnifiedModelClient', () => {
     vi.unstubAllGlobals();
   });
 
-  it('sends credentials only as headers to the same-origin relay and parses unified SSE', async () => {
+  it('sends no credential to the same-origin relay and parses unified SSE', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => streamResponse('event: delta\ndata: {"type":"delta","text":"answer"}\n\nevent: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
     const client = new UnifiedModelClient('/gateway', fetchMock as typeof fetch);
     const events = [];
@@ -33,8 +33,8 @@ describe('UnifiedModelClient', () => {
     expect(events).toEqual([{ type: 'delta', text: 'answer' }, { type: 'done', finishReason: 'stop' }]);
     expect(fetchMock).toHaveBeenCalledWith('/gateway', expect.objectContaining({ method: 'POST' }));
     const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(init.headers).toMatchObject({ authorization: 'Bearer secret-go-key' });
-    expect(String(init.body)).not.toContain('secret-go-key');
+    expect(init.headers).toEqual({ 'content-type': 'application/json' });
+    expect(String(init.body)).not.toContain('apiKey');
   });
 
   it('normalizes nested gateway usage before exposing unified events to the UI', async () => {
@@ -50,12 +50,13 @@ describe('UnifiedModelClient', () => {
     }]);
   });
 
-  it('uses Anthropic key and version headers', async () => {
+  it('keeps Anthropic protocol selection in the credential-free body', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => streamResponse('event: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
     const client = new UnifiedModelClient('/gateway', fetchMock as typeof fetch);
-    const anthropic = { providerId: 'anthropic' as const, baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-6', dialect: 'anthropic' as const, apiKey: 'anthropic-secret' };
+    const anthropic = { providerId: 'anthropic' as const, baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-6', dialect: 'anthropic' as const };
     for await (const _event of client.stream(anthropic, { messages: [{ role: 'user', content: 'Question' }] })) { /* consume */ }
-    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ 'x-api-key': 'anthropic-secret', 'anthropic-version': '2023-06-01' });
+    expect(fetchMock.mock.calls[0][1]?.headers).toEqual({ 'content-type': 'application/json' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ provider: { providerId: 'anthropic', dialect: 'anthropic' } });
   });
 
   it('preserves upstream status, status text, raw body, and error block', async () => {
@@ -76,12 +77,12 @@ describe('UnifiedModelClient', () => {
     expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal);
   });
 
-  it('requests host-managed credentials without transmitting a user key', async () => {
+  it('always requests the host-managed Vault route without credential fields', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => streamResponse('event: done\ndata: {"type":"done","finishReason":"stop"}\n\n'));
     const client = new UnifiedModelClient('/gateway', fetchMock as typeof fetch);
-    for await (const _event of client.stream({ ...config, apiKey: '', credentialMode: 'host' }, { messages: [{ role: 'user', content: 'Question' }] })) { /* consume */ }
+    for await (const _event of client.stream(config, { messages: [{ role: 'user', content: 'Question' }] })) { /* consume */ }
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.headers).not.toHaveProperty('authorization');
-    expect(JSON.parse(String(init.body))).toMatchObject({ credentialMode: 'host' });
+    expect(Object.keys(JSON.parse(String(init.body))).sort()).toEqual(['provider', 'request']);
   });
 });

@@ -25,7 +25,7 @@ export class InlineCompletionService {
 
   async suggest(request: InlineCompletionRequest): Promise<string | null> {
     const config = getRuntimeModelConfig();
-    if (!config.inlineCompletionEnabled || (config.credentialMode === 'user' && !config.apiKey.trim())) return null;
+    if (!config.inlineCompletionEnabled) return null;
     const startedAt = performance.now();
     let text = '';
     try {

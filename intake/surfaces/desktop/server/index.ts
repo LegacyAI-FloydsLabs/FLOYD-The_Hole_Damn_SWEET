@@ -32,6 +32,13 @@ import {
   type ResponseInputItem,
 } from './chatgpt-subscription.js';
 import { buildDefaultSystemPrompt } from './prompts/default-system-prompt.js';
+import {
+  isDesktopProviderReady,
+  listVaultModelConnectors,
+  readDesktopVaultStatus,
+  vaultConnectorBaseURL,
+  type DesktopModelConnector,
+} from './vault-model-connectors.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -143,11 +150,43 @@ type Provider = 'chatgpt-subscription' | 'anthropic' | 'openai' | 'glm' | 'anthr
 
 interface Settings {
   provider: Provider;
-  apiKey: string;
   model: string;
+  connectorId?: string;
   systemPrompt?: string;
   maxTokens?: number;
-  baseURL?: string; // For custom Anthropic-compatible endpoints
+}
+
+const VAULT_URL = String(process.env.FLOYD_VAULT_PROXY_URL || '').replace(/\/+$/, '');
+const VAULT_TOKEN = String(process.env.FLOYD_VAULT_PROXY_TOKEN || '');
+if (!/^fv_/.test(VAULT_TOKEN) || !/^http:\/\/127\.0\.0\.1:\d+$/.test(VAULT_URL)) {
+  throw new Error('Floyd Desktop requires its fv_ capability and loopback Vault address');
+}
+function vaultBaseURL(provider: Provider): string {
+  if (provider === 'anthropic-compatible') {
+    if (!settings.connectorId) throw new Error('Select a configured Anthropic-compatible Vault connector');
+    return vaultConnectorBaseURL(VAULT_URL, settings.connectorId);
+  }
+  if (provider === 'glm') return `${VAULT_URL}/p/zai/api/coding/paas/v4`;
+  if (provider === 'anthropic') return `${VAULT_URL}/p/anthropic`;
+  return `${VAULT_URL}/v1`;
+}
+
+async function desktopConnectorCatalog(): Promise<DesktopModelConnector[]> {
+  return listVaultModelConnectors({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN });
+}
+
+async function desktopVaultReadiness(): Promise<{
+  connectors: DesktopModelConnector[];
+  ready: boolean;
+}> {
+  const [connectors, status] = await Promise.all([
+    desktopConnectorCatalog(),
+    readDesktopVaultStatus({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN }),
+  ]);
+  return {
+    connectors,
+    ready: isDesktopProviderReady(settings.provider, settings.connectorId, status, connectors),
+  };
 }
 
 // Provider configurations
@@ -193,17 +232,11 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   ],
 };
 
-// Default settings — the operator's ChatGPT monthly subscription (OAuth via
-// ~/.codex/auth.json) is the primary LLM route for the Desktop agent.
-// API-key providers remain available as explicit fallbacks via Settings.
+// Model choice is user-configurable; credentials and addresses are not.
 let settings: Settings = {
   provider: 'chatgpt-subscription',
-  apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
   model: 'gpt-5.4',
   maxTokens: 16384,
-  // Vault proxy override: the frame injects ANTHROPIC_BASE_URL pointing at
-  // the loopback credential proxy; real endpoints are only a fallback.
-  baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.z.ai/api/anthropic',
 };
 
 // ChatGPT subscription client (single instance; owns token refresh)
@@ -220,8 +253,15 @@ async function initDataDir() {
     // Load settings if exists
     try {
       const settingsData = await fs.readFile(path.join(DATA_DIR, 'settings.json'), 'utf-8');
-      const saved = JSON.parse(settingsData);
-      settings = { ...settings, ...saved };
+      const saved = JSON.parse(settingsData) as Partial<Settings>;
+      settings = {
+        ...settings,
+        ...(saved.provider ? { provider: saved.provider } : {}),
+        ...(saved.model ? { model: saved.model } : {}),
+        ...(typeof saved.connectorId === 'string' ? { connectorId: saved.connectorId } : {}),
+        ...(typeof saved.systemPrompt === 'string' ? { systemPrompt: saved.systemPrompt } : {}),
+        ...(typeof saved.maxTokens === 'number' ? { maxTokens: saved.maxTokens } : {}),
+      };
       console.log('[Server] Loaded settings from disk');
     } catch {
       console.log('[Server] No existing settings, using defaults');
@@ -256,12 +296,10 @@ async function initDataDir() {
     
     // Initialize browork manager
     broworkManager = new BroworkManager(toolExecutor);
-    if (settings.apiKey) {
-      broworkManager.setApiKey(settings.apiKey);
-    }
-    broworkManager.setBaseURL(settings.baseURL);
+    broworkManager.configureVault(VAULT_TOKEN, VAULT_URL);
     broworkManager.setModel(settings.model);
     broworkManager.setProvider(settings.provider);
+    broworkManager.setConnector(settings.connectorId);
     broworkManager.setChatGPTClient(chatgptClient);
     console.log('[Server] Browork manager initialized');
     
@@ -298,21 +336,23 @@ async function saveSession(session: Session) {
 
 // Create API clients
 function getAnthropicClient(): Anthropic | null {
-  if (!settings.apiKey || (settings.provider !== 'anthropic' && settings.provider !== 'anthropic-compatible')) {
+  if (settings.provider !== 'anthropic' && settings.provider !== 'anthropic-compatible') {
     return null;
   }
+  if (settings.provider === 'anthropic-compatible' && !settings.connectorId) return null;
   return new Anthropic({
-    apiKey: settings.apiKey,
-    baseURL: settings.baseURL,
+    apiKey: VAULT_TOKEN,
+    baseURL: vaultBaseURL(settings.provider),
   });
 }
 
 function getOpenAIClient(): OpenAI | null {
-  if (!settings.apiKey || settings.provider !== 'openai') {
+  if (settings.provider !== 'openai' && settings.provider !== 'glm') {
     return null;
   }
   return new OpenAI({
-    apiKey: settings.apiKey,
+    apiKey: VAULT_TOKEN,
+    baseURL: vaultBaseURL(settings.provider),
   });
 }
 
@@ -330,12 +370,10 @@ function getClient(): Anthropic | OpenAI | null {
 
 // Health check
 app.get('/api/health', async (req, res) => {
-  const chatgptConfigured = await chatgptClient.isConfigured();
-  const hasCredentials = settings.provider === 'chatgpt-subscription' ? chatgptConfigured : !!settings.apiKey;
+  const { ready: hasCredentials } = await desktopVaultReadiness();
   res.json({ 
     status: 'ok', 
     hasApiKey: hasCredentials,
-    chatgptConfigured,
     provider: settings.provider,
     model: settings.model,
     identity: SURFACE_IDENTITY,
@@ -343,8 +381,11 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Get available providers and models
-app.get('/api/providers', async (req, res) => {
-  const chatgptStatus = await chatgptClient.status();
+app.get('/api/providers', async (_req, res) => {
+  const [chatgptStatus, connectors] = await Promise.all([
+    chatgptClient.status(),
+    desktopConnectorCatalog(),
+  ]);
   res.json({
     providers: [
       { id: 'chatgpt-subscription', name: 'ChatGPT Subscription (OAuth)', configured: chatgptStatus.configured },
@@ -354,126 +395,69 @@ app.get('/api/providers', async (req, res) => {
       { id: 'glm', name: 'Zai GLM (Zhipu)' },
     ],
     models: PROVIDER_MODELS,
+    connectors,
     chatgpt: chatgptStatus,
   });
 });
 
 // Get settings
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', async (_req, res) => {
+  const { connectors, ready } = await desktopVaultReadiness();
   res.json({
     provider: settings.provider,
     model: settings.model,
-    hasApiKey: !!settings.apiKey,
-    apiKeyPreview: settings.apiKey ? `${settings.apiKey.slice(0, 10)}...${settings.apiKey.slice(-4)}` : null,
+    connectorId: settings.connectorId,
+    connectors,
+    hasApiKey: ready,
+    apiKeyPreview: ready ? 'Managed by Vault' : null,
     systemPrompt: settings.systemPrompt,
     // The prompt actually used when systemPrompt is empty — shown in the UI so
     // the operator always sees what the agent knows about its capabilities.
     effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() }),
     maxTokens: settings.maxTokens,
-    baseURL: settings.baseURL,
   });
 });
 
 // Update settings
 app.post('/api/settings', async (req, res) => {
-  const { provider, apiKey, model, systemPrompt, maxTokens, baseURL } = req.body;
-  
-  if (provider !== undefined) settings.provider = provider;
-  if (apiKey !== undefined) settings.apiKey = apiKey;
-  if (model !== undefined) settings.model = model;
-  if (systemPrompt !== undefined) settings.systemPrompt = systemPrompt;
-  if (maxTokens !== undefined) settings.maxTokens = maxTokens;
-  if (baseURL !== undefined) settings.baseURL = baseURL;
-  
-  // Update browork with new settings
-  if (settings.apiKey) {
-    broworkManager.setApiKey(settings.apiKey);
-    broworkManager.setBaseURL(settings.baseURL);
+  const { provider, model, connectorId, systemPrompt, maxTokens } = req.body;
+  if ('apiKey' in req.body || 'baseURL' in req.body) {
+    return res.status(400).json({ error: 'Provider credentials and addresses are managed by Vault.' });
   }
+
+  const nextProvider = provider ?? settings.provider;
+  const nextConnectorId = connectorId ?? settings.connectorId;
+  if (nextProvider === 'anthropic-compatible') {
+    const connectors = await desktopConnectorCatalog();
+    const selected = connectors.find((connector) =>
+      connector.id === nextConnectorId
+      && connector.dialect === 'anthropic'
+      && connector.configured);
+    if (!selected) {
+      return res.status(400).json({ error: 'Select a configured Anthropic-compatible connector from Floyd Vault.' });
+    }
+  }
+
+  settings = {
+    ...settings,
+    ...(provider !== undefined ? { provider } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(connectorId !== undefined ? { connectorId } : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+
   broworkManager.setModel(settings.model);
   broworkManager.setProvider(settings.provider);
+  broworkManager.setConnector(settings.connectorId);
   
   await saveSettings();
   
   res.json({ success: true });
 });
 
-// Test API key
-app.post('/api/test-key', async (req, res) => {
-  const { apiKey, provider } = req.body;
-  
-  if (!apiKey) {
-    return res.status(400).json({ success: false, error: 'No API key provided' });
-  }
-  
-  try {
-    if (provider === 'openai') {
-      const client = new OpenAI({ apiKey });
-      const response = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
-        max_tokens: 10,
-        messages: [{ role: 'user', content: 'Say "ok"' }],
-      });
-      
-      res.json({ 
-        success: true, 
-        model: response.model,
-        message: 'OpenAI API key is valid'
-      });
-    } else if (provider === 'glm') {
-      // GLM uses OpenAI-compatible API with different base URL
-      const client = new OpenAI({ 
-        apiKey,
-        baseURL: 'https://open.bigmodel.cn/api/paas/v4'
-      });
-      const response = await client.chat.completions.create({
-        model: 'glm-4',
-        max_tokens: 10,
-        messages: [{ role: 'user', content: 'Say "ok"' }],
-      });
-      
-      res.json({ 
-        success: true, 
-        model: response.model,
-        message: 'GLM API key is valid'
-      });
-    } else if (provider === 'anthropic-compatible') {
-      // Test with Z.ai endpoint using Anthropic SDK
-      const client = new Anthropic({ 
-        apiKey,
-        baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.z.ai/api/anthropic'
-      });
-      const response = await client.messages.create({
-        model: 'glm-4.7',
-        max_tokens: 10,
-        messages: [{ role: 'user', content: 'Say "ok"' }],
-      });
-      
-      res.json({ 
-        success: true, 
-        model: response.model,
-        message: 'Z.ai API key is valid'
-      });
-    } else {
-      const client = new Anthropic({ apiKey });
-      const response = await client.messages.create({
-        model: 'claude-sonnet-4-5-20250514',
-        max_tokens: 10,
-        messages: [{ role: 'user', content: 'Say "ok"' }],
-      });
-      
-      res.json({ 
-        success: true, 
-        model: response.model,
-        message: 'Anthropic API key is valid'
-      });
-    }
-  } catch (error: any) {
-    res.status(401).json({ 
-      success: false, 
-      error: error.message || 'Invalid API key' 
-    });
-  }
+app.post('/api/test-key', (_req, res) => {
+  res.status(410).json({ success: false, error: 'Direct key testing was removed. Use the Vault application test.' });
 });
 
 // === SKILLS API ===
@@ -625,9 +609,7 @@ app.post('/api/browork/tasks', (req, res) => {
   }
   
   // Make sure browork has current API key
-  if (settings.apiKey) {
-    broworkManager.setApiKey(settings.apiKey);
-  }
+  broworkManager.configureVault(VAULT_TOKEN, VAULT_URL);
   broworkManager.setModel(settings.model);
   broworkManager.setProvider(settings.provider);
   
@@ -915,8 +897,8 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
     } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       // OpenAI/GLM flow
       const client = new OpenAI({ 
-        apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        apiKey: VAULT_TOKEN,
+        baseURL: vaultBaseURL(settings.provider),
       });
 
       const response = await client.chat.completions.create({
@@ -939,8 +921,8 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
     } else {
       // Anthropic-compatible flow
       const client = new Anthropic({ 
-        apiKey: settings.apiKey,
-        baseURL: settings.baseURL,
+        apiKey: VAULT_TOKEN,
+        baseURL: vaultBaseURL(settings.provider),
       });
 
       const response = await client.messages.create({
@@ -1088,8 +1070,8 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
 
     } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       const openaiClient = new OpenAI({ 
-        apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        apiKey: VAULT_TOKEN,
+        baseURL: vaultBaseURL(settings.provider),
       });
       
       const response = await openaiClient.chat.completions.create({
@@ -1123,8 +1105,8 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     } else {
       // Anthropic-compatible flow
       const anthropicClient = new Anthropic({ 
-        apiKey: settings.apiKey,
-        baseURL: settings.baseURL,
+        apiKey: VAULT_TOKEN,
+        baseURL: vaultBaseURL(settings.provider),
       });
       
       const response = await anthropicClient.messages.create({
@@ -1230,7 +1212,7 @@ app.post('/api/chat', async (req, res) => {
   const client = usingChatGPT ? null : getClient();
   if (usingChatGPT) {
     if (!(await chatgptClient.isConfigured())) {
-      return res.status(400).json({ error: 'ChatGPT subscription not signed in. Run `codex login` to create ~/.codex/auth.json.' });
+      return res.status(400).json({ error: 'ChatGPT subscription is not configured in Floyd Vault.' });
     }
   } else if (!client) {
     return res.status(400).json({ error: 'API key not configured' });
@@ -1548,9 +1530,9 @@ app.post('/api/chat/stream', async (req, res) => {
   
   if (settings.provider === 'chatgpt-subscription') {
     if (!(await chatgptClient.isConfigured())) {
-      return res.status(400).json({ error: 'ChatGPT subscription not signed in. Run `codex login` (or sign in via Codex) to create ~/.codex/auth.json.' });
+      return res.status(400).json({ error: 'ChatGPT subscription is not configured in Floyd Vault.' });
     }
-  } else if (!settings.apiKey) {
+  } else if (!VAULT_TOKEN) {
     return res.status(400).json({ error: 'API key not configured' });
   }
   
@@ -1649,8 +1631,8 @@ app.post('/api/chat/stream', async (req, res) => {
     } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       // OpenAI-compatible flow (OpenAI and GLM)
       const client = new OpenAI({ 
-        apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        apiKey: VAULT_TOKEN,
+        baseURL: vaultBaseURL(settings.provider),
       });
       const openaiTools = enableTools ? getOpenAITools() : undefined;
       
@@ -1725,8 +1707,8 @@ app.post('/api/chat/stream', async (req, res) => {
     } else {
       // Anthropic-compatible flow (uses Anthropic client with custom baseURL)
       const client = new Anthropic({ 
-        apiKey: settings.apiKey,
-        baseURL: settings.baseURL,
+        apiKey: VAULT_TOKEN,
+        baseURL: vaultBaseURL(settings.provider),
       });
       const anthropicTools = enableTools ? getAnthropicTools() : undefined;
       
@@ -1832,6 +1814,7 @@ app.get('*', (req, res) => {
 
 // Start server
 const PORT = Number(process.env.PORT) || 3001;
+const MCP_WS_PORT = Number(process.env.MCP_WS_PORT) || 13011;
 
 // Also start WebSocket MCP server for Chrome extension
 initDataDir().then(async () => {
@@ -1840,18 +1823,18 @@ initDataDir().then(async () => {
   // listen on external interfaces. The frame proxies locally.
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`[Floyd Web Server] Running on http://127.0.0.1:${PORT} (loopback only)`);
-    console.log(`[Floyd Web Server] API Key: ${settings.apiKey ? 'Configured' : 'NOT SET'}`);
+    console.log('[Floyd Web Server] Credential route: Vault');
   });
 
   // Start WebSocket MCP server for Chrome extension
   try {
-    wsMcpServer = new WebSocketMCPServer(3005);
+    wsMcpServer = new WebSocketMCPServer(MCP_WS_PORT);
     wsMcpServer.registerTools([...BUILTIN_TOOLS]);
     await wsMcpServer.start();
-    console.log('[Floyd Web Server] WebSocket MCP server started on port 3005 for Chrome extension');
+    console.log(`[Floyd Web Server] WebSocket MCP server started on port ${MCP_WS_PORT} for Chrome extension`);
   } catch (error: any) {
     if (error.code === 'EADDRINUSE') {
-      console.log('[Floyd Web Server] Port 3005 already in use - WebSocket MCP server not started');
+      console.log(`[Floyd Web Server] Port ${MCP_WS_PORT} already in use - WebSocket MCP server not started`);
       console.log('[Floyd Web Server] Chrome extension will connect to existing MCP server');
     } else {
       console.error('[Floyd Web Server] Failed to start WebSocket MCP server:', error);
