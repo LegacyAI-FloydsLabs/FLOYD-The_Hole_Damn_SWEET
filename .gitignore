@@ -29,6 +29,9 @@ apps/frame/server/heartbeat.json
 !apps/frame/extensions/floyd-tty-bridge/node_modules/
 !apps/frame/extensions/floyd-tty-bridge/node_modules/**
 
+# Generated Vite/Vitest cache inside the vendored TTY Bridge dependencies.
+apps/frame/extensions/floyd-tty-bridge/node_modules/.vite/
+
 # Independent embedded repo: OpenAI Sites publication project (own remote on git.chatgpt-team.site)
 apps/remote-portal/
 
