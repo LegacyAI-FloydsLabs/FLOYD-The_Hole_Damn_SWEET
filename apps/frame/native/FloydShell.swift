@@ -6,6 +6,7 @@
 // is a separate thing and is untouched by this shell.
 // Build: swiftc -O -framework Cocoa -framework WebKit FloydShell.swift -o FloydShell
 import Cocoa
+import Security
 import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
@@ -15,6 +16,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // Chrome-stable UA (macOS). Keeps sites and the frame on their Chrome code
     // paths: same layouts, same feature gates, same styling decisions.
     static let chromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+
+    private func frameRequest() -> URLRequest {
+        let port = ProcessInfo.processInfo.environment["FRAME_PORT"] ?? "13030"
+        let destination = CommandLine.arguments.contains("--vault")
+            ? "http://127.0.0.1:\(port)/#vault"
+            : "http://127.0.0.1:\(port)/"
+        var request = URLRequest(url: URL(string: destination)!)
+        if let token = keychainSecret(account: "management-auth"),
+           token.hasPrefix("fm_") {
+            request.setValue(token, forHTTPHeaderField: "X-Floyd-Management-Bootstrap")
+        }
+        return request
+    }
+
+    private func keychainSecret(account: String) -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: "space.legacyai.floyd.vault",
+            kSecAttrAccount: account,
+            kSecMatchLimit: kSecMatchLimitOne,
+            kSecReturnData: true,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data
+        else { return nil }
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func openChatGPTSubscriptionIfRequested() {
+        guard CommandLine.arguments.contains("--chatgpt-subscription"),
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+        else { return }
+        NSWorkspace.shared.openApplication(
+            at: appURL,
+            configuration: NSWorkspace.OpenConfiguration(),
+            completionHandler: nil
+        )
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let config = WKWebViewConfiguration()
@@ -46,8 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         buildMenu()
 
-        let port = ProcessInfo.processInfo.environment["FRAME_PORT"] ?? "13030"
-        webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!))
+        webView.load(frameRequest())
+        openChatGPTSubscriptionIfRequested()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -115,8 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc func goBack() { if webView.canGoBack { webView.goBack() } }
     @objc func goForward() { if webView.canGoForward { webView.goForward() } }
     @objc func goHome() {
-        let port = ProcessInfo.processInfo.environment["FRAME_PORT"] ?? "13030"
-        webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!))
+        webView.load(frameRequest())
     }
     @objc func openDevTools() {
         // developerExtrasEnabled gives the context-menu Inspect Element; this

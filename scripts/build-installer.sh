@@ -154,21 +154,23 @@ PATTERNS='sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{60}|sk-proj-[A-Za-z0-9_-]{60}|sk-svca
 if grep -rIE "$PATTERNS" "$STAGE/payload" --exclude-dir=node_modules -l | head -5 | grep .; then
   echo "FATAL: staged payload contains key-shaped strings (above)" >&2; SCAN_FAIL=1
 fi
-# Exact-match every real key in THIS machine's vault (and the proxy token
-# cache) against the payload. Catches shapes the generic patterns miss.
-VAULT_JSON="${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}/secrets/provider-keys.json"
-if [ -f "$VAULT_JSON" ]; then
-  if ! python3 - "$VAULT_JSON" "$STAGE/payload" <<'PYEOF'
-import json, os, sys
-vault_path, payload = sys.argv[1], sys.argv[2]
+# Exact-match every real key in THIS machine's Keychain Vault against the
+# payload. Catches shapes the generic patterns miss without materializing a
+# plaintext credential file.
+if /usr/bin/security find-generic-password -a provider-credentials -s space.legacyai.floyd.vault -w >/dev/null 2>&1; then
+  if ! python3 - "$STAGE/payload" <<'PYEOF'
+import json, os, subprocess, sys
+payload = sys.argv[1]
 needles = set()
-for entry in json.load(open(vault_path)).values():
+result = subprocess.run(
+    ["/usr/bin/security", "find-generic-password", "-a", "provider-credentials",
+     "-s", "space.legacyai.floyd.vault", "-w"],
+    check=True, capture_output=True, text=True,
+)
+for entry in json.loads(result.stdout).values():
     k = entry.get("key")
     if k and len(k) >= 12:
         needles.add(k.encode())
-cache = os.path.join(os.path.dirname(vault_path), "proxy-app-tokens.json")
-if os.path.exists(cache):
-    needles.update(v.encode() for v in json.load(open(cache)).values())
 bad = []
 for root, dirs, files in os.walk(payload):
     dirs[:] = [d for d in dirs if d != "node_modules"]

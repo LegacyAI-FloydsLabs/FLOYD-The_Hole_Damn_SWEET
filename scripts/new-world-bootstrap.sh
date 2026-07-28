@@ -33,14 +33,14 @@ else
 fi
 
 # 3. Secrets vault -------------------------------------------------------------
-echo "[3/6] provider-key vault"
-RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}
-VAULT=$RUNTIME_ROOT/secrets/provider-keys.json
-if [ -f "$VAULT" ]; then
-  perms=$(stat -f %Lp "$VAULT")
-  [ "$perms" = "600" ] && ok "vault present, mode 600" || { chmod 600 "$VAULT" && ok "vault present, tightened to 600"; }
+echo "[3/6] provider-key Vault"
+if /usr/bin/security find-generic-password \
+  -a provider-credentials \
+  -s space.legacyai.floyd.vault \
+  -w >/dev/null 2>&1; then
+  ok "Vault provider authority present in macOS Keychain"
 else
-  bad "vault missing at $VAULT — restore FLOYD_RUNTIME/secrets or re-enter keys in the frame Keys panel"
+  bad "Vault provider authority missing in macOS Keychain — start Frame and enter keys in its Vault panel"
 fi
 
 # 4. LaunchAgents (the ONLY persistent services this repo installs) -----------

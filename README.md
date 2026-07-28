@@ -25,18 +25,19 @@ node apps/frame/server/frame-server.mjs   # frame shell on :13030
 
 Optional persistent services (the only LaunchAgents this repo installs):
 `./scripts/new-world-bootstrap.sh` (idempotent PASS/FAIL adoption of a fresh
-machine) or `npm run core:install` for Floyd Core alone. Provider keys load
-from the vault (`provider-keys.json`, mode 600); enter keys in the frame Keys
-panel if the vault is absent.
+machine) or `npm run core:install` for Floyd Core alone. Provider keys stay in
+the Vault's macOS Keychain storage. Managed applications receive only persistent
+`fv_...` capabilities and loopback Vault addresses; enter or rotate provider
+keys only in the Frame Keys panel.
 
 ## Status
 
-- Testing: 154/154 passing (sdk, opencode engine, core daemon, cli) as of last
-  verified run 2026-07-26.
+- Testing: use `npm test` plus each managed surface's local suite; final
+  receipts are produced from the current checkout rather than a stale count.
 - Dogfood: frame daily-driver verified on desktop and mobile viewports;
   rendered-browser visual proof and reboot survival remain manual checks.
-- Known gap: credential authority rework pending — the Vault becomes the single
-  in-FLOYD credential proxy for LLM APIs (no external credential daemons).
+- Credential authority: the Vault is the single in-FLOYD provider credential
+  proxy, including HTTP and Google Live WebSocket transports.
 
 ## Policy
 

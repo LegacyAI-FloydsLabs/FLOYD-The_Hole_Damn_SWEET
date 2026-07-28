@@ -22,6 +22,12 @@ durable authority.
 - The v5 backup is corrupted forensic lineage, never a code donor.
 - GLM Coding Plan is the initial coding route; MiniMax Token Plan is an explicit
   alternate after region/entitlement discovery. No silent PAYG fallback.
+- Vault keys live only in the macOS login Keychain under service
+  `space.legacyai.floyd.vault`. No plaintext provider-key files under
+  `FLOYD_RUNTIME/secrets`. Managed apps still receive only `fv_` capabilities
+  and loopback Vault routes. Unattended-daemon operation is out of scope:
+  Floyd runs only under the interactive login, and the separate automation
+  login has no Keychain access to these items.
 
 ## Non-negotiable protection
 
@@ -52,10 +58,14 @@ changes, commands, output, verification, and remaining work.
 | Port | Service |
 |---|---|
 | 13030 | FLOYD frame shell server |
+| 13031 | FLOYD vault credential proxy (loopback only) |
 | 13010 | floyd-desktop (frame-managed, intake/surfaces/desktop) |
+| 13011 | floyd-desktop Chrome extension MCP bridge (loopback only) |
 | 13012 | cursem-ide (frame-managed, intake/surfaces/ide) |
 | 13013 | terminalone (frame-managed PTY) |
 | 13014 | harness-launcher (frame-managed, intake/surfaces/launcher) |
 | 13022 | floyd-code-cli (frame-managed pty copy, SHELL=ff) |
 | 13023 | ohmyfloyd (frame-managed pty copy, SHELL=floydcode) |
+| 13032 | frame-internal-browser-cdp (frame-managed, loopback only) |
+| 41414 | floyd-core (loopback only) |
 | 8451-8455 | Reserved HTTPS remote ports for the five iframe apps (currently inactive — no private overlay configured) |
