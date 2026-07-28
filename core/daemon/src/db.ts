@@ -127,6 +127,17 @@ CREATE TABLE IF NOT EXISTS experience_envelopes (
   updated_by_device_id TEXT
 );
 
+-- Credential-free mirror of Vault connected-app IDs used only to validate
+-- portable-experience selections. OAuth material never enters this table.
+CREATE TABLE IF NOT EXISTS connected_app_registry (
+  id TEXT PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS model_connector_registry (
+  id TEXT PRIMARY KEY,
+  metadata_json TEXT NOT NULL
+);
+
 -- append-only enforcement: any UPDATE or DELETE on evidence fails at the engine
 CREATE TRIGGER IF NOT EXISTS evidence_no_update
   BEFORE UPDATE ON evidence_events

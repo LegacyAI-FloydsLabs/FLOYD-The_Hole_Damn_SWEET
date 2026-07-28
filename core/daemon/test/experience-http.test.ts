@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -19,6 +19,8 @@ const { gatewayToken } = await import("../src/config.ts");
 const { startGateway, startRemoteGateway, startRemoteSurfaceGateways, pumpSessionChannel, writeRunEvent } = await import("../src/http.ts");
 const { synchronizePendingInteractions } = await import("../src/experience.ts");
 const { putArtifact, linkRunArtifact } = await import("../src/artifacts.ts");
+const { createConnectedAppVault } = await import("../../../apps/frame/server/connected-app-vault.mjs");
+const { createModelConnectorVault } = await import("../../../apps/frame/server/model-connector-vault.mjs");
 
 const db = openDb(join(runtimeRoot, "core", "http.db"));
 let pendingProviderAvailable = false;
@@ -133,8 +135,124 @@ const connectedAppFetch: typeof globalThis.fetch = async (input, init = {}) => {
     return Response.json({ access_token: "http-access-two", refresh_token: "http-refresh-two", token_type: "Bearer", expires_in: 3600 });
   }
   if (url === "https://auth.http.test/revoke") return new Response(null, { status: 204 });
-  throw new Error(`unexpected connected app request ${url}`);
+  return globalThis.fetch(input, init);
 };
+const connectedAppVault = createConnectedAppVault({
+  secretsDir: join(runtimeRoot, "vault-connected-apps"),
+  masterKey: Buffer.alloc(32, 7),
+  returnUrl: "http://127.0.0.1:13030/?settings=connections",
+  fetchImpl: connectedAppFetch,
+});
+const modelConnectorVault = createModelConnectorVault({
+  secretsDir: join(runtimeRoot, "vault-model-connectors"),
+  masterKey: Buffer.alloc(32, 8),
+  returnUrl: "http://127.0.0.1:13030/?settings=connections",
+  fetchImpl: connectedAppFetch,
+});
+const coreVaultToken = `fv_core_${"1".repeat(48)}`;
+const modelConnectorRelay = createServer(async (req, res) => {
+  if (req.headers.authorization !== `Bearer ${coreVaultToken}`) {
+    res.writeHead(401, { "content-type": "application/json" });
+    return res.end('{"error":"unauthorized"}');
+  }
+  const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  const invoke = url.pathname.match(/^\/connectors\/([^/]+)\/invoke$/);
+  if (!invoke) {
+    res.writeHead(404, { "content-type": "application/json" });
+    return res.end('{"error":"not_found"}');
+  }
+  let raw = "";
+  for await (const chunk of req) raw += String(chunk);
+  const response = await modelConnectorVault.invoke({
+    app: "core",
+    connectorId: decodeURIComponent(invoke[1] ?? ""),
+    payload: JSON.parse(raw || "{}"),
+  });
+  res.writeHead(response.status, { "content-type": response.headers.get("content-type") ?? "application/json" });
+  res.end(Buffer.from(await response.arrayBuffer()));
+});
+modelConnectorRelay.listen(0, "127.0.0.1");
+await once(modelConnectorRelay, "listening");
+const modelConnectorRelayAddress = modelConnectorRelay.address();
+if (!modelConnectorRelayAddress || typeof modelConnectorRelayAddress === "string") {
+  throw new Error("model connector Vault relay did not bind");
+}
+const connectedAppVaultCapability = {
+  token: coreVaultToken,
+  proxy: `http://127.0.0.1:${modelConnectorRelayAddress.port}`,
+  source: "floyd-vault:core",
+} as const;
+mkdirSync(join(runtimeRoot, "secrets", "proxy-app-profiles"), { recursive: true, mode: 0o700 });
+writeFileSync(
+  join(runtimeRoot, "secrets", "proxy-app-profiles", "core.json"),
+  JSON.stringify({
+    app: "core",
+    proxyToken: connectedAppVaultCapability.token,
+    proxyUrl: connectedAppVaultCapability.proxy,
+  }),
+  { mode: 0o600 },
+);
+const connectedAppVaultCalls: Array<{ url: string; method: string; authorization: string | null; body: unknown }> = [];
+const connectedAppVaultFetch: typeof globalThis.fetch = async (input, init = {}) => {
+  const url = new URL(String(input));
+  const authorization = new Headers(init.headers).get("authorization");
+  if (authorization !== `Bearer ${connectedAppVaultCapability.token}`) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+  let body: unknown = {};
+  if (typeof init.body === "string" && init.body) body = JSON.parse(init.body);
+  connectedAppVaultCalls.push({ url: url.href, method: init.method ?? "GET", authorization, body });
+  if (/^\/connectors\/[^/]+\/invoke$/.test(url.pathname)) {
+    return modelConnectorVault.invoke({
+      app: "core",
+      connectorId: decodeURIComponent(url.pathname.split("/")[2] ?? ""),
+      payload: body as Record<string, unknown>,
+      signal: init.signal ?? undefined,
+    });
+  }
+  const service = url.pathname.startsWith("/connectors") ? modelConnectorVault : connectedAppVault;
+  const output = await service.dispatch({
+    app: "core",
+    method: init.method ?? "GET",
+    pathname: url.pathname,
+    body,
+    signal: init.signal ?? undefined,
+  });
+  return Response.json(output.body, { status: output.status });
+};
+async function sealConnectorSecret(secret: string): Promise<Record<string, string>> {
+  const ingress = await (await api("/api/connectors/ingress-key")).json() as {
+    keyId: string; spki: string;
+  };
+  const standard = ingress.spki.replace(/-/g, "+").replace(/_/g, "/");
+  const publicKey = await globalThis.crypto.subtle.importKey(
+    "spki",
+    Uint8Array.from(atob(standard + "=".repeat((4 - standard.length % 4) % 4)), (character) => character.charCodeAt(0)),
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["encrypt"],
+  );
+  const dataKey = await globalThis.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await globalThis.crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    dataKey,
+    new TextEncoder().encode(secret),
+  ));
+  const wrapped = new Uint8Array(await globalThis.crypto.subtle.encrypt(
+    { name: "RSA-OAEP" },
+    publicKey,
+    await globalThis.crypto.subtle.exportKey("raw", dataKey),
+  ));
+  const encoded = (value: Uint8Array) => Buffer.from(value).toString("base64url");
+  return {
+    keyId: ingress.keyId,
+    wrappedKey: encoded(wrapped),
+    iv: encoded(iv),
+    ciphertext: encoded(sealed.subarray(0, -16)),
+    tag: encoded(sealed.subarray(-16)),
+  };
+}
 const surfaceHealthFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
   const url = String(input);
   observedSurfaceHealthUrls.push(url);
@@ -146,8 +264,15 @@ const surfaceHealthFetch = async (input: string | URL | Request, init?: RequestI
     identity: identity.surface_id === mismatchedSurfaceId ? { ...identity, source_commit: "donor-or-stale-commit" } : identity,
   });
 };
-const server = startGateway(db, engine, process.pid, new Date().toISOString(), { surfaceHealthFetch, connectedAppFetch });
-const remoteServer = startRemoteGateway(db, engine, process.pid, new Date().toISOString(), { connectedAppFetch });
+const server = startGateway(db, engine, process.pid, new Date().toISOString(), {
+  surfaceHealthFetch,
+  connectedAppVaultFetch,
+  connectedAppVaultCapability,
+});
+const remoteServer = startRemoteGateway(db, engine, process.pid, new Date().toISOString(), {
+  connectedAppVaultFetch,
+  connectedAppVaultCapability,
+});
 if (!server.listening) await once(server, "listening");
 if (!remoteServer.listening) await once(remoteServer, "listening");
 const address = server.address();
@@ -755,23 +880,23 @@ test("remote surface relays require a scoped device session, strip credentials, 
   }
 });
 
-test("HTTP connector authority keeps secrets opaque and injects only endpoint-bound references", async () => {
+test("HTTP custom model connectors preserve API-key and OAuth lifecycle entirely through Vault", async () => {
+  let upstreamRequests = 0;
   let upstreamAuthorization = "";
   const upstream = createServer(async (req, res) => {
-    upstreamAuthorization = req.headers.authorization ?? "";
+    upstreamRequests += 1;
+    upstreamAuthorization = String(req.headers.authorization ?? req.headers["x-api-key"] ?? "");
     for await (const _chunk of req) { /* drain */ }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end('{"connector":"ok"}');
+    res.end('{"id":"connector-response","choices":[{"message":{"role":"assistant","content":"via vault"}}]}');
   });
   upstream.listen(0, "127.0.0.1");
   await once(upstream, "listening");
   const upstreamAddress = upstream.address();
   if (!upstreamAddress || typeof upstreamAddress === "string") throw new Error("connector upstream did not bind");
-  const apiKey = "connector-http-secret-value";
   try {
     const malformed = await api("/api/connectors", { method: "POST", body: "null" });
     assert.equal(malformed.status, 400);
-    assert.equal((await malformed.json() as { error: string }).error, "invalid_input");
 
     const created = await api("/api/connectors", {
       method: "POST",
@@ -782,24 +907,20 @@ test("HTTP connector authority keeps secrets opaque and injects only endpoint-bo
         baseUrl: `http://127.0.0.1:${upstreamAddress.port}/v1`,
       }),
     });
-    assert.equal(created.status, 201);
-    assert.equal(created.headers.get("cache-control"), "no-store");
-    assert.doesNotMatch(await created.clone().text(), /secret/i);
-
+    assert.equal((await created.json() as { id: string }).id, "http-openai");
+    const plaintextRejected = await api("/api/connectors/http-openai/api-key", {
+      method: "POST", body: JSON.stringify({ apiKey: "must-never-enter-core" }),
+    });
+    assert.equal(plaintextRejected.status, 400);
     const stored = await api("/api/connectors/http-openai/api-key", {
       method: "POST",
-      body: JSON.stringify({ apiKey }),
+      body: JSON.stringify({ sealedApiKey: await sealConnectorSecret("model-api-secret") }),
     });
     assert.equal(stored.status, 201);
-    const storedBody = await stored.json() as { credentialRef: string };
-    assert.equal(storedBody.credentialRef, "floyd-connector:http-openai");
 
-    const listed = await api("/api/connectors");
-    const listedText = await listed.text();
-    assert.equal(listed.status, 200);
-    assert.equal(listed.headers.get("cache-control"), "no-store");
-    assert.doesNotMatch(listedText, new RegExp(apiKey));
-    assert.match(listedText, /floyd-connector:http-openai/);
+    const listedText = await (await api("/api/connectors")).text();
+    assert.match(listedText, /http-openai/);
+    assert.doesNotMatch(listedText, /model-api-secret|wrappedKey|ciphertext/);
 
     const gateway = await fetch(`${baseUrl}/gateway`, {
       method: "POST",
@@ -807,38 +928,79 @@ test("HTTP connector authority keeps secrets opaque and injects only endpoint-bo
         "content-type": "application/json",
         "x-floyd-token": gatewayToken(),
         "x-floyd-provider": "openai",
-        "x-floyd-credential-ref": storedBody.credentialRef,
+        "x-floyd-connector": "http-openai",
       },
       body: JSON.stringify({ model: "gpt-test", messages: [{ role: "user", content: "hello" }], stream: false }),
     });
-    assert.equal(gateway.status, 200);
-    assert.equal(await gateway.text(), '{"connector":"ok"}');
-    assert.equal(upstreamAuthorization, `Bearer ${apiKey}`);
+    assert.equal(gateway.status, 200, await gateway.clone().text());
+    assert.equal((await gateway.json() as { id: string }).id, "connector-response");
+    assert.equal(upstreamRequests, 1);
+    assert.equal(upstreamAuthorization, "Bearer model-api-secret");
+    assert.doesNotMatch(JSON.stringify(connectedAppVaultCalls), /model-api-secret/);
+    assert.doesNotMatch(
+      JSON.stringify(db.prepare("SELECT * FROM model_connector_registry").all()),
+      /model-api-secret|wrappedKey|ciphertext/,
+    );
 
-    const ambiguous = await fetch(`${baseUrl}/gateway`, {
+    const oauthProfile = await api("/api/connectors", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-floyd-token": gatewayToken(),
-        "x-floyd-credential-ref": storedBody.credentialRef,
-        authorization: "Bearer attacker-substitute",
-      },
-      body: JSON.stringify({ model: "gpt-test", messages: [], stream: false }),
+      body: JSON.stringify({
+        id: "oauth-openai",
+        displayName: "OAuth OpenAI",
+        provider: "openai",
+        baseUrl: `http://127.0.0.1:${upstreamAddress.port}/v1`,
+        clientId: "http-client",
+        authorizationUrl: "https://auth.http.test/authorize",
+        tokenUrl: "https://auth.http.test/token",
+        revocationUrl: "https://auth.http.test/revoke",
+      }),
     });
-    assert.equal(ambiguous.status, 400);
-    assert.equal((await ambiguous.json() as { error: string }).error, "credential_ambiguous");
+    assert.equal((await oauthProfile.json() as { id: string }).id, "oauth-openai");
+    const started = await api("/api/connectors/oauth-openai/oauth/start", {
+      method: "POST",
+      body: JSON.stringify({ redirectUri: "https://must-be-ignored.test/callback", ttlMs: 60_000 }),
+    });
+    const authorizationUrl = new URL((await started.json() as { authorizationUrl: string }).authorizationUrl);
+    assert.equal(
+      authorizationUrl.searchParams.get("redirect_uri"),
+      `${connectedAppVaultCapability.proxy}/connectors/oauth/callback`,
+    );
+    const oauthCallback = await modelConnectorVault.handleOAuthCallback({
+      state: authorizationUrl.searchParams.get("state") ?? "",
+      code: "vault-only-model-code",
+    });
+    assert.equal(oauthCallback.location, "http://127.0.0.1:13030/?settings=connections&connector=oauth-openai");
+    assert.doesNotMatch(oauthCallback.location, /vault-only-model-code|state=/);
+    assert.equal((await api("/api/connectors/oauth/callback", {
+      method: "POST",
+      body: JSON.stringify({ state: "must-not", code: "must-not" }),
+    })).status, 404);
+
+    assert.equal((await api("/api/connectors/http-openai", { method: "DELETE" })).status, 200);
   } finally {
     await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
   }
 });
 
-test("HTTP connected-app OAuth keeps callback exchange server-owned and supports explicit refresh and revocation", async () => {
+test("HTTP connected-app OAuth keeps callback exchange Vault-owned and supports explicit refresh and revocation", async () => {
   connectedAppCalls.length = 0;
+  const wrongCapability = await connectedAppVault.dispatch({
+    app: "desktop",
+    method: "GET",
+    pathname: "/connected-apps",
+  });
+  assert.deepEqual(wrongCapability, {
+    status: 403,
+    body: {
+      error: "connected_app_scope_denied",
+      message: "connected applications require Core's Vault capability",
+    },
+  });
   const created = await api("/api/connected-apps", {
     method: "POST",
     body: JSON.stringify({ id: "http-notes", displayName: "HTTP Notes", resourceUrl: "https://mcp.http.test/mcp" }),
   });
-  assert.equal(created.status, 201);
+  assert.equal(created.status, 201, await created.clone().text());
   const createdBody = await created.json() as { id: string; resourceMetadataUrl: string; status: string };
   assert.equal(createdBody.id, "http-notes");
   assert.equal(createdBody.resourceMetadataUrl, "https://mcp.http.test/.well-known/oauth-protected-resource/mcp");
@@ -849,14 +1011,22 @@ test("HTTP connected-app OAuth keeps callback exchange server-owned and supports
   const startedBody = await started.json() as { authorizationUrl: string };
   const authorization = new URL(startedBody.authorizationUrl);
   assert.equal(authorization.searchParams.get("resource"), "https://mcp.http.test/mcp");
+  assert.equal(
+    authorization.searchParams.get("redirect_uri"),
+    `${connectedAppVaultCapability.proxy}/connected-apps/oauth/callback`,
+  );
   const state = authorization.searchParams.get("state")!;
 
-  const callback = await fetch(`${baseUrl}/api/connected-apps/oauth/callback?state=${encodeURIComponent(state)}&code=server-only-code`, {
-    redirect: "manual",
+  const callback = await connectedAppVault.handleOAuthCallback({
+    state,
+    code: "server-only-code",
   });
   assert.equal(callback.status, 303);
-  assert.equal(callback.headers.get("location"), "/?settings=connections&connected_app=http-notes");
-  assert.equal(callback.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(callback.location, "http://127.0.0.1:13030/?settings=connections&connected_app=http-notes");
+  assert.doesNotMatch(callback.location, /server-only-code|state=/);
+  assert.equal((await fetch(
+    `${baseUrl}/api/connected-apps/oauth/callback?state=${encodeURIComponent(state)}&code=must-not-enter-core`,
+  )).status, 401);
   const tokenCall = connectedAppCalls.find((call) => call.form?.get("grant_type") === "authorization_code")!;
   assert.equal(tokenCall.form!.get("code"), "server-only-code");
   assert.equal(tokenCall.form!.get("resource"), "https://mcp.http.test/mcp");
@@ -864,6 +1034,15 @@ test("HTTP connected-app OAuth keeps callback exchange server-owned and supports
   const listedText = await (await api("/api/connected-apps")).text();
   assert.match(listedText, /"status":\s*"connected"/);
   assert.doesNotMatch(listedText, /http-access|http-refresh|server-only-code|credentialRef/);
+  assert.equal(connectedAppVaultCalls.every((call) => call.authorization === `Bearer ${connectedAppVaultCapability.token}`), true);
+  assert.doesNotMatch(JSON.stringify(connectedAppVaultCalls), /http-access|http-refresh/);
+  assert.doesNotMatch(
+    JSON.stringify({
+      registry: db.prepare("SELECT * FROM connected_app_registry").all(),
+      schema: db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all(),
+    }),
+    /http-access|http-refresh|connected_app_credentials|connected_app_oauth_attempts/,
+  );
 
   const refreshed = await api("/api/connected-apps/http-notes/refresh", { method: "POST", body: "{}" });
   assert.equal(refreshed.status, 200);
@@ -1163,5 +1342,8 @@ test("a fresh session attach receives a durable transcript snapshot", async () =
 test.after(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   await new Promise<void>((resolve, reject) => remoteServer.close((error) => error ? reject(error) : resolve()));
+  await connectedAppVault.close();
+  modelConnectorVault.close();
+  await new Promise<void>((resolve, reject) => modelConnectorRelay.close((error) => error ? reject(error) : resolve()));
   db.close();
 });

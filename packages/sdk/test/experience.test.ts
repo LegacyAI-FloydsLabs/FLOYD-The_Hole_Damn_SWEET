@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import {
   FloydApiError,
   FloydClient,
@@ -218,7 +219,14 @@ test("typed and browser clients expose the same device and handoff lifecycle", a
   }
 });
 
-test("typed and browser clients expose the same connector lifecycle without actor spoofing", async () => {
+test("typed and browser clients preserve Vault connector lifecycle without plaintext callback or credential transit", async () => {
+  const pair = generateKeyPairSync("rsa", { modulusLength: 2048, publicExponent: 0x10001 });
+  const spki = pair.publicKey.export({ type: "spki", format: "der" });
+  const ingress = {
+    keyId: createHash("sha256").update(spki).digest("hex").slice(0, 24),
+    algorithm: "RSA-OAEP-256",
+    spki: spki.toString("base64url"),
+  };
   for (const Client of [FloydClient, FloydBrowserClient] as const) {
     const seen: Request[] = [];
     const client = new Client({
@@ -227,27 +235,34 @@ test("typed and browser clients expose the same connector lifecycle without acto
       fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         seen.push(request.clone());
-        return Response.json({ ok: true });
+        return new URL(request.url).pathname === "/api/connectors/ingress-key"
+          ? Response.json(ingress)
+          : Response.json({ ok: true });
       },
     }) as FloydClient;
     await client.connectors();
     await client.createConnector({
-      id: "user-openai", displayName: "User OpenAI", provider: "openai", baseUrl: "https://api.openai.com/v1",
+      id: "sdk-oauth",
+      displayName: "SDK OAuth",
+      provider: "openai",
+      baseUrl: "https://model.example/v1",
+      clientId: "public-client",
+      clientSecret: "sdk-client-secret",
+      authorizationUrl: "https://auth.example/authorize",
+      tokenUrl: "https://auth.example/token",
     });
-    await client.storeConnectorApiKey("user/openai", "provider-secret");
-    await client.startConnectorOAuth("user/openai", "http://127.0.0.1:7777/callback", 60_000);
-    await client.completeConnectorOAuth("oauth-state", "oauth-code");
-    await client.revokeConnector("user/openai");
-
-    assert.deepEqual(seen.map((request) => [request.method, new URL(request.url).pathname]), [
-      ["GET", "/api/connectors"],
-      ["POST", "/api/connectors"],
-      ["POST", "/api/connectors/user%2Fopenai/api-key"],
-      ["POST", "/api/connectors/user%2Fopenai/oauth/start"],
-      ["POST", "/api/connectors/oauth/callback"],
-      ["DELETE", "/api/connectors/user%2Fopenai"],
-    ]);
-    for (const request of seen) assert.equal((await request.text()).includes("actor"), false);
+    await client.storeConnectorApiKey("sdk-oauth", "sdk-api-secret");
+    await client.startConnectorOAuth("sdk-oauth", "https://must-not-travel.test/callback", 60_000);
+    await client.revokeConnector("sdk-oauth");
+    const serialized = JSON.stringify(await Promise.all(seen.map(async (request) => ({
+      method: request.method,
+      path: new URL(request.url).pathname,
+      body: await request.text(),
+    }))));
+    assert.doesNotMatch(serialized, /sdk-client-secret|sdk-api-secret|must-not-travel/);
+    assert.match(serialized, /sealedClientSecret/);
+    assert.match(serialized, /sealedApiKey/);
+    assert.equal(typeof (client as unknown as Record<string, unknown>).completeConnectorOAuth, "undefined");
   }
 });
 

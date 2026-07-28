@@ -22,6 +22,46 @@ export class FloydStreamIncompleteError extends Error {
   }
 }
 
+async function sealForConnectorIngress(keyId, spki, secret) {
+  const publicKey = await globalThis.crypto.subtle.importKey(
+    "spki",
+    base64UrlBytes(spki),
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["encrypt"],
+  );
+  const dataKey = await globalThis.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await globalThis.crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    dataKey,
+    new TextEncoder().encode(secret),
+  ));
+  const rawKey = await globalThis.crypto.subtle.exportKey("raw", dataKey);
+  const wrappedKey = await globalThis.crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawKey);
+  return {
+    keyId,
+    wrappedKey: bytesBase64Url(new Uint8Array(wrappedKey)),
+    iv: bytesBase64Url(iv),
+    ciphertext: bytesBase64Url(sealed.subarray(0, -16)),
+    tag: bytesBase64Url(sealed.subarray(-16)),
+  };
+}
+
+function base64UrlBytes(value) {
+  const standard = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(standard + "=".repeat((4 - standard.length % 4) % 4));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function bytesBase64Url(value) {
+  let binary = "";
+  for (let offset = 0; offset < value.length; offset += 0x8000) {
+    binary += String.fromCharCode(...value.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 /** Browser build of the dependency-free Floyd Core client. */
 export class FloydBrowserClient {
   constructor({ baseUrl = "", token, fetch: fetchImpl = globalThis.fetch }) {
@@ -168,24 +208,34 @@ export class FloydBrowserClient {
     return this.request("GET", "/api/connectors", undefined, signal);
   }
 
-  createConnector(input, signal) {
-    return this.request("POST", "/api/connectors", input, signal);
+  async createConnector(input, signal) {
+    const { clientSecret, ...profile } = input;
+    const sealedClientSecret = clientSecret === undefined
+      ? undefined
+      : await this.sealConnectorSecret(clientSecret, signal);
+    return this.request("POST", "/api/connectors", {
+      ...profile,
+      ...(sealedClientSecret ? { sealedClientSecret } : {}),
+    }, signal);
   }
 
-  storeConnectorApiKey(connectorId, apiKey, signal) {
-    return this.request("POST", `/api/connectors/${encodeURIComponent(connectorId)}/api-key`, { apiKey }, signal);
+  async storeConnectorApiKey(connectorId, apiKey, signal) {
+    const sealedApiKey = await this.sealConnectorSecret(apiKey, signal);
+    return this.request("POST", `/api/connectors/${encodeURIComponent(connectorId)}/api-key`, { sealedApiKey }, signal);
   }
 
-  startConnectorOAuth(connectorId, redirectUri, ttlMs, signal) {
-    return this.request("POST", `/api/connectors/${encodeURIComponent(connectorId)}/oauth/start`, { redirectUri, ttlMs }, signal);
-  }
-
-  completeConnectorOAuth(state, code, signal) {
-    return this.request("POST", "/api/connectors/oauth/callback", { state, code }, signal);
+  startConnectorOAuth(connectorId, _redirectUri, ttlMs, signal) {
+    return this.request("POST", `/api/connectors/${encodeURIComponent(connectorId)}/oauth/start`, { ttlMs }, signal);
   }
 
   revokeConnector(connectorId, signal) {
     return this.request("DELETE", `/api/connectors/${encodeURIComponent(connectorId)}`, undefined, signal);
+  }
+
+  async sealConnectorSecret(secret, signal) {
+    const ingress = await this.request("GET", "/api/connectors/ingress-key", undefined, signal);
+    if (ingress.algorithm !== "RSA-OAEP-256") throw new Error("Vault connector ingress algorithm is unsupported");
+    return sealForConnectorIngress(ingress.keyId, ingress.spki, secret);
   }
 
   connectedApps(signal) {
@@ -212,12 +262,8 @@ export class FloydBrowserClient {
     return this.request("POST", `/api/connected-apps/${encodeURIComponent(connectedAppId)}/invoke`, request, signal);
   }
 
-  /** Stream one user-configured provider through Core's normalized relay. */
-  async *modelStream({ provider, apiKey, credentialRef, baseUrl, anthropicVersion, model, messages, signal }) {
-    if (Boolean(apiKey) === Boolean(credentialRef)) {
-      throw new Error("model route requires exactly one of apiKey or credentialRef");
-    }
-    const anthropic = provider === "anthropic" || (provider === "auto" && model.toLowerCase().startsWith("claude-"));
+  /** Stream one Vault-routed provider through Core's normalized relay. */
+  async *modelStream({ provider, connectorId, model, messages, signal }) {
     const coreToken = await this.token();
     const response = await this.fetchImpl(`${this.baseUrl}/gateway`, {
       method: "POST",
@@ -227,10 +273,7 @@ export class FloydBrowserClient {
         accept: "text/event-stream",
         ...(coreToken ? { "x-floyd-token": coreToken } : {}),
         "x-floyd-provider": provider,
-        ...(baseUrl ? { "x-floyd-base-url": baseUrl } : {}),
-        ...(credentialRef ? { "x-floyd-credential-ref": credentialRef } : anthropic
-          ? { "x-api-key": apiKey, "anthropic-version": anthropicVersion || "2023-06-01" }
-          : { authorization: `Bearer ${apiKey}` }),
+        ...(connectorId ? { "x-floyd-connector": connectorId } : {}),
       },
       body: JSON.stringify({ model, messages, stream: true }),
       signal,

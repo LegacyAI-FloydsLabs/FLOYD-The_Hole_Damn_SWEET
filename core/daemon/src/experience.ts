@@ -167,7 +167,7 @@ function canonicalConnectedAppIds(value: unknown): string[] {
 function validateConnectedAppReferences(db: Db, ids: string[]): void {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => "?").join(",");
-  const rows = db.prepare(`SELECT id FROM connected_app_profiles WHERE id IN (${placeholders})`).all(...ids) as Array<{ id: string }>;
+  const rows = db.prepare(`SELECT id FROM connected_app_registry WHERE id IN (${placeholders})`).all(...ids) as Array<{ id: string }>;
   const existing = new Set(rows.map((row) => row.id));
   const missing = ids.find((id) => !existing.has(id));
   if (missing) validation(`connected_app_ids references connected app ${missing}, which does not exist`);

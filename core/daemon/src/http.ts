@@ -26,9 +26,15 @@ import { listSkills, loadSkill, registerSkill } from "./skills.ts";
 import { normalizeEngineEvent, type SessionMap } from "./live-channel.ts";
 import { classifyEngineEvent, SessionBuffer } from "./session-channel.ts";
 import { relayProviderRequest } from "./provider-gateway.ts";
-import { ConnectorAuthorityError, ConnectorAuthorityService } from "./connector-authority.ts";
-import { ConnectedAppAuthorityError, ConnectedAppAuthorityService } from "./connected-app-authority.ts";
-import { ConnectedAppTransport, ConnectedAppTransportError } from "./connected-app-transport.ts";
+import {
+  ConnectedAppVaultClient,
+  ConnectedAppVaultClientError,
+} from "./connected-app-vault-client.ts";
+import type { CoreVaultCapability } from "./vault-capability.ts";
+import {
+  ModelConnectorVaultClient,
+  ModelConnectorVaultClientError,
+} from "./model-connector-vault-client.ts";
 import { renderQrSvg } from "./qr.ts";
 import {
   ExperienceConflictError,
@@ -150,8 +156,10 @@ type SurfaceHealthFetch = (input: string | URL | Request, init?: RequestInit) =>
 type GatewayDependencies = {
   /** Test seam only. Callers cannot alter the fixed admitted URL registry. */
   surfaceHealthFetch?: SurfaceHealthFetch;
-  /** Test seam for external OAuth discovery and token endpoints. */
-  connectedAppFetch?: typeof globalThis.fetch;
+  /** Test seam for Core's authenticated loopback calls to Floyd Vault. */
+  connectedAppVaultFetch?: typeof globalThis.fetch;
+  /** Test seam for an isolated Vault capability. Production reads its 0600 profile. */
+  connectedAppVaultCapability?: CoreVaultCapability;
 };
 
 async function boundedHealthJson(response: Response): Promise<Record<string, unknown>> {
@@ -229,6 +237,22 @@ async function discoverAdmittedSurfaces(fetchImpl: SurfaceHealthFetch, requestSi
   return Promise.all(ADMITTED_SURFACES.map((surface) => probeAdmittedSurface(surface, fetchImpl, requestSignal)));
 }
 
+function cacheConnectedAppIds(db: Db, ids: readonly string[]): void {
+  const insert = db.prepare("INSERT OR IGNORE INTO connected_app_registry (id) VALUES (?)");
+  for (const id of ids) insert.run(id);
+}
+
+function cacheModelConnectors(db: Db, profiles: readonly Record<string, unknown>[]): void {
+  const upsert = db.prepare(
+    "INSERT INTO model_connector_registry (id, metadata_json) VALUES (?, ?) "
+    + "ON CONFLICT(id) DO UPDATE SET metadata_json = excluded.metadata_json",
+  );
+  for (const profile of profiles) {
+    if (typeof profile.id !== "string") continue;
+    upsert.run(profile.id, JSON.stringify(profile));
+  }
+}
+
 type SseClient = { res: ServerResponse; run_id?: string };
 const sseClients = new Set<SseClient>();
 
@@ -238,41 +262,6 @@ type RemotePrincipal = ReturnType<ExperienceSecurityService["authenticateDeviceS
 const remoteStreams = new Map<string, Set<ServerResponse>>();
 const remoteSurfaceSockets = new Map<string, Set<Duplex>>();
 const remoteSurfaceRequests = new Map<string, Set<AbortController>>();
-const connectedAppRequests = new Map<string, Set<AbortController>>();
-
-function registerConnectedAppRequest(connectedAppId: string, signals: readonly AbortSignal[]): { signal: AbortSignal; finish: () => void } {
-  const requests = connectedAppRequests.get(connectedAppId) ?? new Set<AbortController>();
-  if (requests.size >= 8) throw new ExperienceSecurityError("scope_denied", "connected app request limit exceeded", 429);
-  const controller = new AbortController();
-  const relayAbort = (signal: AbortSignal) => controller.abort(signal.reason ?? new Error("connected app request aborted"));
-  const listeners = signals.map((signal) => {
-    const listener = () => relayAbort(signal);
-    if (signal.aborted) listener();
-    else signal.addEventListener("abort", listener, { once: true });
-    return { signal, listener };
-  });
-  requests.add(controller);
-  connectedAppRequests.set(connectedAppId, requests);
-  let finished = false;
-  return {
-    signal: controller.signal,
-    finish: () => {
-      if (finished) return;
-      finished = true;
-      for (const { signal, listener } of listeners) signal.removeEventListener("abort", listener);
-      requests.delete(controller);
-      if (requests.size === 0) connectedAppRequests.delete(connectedAppId);
-    },
-  };
-}
-
-function abortConnectedAppRequests(connectedAppId: string): void {
-  for (const controller of connectedAppRequests.get(connectedAppId) ?? []) {
-    controller.abort(new Error("connected app disconnected"));
-  }
-  connectedAppRequests.delete(connectedAppId);
-}
-
 function registerRemoteStream(res: ServerResponse, principal: RemotePrincipal): void {
   const current = remoteStreams.get(principal.sessionId) ?? new Set<ServerResponse>();
   current.add(res);
@@ -646,6 +635,11 @@ class RequestBodyTooLargeError extends Error {
   constructor() { super("request body exceeds 1048576 bytes"); }
 }
 
+class RequestInputError extends Error {
+  readonly code = "invalid_input";
+  readonly httpStatus = 400;
+}
+
 function send(res: ServerResponse, code: number, body: unknown, mime = "application/json"): void {
   const out = mime === "application/json" ? JSON.stringify(body, null, 2) : String(body);
   res.writeHead(code, { "content-type": mime });
@@ -654,7 +648,7 @@ function send(res: ServerResponse, code: number, body: unknown, mime = "applicat
 
 function requestObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new ConnectorAuthorityError("invalid_input", "request body must be a JSON object", 400);
+    throw new RequestInputError("request body must be a JSON object");
   }
   return body as Record<string, unknown>;
 }
@@ -905,16 +899,14 @@ function createGateway(
     evidence: (event) => appendEvidence(db, event.type, event.actor, event.payload),
     sessionInvalidated: closeRemoteStreams,
   });
-  const connectors = boundary === "local" ? new ConnectorAuthorityService(db, {
-    masterKeyPath: PATHS.connectorMasterKey,
-    evidence: (event) => appendEvidence(db, event.type, event.actor, event.payload),
-  }) : null;
-  const connectedApps = new ConnectedAppAuthorityService(db, {
-    masterKeyPath: PATHS.connectedAppMasterKey,
-    fetch: dependencies.connectedAppFetch,
-    evidence: (event) => appendEvidence(db, event.type, event.actor, event.payload),
+  const connectedApps = new ConnectedAppVaultClient({
+    fetch: dependencies.connectedAppVaultFetch,
+    capability: dependencies.connectedAppVaultCapability,
   });
-
+  const modelConnectors = new ModelConnectorVaultClient({
+    fetch: dependencies.connectedAppVaultFetch,
+    capability: dependencies.connectedAppVaultCapability,
+  });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${LOOPBACK}:${CORE_PORT}`);
     const path = url.pathname;
@@ -930,8 +922,8 @@ function createGateway(
       res.setHeader("strict-transport-security", "max-age=31536000");
     }
 
-    // /gateway reserves Authorization and x-api-key for the upstream provider,
-    // so local Core authentication uses a distinct header on that route.
+    // /gateway accepts only Core auth and a provider selection. Vault owns the
+    // application capability, provider credential, and destination.
     const isProviderGateway = path === "/gateway";
     if (isProviderGateway && req.headers.origin) {
       let allowedOrigin = "";
@@ -945,7 +937,7 @@ function createGateway(
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "access-control-allow-methods": "POST, OPTIONS",
-          "access-control-allow-headers": "content-type, authorization, x-api-key, anthropic-version, x-floyd-token, x-floyd-provider, x-floyd-base-url, x-floyd-credential-ref",
+          "access-control-allow-headers": "content-type, x-floyd-token, x-floyd-provider, x-floyd-connector",
           "access-control-max-age": "600",
         });
         return res.end();
@@ -963,9 +955,7 @@ function createGateway(
       : bearerAuth || deviceCookie || localCookie;
     const isStatic = !path.startsWith("/api/") && !isProviderGateway;
     const localSessionBootstrap = boundary === "local" && path === "/api/local-session" && req.method === "POST";
-    const connectedAppOAuthCallback = boundary === "local" && req.method === "GET"
-      && path === "/api/connected-apps/oauth/callback";
-    const selfAuthenticating = connectedAppOAuthCallback || localSessionBootstrap || (req.method === "POST"
+    const selfAuthenticating = localSessionBootstrap || (req.method === "POST"
       && (path === "/api/devices/authenticate" || path === "/api/handoffs/consume" || path === "/api/handoffs/pair"));
     if (selfAuthenticating) {
       if (path === "/api/handoffs/pair" && boundary === "remote" && !req.headers.origin) {
@@ -1052,36 +1042,15 @@ function createGateway(
         res.setHeader("cache-control", "no-store");
         return send(res, 200, { revoked: true });
       }
-      if (connectedAppOAuthCallback) {
-        res.setHeader("cache-control", "no-store");
-        res.setHeader("referrer-policy", "no-referrer");
-        let location = "/?settings=connections";
-        try {
-          const state = url.searchParams.get("state") ?? "";
-          const code = url.searchParams.get("code") ?? "";
-          if (url.searchParams.has("error")) {
-            throw new ConnectedAppAuthorityError("oauth_authorization_denied", "connected app authorization was denied", 400);
-          }
-          const credentialRef = await connectedApps!.completeOAuth(state, code, "oauth-callback", requestAbortSignal(req, res));
-          const connectedAppId = credentialRef.slice("floyd-connected-app:".length);
-          location += `&connected_app=${encodeURIComponent(connectedAppId)}`;
-        } catch (error) {
-          const code = error instanceof ConnectedAppAuthorityError ? error.code : "oauth_callback_failed";
-          location += `&connection_error=${encodeURIComponent(code)}`;
-        }
-        res.writeHead(303, { location });
-        return res.end();
-      }
       if (isProviderGateway) {
         if (req.method !== "POST") return send(res, 405, { error: "gateway is POST" });
         const credentialRef = Array.isArray(req.headers["x-floyd-credential-ref"])
           ? req.headers["x-floyd-credential-ref"][0]
           : req.headers["x-floyd-credential-ref"];
-        if (credentialRef && (req.headers.authorization || req.headers["x-api-key"])) {
-          return send(res, 400, { error: "credential_ambiguous", message: "connector references cannot be combined with raw provider credentials" });
+        if (credentialRef) {
+          return send(res, 410, { error: "provider_credential_authority_removed", message: "Core model requests are routed through Vault only" });
         }
-        const credential = credentialRef ? await connectors!.resolve(credentialRef, requestAbortSignal(req, res)) : undefined;
-        await relayProviderRequest(req, res, credential);
+        await relayProviderRequest(req, res);
         return;
       }
       // ---------- API ----------
@@ -1122,11 +1091,18 @@ function createGateway(
       }
       if (path === "/api/connectors" && req.method === "GET") {
         res.setHeader("cache-control", "no-store");
-        return send(res, 200, { connectors: connectors!.profiles() });
+        const result = await modelConnectors.profiles(requestAbortSignal(req, res));
+        cacheModelConnectors(db, result.connectors as unknown as Record<string, unknown>[]);
+        return send(res, 200, result);
+      }
+      if (path === "/api/connectors/ingress-key" && req.method === "GET") {
+        res.setHeader("cache-control", "no-store");
+        return send(res, 200, await modelConnectors.ingressKey(requestAbortSignal(req, res)));
       }
       if (path === "/api/connected-apps" && req.method === "GET") {
         res.setHeader("cache-control", "no-store");
-        const profiles = connectedApps.profiles();
+        const profiles = (await connectedApps.profiles(requestAbortSignal(req, res))).connectedApps;
+        cacheConnectedAppIds(db, profiles.map((profile) => profile.id));
         return send(res, 200, {
           connectedApps: remotePrincipal
             ? profiles.filter((profile) => remotePrincipal!.resources.connected_app_ids.includes(profile.id))
@@ -1135,26 +1111,29 @@ function createGateway(
       }
       if (path === "/api/connected-apps" && req.method === "POST") {
         res.setHeader("cache-control", "no-store");
-        const body = requestObject(await readBody(req)) as unknown as Parameters<ConnectedAppAuthorityService["createProfile"]>[0];
-        return send(res, 201, await connectedApps!.createProfile(body, "local-api", requestAbortSignal(req, res)));
+        const profile = await connectedApps.createProfile(
+          requestObject(await readBody(req)) as never,
+          requestAbortSignal(req, res),
+        );
+        cacheConnectedAppIds(db, [profile.id]);
+        return send(res, 201, profile);
       }
       const connectedAppOAuthStart = path.match(/^\/api\/connected-apps\/([^/]+)\/oauth\/start$/);
       if (connectedAppOAuthStart && req.method === "POST") {
         res.setHeader("cache-control", "no-store");
         const body = requestObject(await readBody(req));
-        return send(res, 201, await connectedApps!.beginOAuth(
+        return send(res, 201, await connectedApps.beginOAuth(
           decodeURIComponent(connectedAppOAuthStart[1]!),
-          `http://${LOOPBACK}:${CORE_PORT}/api/connected-apps/oauth/callback`,
           body.ttlMs === undefined ? undefined : typeof body.ttlMs === "number" ? body.ttlMs : Number.NaN,
-          "local-api",
           requestAbortSignal(req, res),
         ));
       }
       const connectedAppRefresh = path.match(/^\/api\/connected-apps\/([^/]+)\/refresh$/);
       if (connectedAppRefresh && req.method === "POST") {
         res.setHeader("cache-control", "no-store");
-        return send(res, 200, await connectedApps!.refreshNow(
-          decodeURIComponent(connectedAppRefresh[1]!), requestAbortSignal(req, res),
+        return send(res, 200, await connectedApps.refreshNow(
+          decodeURIComponent(connectedAppRefresh[1]!),
+          requestAbortSignal(req, res),
         ));
       }
       const connectedAppInvoke = path.match(/^\/api\/connected-apps\/([^/]+)\/invoke$/);
@@ -1165,90 +1144,58 @@ function createGateway(
         else if (!getExperience(db).connected_app_ids.includes(connectedAppId)) {
           throw new ExperienceSecurityError("scope_denied", "connected app is not selected in the portable experience", 403);
         }
-        const body = requestObject(await readBody(req));
-        if (typeof body.method !== "string" || ["initialize", "notifications/initialized"].includes(body.method)) {
-          throw new ConnectedAppTransportError("mcp_method_invalid", "connected app invocation method is invalid", null);
-        }
-        const clientSignal = requestAbortSignal(req, res);
-        const remoteRequest = remotePrincipal ? registerRemoteSurfaceRequest(remotePrincipal) : null;
-        const active = registerConnectedAppRequest(connectedAppId, [
-          clientSignal,
-          ...(remoteRequest ? [remoteRequest.controller.signal] : []),
-        ]);
-        let transport: ConnectedAppTransport | null = null;
-        let result: Awaited<ReturnType<ConnectedAppTransport["call"]>> | null = null;
-        try {
-          const credential = await connectedApps.resolve(`floyd-connected-app:${connectedAppId}`, active.signal);
-          transport = new ConnectedAppTransport(credential, { fetch: dependencies.connectedAppFetch });
-          await transport.initialize({
-            protocolVersion: "2025-11-25",
-            capabilities: {},
-            clientInfo: { name: "Floyd Workstation", version: "0.1.0" },
-          }, active.signal);
-          result = await transport.call(body.method, body.params, active.signal);
-        } finally {
-          await transport?.close(AbortSignal.timeout(2_000)).catch((error) => {
-            appendEvidence(db, "connected_app.transport_close_failed", "floyd-core", {
-              connected_app_id: connectedAppId,
-              error: error instanceof ConnectedAppTransportError ? error.code : "mcp_close_failed",
-            });
-          });
-          active.finish();
-          remoteRequest?.finish();
-        }
-        if (!result) throw new ConnectedAppTransportError("mcp_response_invalid", "connected app invocation returned no result", 502);
-        return send(res, 200, { connectedAppId, status: result.status, messages: result.messages });
+        return send(res, 200, await connectedApps.invoke(
+          connectedAppId,
+          requestObject(await readBody(req)) as never,
+          requestAbortSignal(req, res),
+        ));
       }
       const connectedApp = path.match(/^\/api\/connected-apps\/([^/]+)$/);
       if (connectedApp && req.method === "DELETE") {
         res.setHeader("cache-control", "no-store");
-        abortConnectedAppRequests(decodeURIComponent(connectedApp[1]!));
-        return send(res, 200, await connectedApps!.revoke(
-          decodeURIComponent(connectedApp[1]!), "local-api", requestAbortSignal(req, res),
-        ));
+        const revoked = await connectedApps.revoke(
+          decodeURIComponent(connectedApp[1]!),
+          requestAbortSignal(req, res),
+        );
+        db.prepare("DELETE FROM connected_app_registry WHERE id = ?").run(revoked.connectedAppId);
+        return send(res, 200, revoked);
       }
       if (path === "/api/connectors" && req.method === "POST") {
-        res.setHeader("cache-control", "no-store");
-        const body = requestObject(await readBody(req)) as Parameters<ConnectorAuthorityService["createProfile"]>[0];
-        return send(res, 201, connectors!.createProfile(body, "local-api"));
+        const input = requestObject(await readBody(req));
+        if (Object.hasOwn(input, "clientSecret")) {
+          return send(res, 400, { error: "plaintext_connector_secret_forbidden" });
+        }
+        const profile = await modelConnectors.createProfile(input as never, requestAbortSignal(req, res));
+        cacheModelConnectors(db, [profile as unknown as Record<string, unknown>]);
+        return send(res, 201, profile);
       }
       const connectorApiKeyMatch = path.match(/^\/api\/connectors\/([^/]+)\/api-key$/);
       if (connectorApiKeyMatch && req.method === "POST") {
-        res.setHeader("cache-control", "no-store");
-        const body = requestObject(await readBody(req));
-        const credentialRef = connectors!.storeApiKey(
-          decodeURIComponent(connectorApiKeyMatch[1]!), typeof body.apiKey === "string" ? body.apiKey : "", "local-api",
-        );
-        return send(res, 201, { credentialRef });
+        const input = requestObject(await readBody(req));
+        if (Object.hasOwn(input, "apiKey")) return send(res, 400, { error: "plaintext_connector_secret_forbidden" });
+        return send(res, 201, await modelConnectors.storeApiKey(
+          decodeURIComponent(connectorApiKeyMatch[1]!),
+          input.sealedApiKey as never,
+          requestAbortSignal(req, res),
+        ));
       }
       const connectorOAuthStartMatch = path.match(/^\/api\/connectors\/([^/]+)\/oauth\/start$/);
       if (connectorOAuthStartMatch && req.method === "POST") {
-        res.setHeader("cache-control", "no-store");
-        const body = requestObject(await readBody(req));
-        const result = connectors!.beginOAuth(
+        const input = requestObject(await readBody(req));
+        return send(res, 201, await modelConnectors.beginOAuth(
           decodeURIComponent(connectorOAuthStartMatch[1]!),
-          typeof body.redirectUri === "string" ? body.redirectUri : "",
-          body.ttlMs === undefined ? undefined : typeof body.ttlMs === "number" ? body.ttlMs : Number.NaN,
-          "local-api",
-        );
-        return send(res, 201, result);
-      }
-      if (path === "/api/connectors/oauth/callback" && req.method === "POST") {
-        res.setHeader("cache-control", "no-store");
-        const body = requestObject(await readBody(req));
-        const credentialRef = await connectors!.completeOAuth(
-          typeof body.state === "string" ? body.state : "",
-          typeof body.code === "string" ? body.code : "",
-          "local-api", requestAbortSignal(req, res),
-        );
-        return send(res, 201, { credentialRef });
+          input.ttlMs === undefined ? undefined : typeof input.ttlMs === "number" ? input.ttlMs : Number.NaN,
+          requestAbortSignal(req, res),
+        ));
       }
       const connectorMatch = path.match(/^\/api\/connectors\/([^/]+)$/);
       if (connectorMatch && req.method === "DELETE") {
-        res.setHeader("cache-control", "no-store");
-        return send(res, 200, await connectors!.revoke(
-          decodeURIComponent(connectorMatch[1]!), "local-api", requestAbortSignal(req, res),
-        ));
+        const result = await modelConnectors.revoke(
+          decodeURIComponent(connectorMatch[1]!),
+          requestAbortSignal(req, res),
+        );
+        db.prepare("DELETE FROM model_connector_registry WHERE id = ?").run(result.connectorId);
+        return send(res, 200, result);
       }
       if (path === "/api/state") {
         if (boundary === "remote") {
@@ -1942,20 +1889,20 @@ function createGateway(
       }
       const status = err instanceof ExperienceSecurityError
         ? err.httpStatus
-        : err instanceof ConnectorAuthorityError ? err.httpStatus
-        : err instanceof ConnectedAppAuthorityError ? err.httpStatus
-        : err instanceof ConnectedAppTransportError ? err.upstreamStatus ?? 502
+        : err instanceof ModelConnectorVaultClientError ? err.httpStatus
+        : err instanceof ConnectedAppVaultClientError ? err.httpStatus
+        : err instanceof RequestInputError ? err.httpStatus
         : err instanceof RequestJsonError ? 400
         : err instanceof RequestBodyTooLargeError ? 413
         : typeof err === "object" && err && "statusCode" in err ? Number(err.statusCode) : 500;
       const body = err instanceof ExperienceSecurityError
         ? { error: err.code, message: err.message }
-        : err instanceof ConnectorAuthorityError
+        : err instanceof ModelConnectorVaultClientError
           ? err.upstream ?? { error: err.code, message: err.message }
-        : err instanceof ConnectedAppAuthorityError
+        : err instanceof ConnectedAppVaultClientError
           ? err.upstream ?? { error: err.code, message: err.message }
-        : err instanceof ConnectedAppTransportError
-          ? err.upstream ?? { error: err.code, message: err.message }
+        : err instanceof RequestInputError
+          ? { error: err.code, message: err.message }
         : err instanceof RequestJsonError ? { error: "invalid_json", message: err.message }
         : err instanceof RequestBodyTooLargeError ? { error: "payload_too_large", message: err.message }
         : { error: String(err) };

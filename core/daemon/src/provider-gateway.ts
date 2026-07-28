@@ -1,8 +1,11 @@
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { ServerResponse } from "node:http";
+import { readCoreVaultCapability } from "./vault-capability.ts";
+import type { CoreVaultCapability } from "./vault-capability.ts";
 
-export type ProviderRoute = "opencode-zen" | "opencode-go" | "openai" | "anthropic" | "auto";
+export type ProviderRoute = "opencode-zen" | "opencode-go" | "openai" | "anthropic" | "deepseek" | "mistral" | "huggingface"
+  | "zai" | "minimax" | "moonshot" | "openrouter" | "xai" | "groq" | "auto";
 export type ProviderDialect = "openai" | "anthropic";
 export type RelayCredential = {
   provider: Exclude<ProviderRoute, "auto">;
@@ -10,13 +13,15 @@ export type RelayCredential = {
   authorization?: string;
   apiKey?: string;
 };
+export type ProviderGatewayDependencies = Readonly<{
+  /** Test seam only. Production reads Core's owner-only Vault profile. */
+  vaultCapability?: CoreVaultCapability;
+}>;
 
-const DEFAULT_BASE_URLS: Record<Exclude<ProviderRoute, "auto">, string> = {
-  "opencode-zen": "https://opencode.ai/zen/v1",
-  "opencode-go": "https://opencode.ai/zen/go/v1",
-  openai: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com/v1",
-};
+const SUPPORTED_ROUTES = new Set<ProviderRoute>([
+  "opencode-zen", "opencode-go", "openai", "anthropic", "deepseek", "mistral", "huggingface", "zai",
+  "minimax", "moonshot", "openrouter", "xai", "groq", "auto",
+]);
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES = 1024 * 1024;
 const RESPONSE_HEADER_TIMEOUT_MS = 30_000;
@@ -42,7 +47,8 @@ export function resolveProviderEndpoint(route: ProviderRoute, override: string |
   const inferredAnthropic = route === "anthropic" || model.toLowerCase().startsWith("claude-") || /anthropic/i.test(override ?? "");
   const dialect: ProviderDialect = inferredAnthropic ? "anthropic" : "openai";
   const fallbackRoute = route === "auto" ? (dialect === "anthropic" ? "anthropic" : "openai") : route;
-  const endpoint = new URL(override ?? DEFAULT_BASE_URLS[fallbackRoute]);
+  if (!override) throw new Error(`Vault base URL is required for ${fallbackRoute}`);
+  const endpoint = new URL(override);
   if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
     throw new Error("provider base URL must not contain credentials, query parameters, or a fragment");
   }
@@ -113,7 +119,12 @@ function writeSse(res: ServerResponse, event: "delta" | "done" | "error", data: 
  * destroy() immediately. That tears down the provider socket and its readable
  * stream instead of leaving a paid model response draining in the background.
  */
-export async function relayProviderRequest(req: IncomingMessage, res: ServerResponse, credential?: RelayCredential): Promise<void> {
+export async function relayProviderRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  credential?: RelayCredential,
+  dependencies: ProviderGatewayDependencies = {},
+): Promise<void> {
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of req) {
@@ -128,36 +139,42 @@ export async function relayProviderRequest(req: IncomingMessage, res: ServerResp
   } catch (error) {
     throw Object.assign(new Error(`invalid gateway JSON: ${error instanceof Error ? error.message : String(error)}`), { statusCode: 400 });
   }
-  const route = credential?.provider ?? (header(req, "x-floyd-provider") ?? "auto") as ProviderRoute;
-  if (!["opencode-zen", "opencode-go", "openai", "anthropic", "auto"].includes(route)) {
+  if (credential || header(req, "authorization") || header(req, "x-api-key") || header(req, "x-floyd-base-url")) {
+    throw Object.assign(new Error("Core model routes accept no provider credential or provider address; Vault owns both"), { statusCode: 400 });
+  }
+  let route = (header(req, "x-floyd-provider") ?? "auto") as ProviderRoute;
+  if (!SUPPORTED_ROUTES.has(route)) {
     throw Object.assign(new Error(`unsupported provider route: ${route}`), { statusCode: 400 });
   }
+  if (route === "auto") route = inferVaultProvider(String(payload.model ?? ""));
+  const vault = dependencies.vaultCapability ?? readCoreVaultCapability();
   let resolved: ReturnType<typeof resolveProviderEndpoint>;
   let translated: ChatPayload;
   try {
-    const requestedBaseUrl = header(req, "x-floyd-base-url");
-    if (credential && requestedBaseUrl && requestedBaseUrl.replace(/\/+$/, "") !== credential.baseUrl.replace(/\/+$/, "")) {
-      throw new Error("connector credential is bound to a different provider endpoint");
+    const connectorId = header(req, "x-floyd-connector");
+    if (connectorId && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(connectorId)) {
+      throw new Error("connector id is invalid");
     }
-    resolved = resolveProviderEndpoint(route, credential?.baseUrl ?? requestedBaseUrl, String(payload.model ?? ""));
+    const dialectRoute = route === "anthropic" || route === "minimax" ? "anthropic" : route;
+    resolved = connectorId
+      ? {
+          endpoint: new URL(`${vault.proxy}/connectors/${encodeURIComponent(connectorId)}/invoke`),
+          dialect: dialectRoute === "anthropic" ? "anthropic" : "openai",
+        }
+      : resolveProviderEndpoint(dialectRoute, `${vault.proxy}/v1`, String(payload.model ?? ""));
     translated = translatePayload(payload, resolved.dialect);
+    if (!connectorId) translated.model = `${route}/${String(payload.model ?? "").replace(/^[^/]+\//, "")}`;
   } catch (error) {
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), { statusCode: 400 });
   }
   const { endpoint, dialect } = resolved;
   const body = Buffer.from(JSON.stringify(translated));
-  const authorization = credential?.authorization ?? header(req, "authorization");
-  const apiKey = credential?.apiKey ?? header(req, "x-api-key");
-  if (dialect === "anthropic" && !apiKey && !authorization) throw Object.assign(new Error("x-api-key or Authorization is required for Anthropic routes"), { statusCode: 400 });
-  if (dialect === "openai" && !authorization) throw Object.assign(new Error("Authorization: Bearer is required for OpenAI-compatible routes"), { statusCode: 400 });
-
   const headers: Record<string, string | number> = {
     "content-type": "application/json",
     accept: translated.stream === false ? "application/json" : "text/event-stream",
     "content-length": body.length,
   };
-  if (authorization) headers.authorization = authorization;
-  if (apiKey) headers["x-api-key"] = apiKey;
+  headers.authorization = `Bearer ${vault.token}`;
   if (dialect === "anthropic") headers["anthropic-version"] = header(req, "anthropic-version") ?? "2023-06-01";
 
   await new Promise<void>((resolve, reject) => {
@@ -309,4 +326,18 @@ export async function relayProviderRequest(req: IncomingMessage, res: ServerResp
     });
     upstreamRequest.end(body);
   });
+}
+
+function inferVaultProvider(model: string): Exclude<ProviderRoute, "auto"> {
+  const normalized = model.toLowerCase().replace(/^[^/]+\//, "");
+  const prefix = model.includes("/") ? model.split("/", 1)[0] as Exclude<ProviderRoute, "auto"> : null;
+  if (prefix && SUPPORTED_ROUTES.has(prefix)) return prefix;
+  if (normalized.startsWith("claude")) return "anthropic";
+  if (normalized.startsWith("glm")) return "zai";
+  if (normalized.startsWith("minimax")) return "minimax";
+  if (normalized.startsWith("kimi") || normalized.startsWith("moonshot")) return "moonshot";
+  if (normalized.startsWith("deepseek")) return "deepseek";
+  if (normalized.startsWith("mistral") || normalized.startsWith("codestral")) return "mistral";
+  if (normalized.startsWith("grok")) return "xai";
+  return "openai";
 }

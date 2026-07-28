@@ -159,7 +159,7 @@ export interface ProviderProfile {
   fallback_policy: "fail_closed";
 }
 
-// ---------- user-owned model connector authority ----------
+// ---------- Vault-owned custom model connectors exposed through Core ----------
 
 export type ConnectorProvider = "opencode-zen" | "opencode-go" | "openai" | "anthropic";
 export type ConnectorClientAuth = "none" | "client_secret_basic" | "client_secret_post";
@@ -203,7 +203,7 @@ export interface ConnectorOAuthStart {
   expiresAt: string;
 }
 
-// ---------- Core-owned connected application authority ----------
+// ---------- Vault-owned connected applications exposed through Core ----------
 
 /** Sanitized remote MCP application metadata. OAuth secrets never cross this contract. */
 export interface ConnectedAppProfile {
@@ -238,13 +238,13 @@ export interface ConnectedAppOAuthStart {
   expiresAt: string;
 }
 
-/** Browser-safe invocation input. Core supplies OAuth and MCP session state. */
+/** Browser-safe invocation input. Vault supplies OAuth and MCP session state. */
 export interface ConnectedAppInvokeRequest {
   method: string;
   params?: unknown;
 }
 
-/** Normalized JSON-RPC messages returned by a Core-owned MCP transport. */
+/** Normalized JSON-RPC messages returned by the Vault-owned MCP transport. */
 export interface ConnectedAppInvokeResponse {
   connectedAppId: string;
   status: number;

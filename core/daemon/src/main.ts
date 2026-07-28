@@ -6,7 +6,8 @@ import { seed } from "./seed.ts";
 import { recoverInterrupted } from "./runs.ts";
 import { startGateway, startLiveChannel, startRemoteGateway, startRemoteSurfaceGateways } from "./http.ts";
 
-// Core owns credentials, SQLite state, and managed-engine state. Keep every
+// Core owns SQLite state and managed-engine state. Vault alone owns provider
+// credentials. Keep every
 // newly created runtime file private even outside launchd (for example, a
 // foreground diagnostic start).
 process.umask(0o077);
@@ -35,10 +36,7 @@ async function main(): Promise<void> {
     pure: true,
     isolation: "XDG+OPENCODE_CONFIG under FLOYD_RUNTIME",
     credential_source,
-    credential_note:
-      credential_source === "omp-auth-broker:zai"
-        ? "canonical broker credential"
-        : "broker zai credential failed validation (HTTP 401, 2026-07-12); using validated user opencode config key for the same GLM Coding Plan — refresh the broker credential",
+    credential_note: "OpenCode received only Core's persistent fv_ capability and the loopback Vault address",
   });
 
   const localGateway = startGateway(db, engine, process.pid, startedAt);

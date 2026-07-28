@@ -21,8 +21,10 @@ const {
 } = await import("../src/experience.ts");
 
 const db = openDb(join(runtimeRoot, "core", "experience.db"));
-db.exec(`CREATE TABLE connected_app_profiles (id TEXT PRIMARY KEY)`);
-db.prepare(`INSERT INTO connected_app_profiles (id) VALUES ('app-a'), ('app-b')`).run();
+// Core keeps only non-secret connected-app IDs (connected_app_registry) for
+// referential integrity; credentials live in the Vault. Register the fixture
+// apps the way the gateway does at runtime.
+db.prepare(`INSERT OR IGNORE INTO connected_app_registry (id) VALUES ('app-a'), ('app-b')`).run();
 db.prepare(
   `INSERT INTO projects (id, name, root_path, repo_path, test_command, created_at)
    VALUES ('prj_a', 'project-a', '/tmp/a', '/tmp/a', 'true', '2026-07-14T00:00:00.000Z'),

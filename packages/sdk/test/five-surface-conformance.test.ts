@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,21 @@ process.env.FLOYD_RUNTIME_ROOT = runtimeRoot;
 process.env.FLOYD_CORE_PORT = "0";
 process.env.FLOYD_REMOTE_CORE_PORT = "0";
 process.env.FLOYD_REMOTE_ORIGIN = "https://floyd.test";
+
+// Core refuses to start its gateway without its persistent fv_ Vault
+// capability (owner-only profile written by Frame/Vault). Provide the same
+// fixture shape experience-http.test.ts uses; no Vault proxy is contacted by
+// the conformance flows below.
+mkdirSync(join(runtimeRoot, "secrets", "proxy-app-profiles"), { recursive: true, mode: 0o700 });
+writeFileSync(
+  join(runtimeRoot, "secrets", "proxy-app-profiles", "core.json"),
+  JSON.stringify({
+    app: "core",
+    proxyToken: `fv_core_${"1".repeat(48)}`,
+    proxyUrl: "http://127.0.0.1:9",
+  }),
+  { mode: 0o600 },
+);
 
 // Resolve Core through computed file URLs. This remains a true integration
 // test at runtime without pulling Core's source tree into the SDK composite

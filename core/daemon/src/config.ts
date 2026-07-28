@@ -49,8 +49,6 @@ export const PATHS = {
   db: join(RUNTIME_ROOT, "core", "floyd.db"),
   gatewayToken: join(RUNTIME_ROOT, "core", "gateway.token"),
   experienceMasterKey: join(RUNTIME_ROOT, "core", "experience-master.key"),
-  connectorMasterKey: join(RUNTIME_ROOT, "core", "connector-master.key"),
-  connectedAppMasterKey: join(RUNTIME_ROOT, "core", "connected-app-master.key"),
   artifacts: join(RUNTIME_ROOT, "artifacts"),
   worktrees: join(RUNTIME_ROOT, "worktrees"),
   projects: join(RUNTIME_ROOT, "projects"),

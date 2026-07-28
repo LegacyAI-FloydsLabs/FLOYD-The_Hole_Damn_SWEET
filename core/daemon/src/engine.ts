@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, openSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, openSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { OpenCodeSdkRuntime } from "@floyd/opencode-runtime";
 import { PATHS, ENGINE_PORT, LOOPBACK, readUpstreamLock, RUNTIME_ROOT } from "./config.ts";
 import { newestMessage, isTerminalAssistant, containsAssistantTurn } from "./engine-logic.ts";
+import { readCoreVaultCapability } from "./vault-capability.ts";
 
 /**
  * Managed loopback OpenCode child.
@@ -12,7 +13,7 @@ import { newestMessage, isTerminalAssistant, containsAssistantTurn } from "./eng
  *   even fixed, PATH resolution stays banned here)
  * - sha256 verified against upstream.lock before every spawn; fail closed
  * - fully isolated XDG + config under FLOYD_RUNTIME/engines/opencode
- * - GLM key fetched in-process from `omp auth-broker token zai`; never written to disk
+ * - only a persistent fv_ capability and loopback Vault address reach OpenCode
  * - --pure until the Floyd plugin is audited/tested
  */
 
@@ -32,53 +33,30 @@ export class OpenCodeEngine {
     return { path: lock.binary_path, version: lock.version, sha256: actual };
   }
 
-  /**
-   * Credential sourcing for the GLM Coding Plan.
-   * The omp auth-broker was removed as a source on 2026-07-12 (Douglas: the
-   * openmythos build must not be involved). Investigation record in ADR-001:
-   * `omp auth-broker token <provider>` ignores the provider arg and prints the
-   * broker's own bearer; its HTTP surface is an openmythos model gateway, not
-   * a key vault — wiring it would put openmythos-build code in the model path.
-   * Current source: the validated key from the user's opencode config.
-   * Every candidate is validated against the coding endpoint; fail closed if none pass.
-   */
-  async fetchGlmKey(): Promise<{ key: string; source: string }> {
-    const candidates: Array<{ key: string; source: string }> = [];
-    // Primary: the FLOYD vault (single credential authority; what a fresh
-    // install populates through the frame's key UI).
-    try {
-      const vault = JSON.parse(readFileSync(join(RUNTIME_ROOT, "secrets", "provider-keys.json"), "utf8")) as
-        Record<string, { key?: string }>;
-      const vk = vault.zai?.key;
-      if (vk && vk.length >= 10) candidates.push({ key: vk, source: "floyd-vault:zai" });
-    } catch { /* vault not populated yet */ }
-    // Legacy: a validated key in the user's opencode config (pre-vault path).
-    try {
-      const cfg = JSON.parse(readFileSync(join(process.env.HOME ?? "", ".config/opencode/opencode.json"), "utf8")) as {
-        provider?: { "zai-coding-plan"?: { options?: { apiKey?: string } } };
-      };
-      const cfgKey = cfg.provider?.["zai-coding-plan"]?.options?.apiKey;
-      if (cfgKey && cfgKey.length >= 10 && !cfgKey.startsWith("{")) {
-        candidates.push({ key: cfgKey, source: "user-opencode-config:zai-coding-plan" });
-      }
-    } catch { /* no config fallback available */ }
-    for (const c of candidates) {
-      try {
-        const r = await fetch("https://api.z.ai/api/coding/paas/v4/models", {
-          headers: { authorization: `Bearer ${c.key}` },
-          signal: AbortSignal.timeout(15000),
-        });
-        if (r.ok) return c;
-      } catch { /* try next */ }
-    }
-    throw new Error(
-      `no GLM Coding Plan credential validated (tried: ${candidates.map((c) => c.source).join(", ") || "none"}) — fail closed, no fallback route`,
-    );
+  configureOpenCode(token: string, proxy: string): void {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(readFileSync(PATHS.engineConfig, "utf8")) as Record<string, unknown>; } catch { /* create below */ }
+    const provider: Record<string, unknown> = {};
+    const existing = provider["zai-coding-plan"] && typeof provider["zai-coding-plan"] === "object"
+      ? provider["zai-coding-plan"] as Record<string, unknown>
+      : {};
+    provider["zai-coding-plan"] = {
+      ...existing,
+      options: {
+        apiKey: token,
+        baseURL: `${proxy}/p/zai/api/coding/paas/v4`,
+      },
+    };
+    config.provider = provider;
+    mkdirSync(join(PATHS.engineHome, "config"), { recursive: true, mode: 0o700 });
+    writeFileSync(PATHS.engineConfig, JSON.stringify(config, null, 2), { mode: 0o600 });
+    chmodSync(PATHS.engineConfig, 0o600);
   }
 
   async start(): Promise<{ pid: number; version: string; credential_source: string }> {
     const bin = this.verifyBinary();
-    const { key, source: credentialSource } = await this.fetchGlmKey();
+    const { token, proxy, source: credentialSource } = readCoreVaultCapability();
+    this.configureOpenCode(token, proxy);
     const home = PATHS.engineHome;
     mkdirSync(join(home, "data"), { recursive: true, mode: 0o700 });
     // single credential source (env); remove any auth file left by earlier experiments
@@ -93,11 +71,11 @@ export class OpenCodeEngine {
       XDG_STATE_HOME: join(home, "state"),
       OPENCODE_CONFIG: PATHS.engineConfig,
       OPENCODE_DISABLE_AUTOUPDATE: "1",
-      FLOYD_GLM_API_KEY: key,
-      // The pinned 1.17.x engine gates model availability on integration connections; the zai
-      // integrations declare an env method via ZHIPU_API_KEY (verified live via
-      // GET /api/integration). Env-only: the key never touches disk.
-      ZHIPU_API_KEY: key,
+      FLOYD_VAULT_PROXY_URL: proxy,
+      FLOYD_VAULT_PROXY_TOKEN: token,
+      FLOYD_GLM_API_KEY: token,
+      ZAI_API_KEY: token,
+      ZHIPU_API_KEY: token,
     };
     this.child = spawn(bin.path, [
       "serve",

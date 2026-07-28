@@ -19,6 +19,24 @@ const { createRun } = await import("../src/runs.ts");
 const db = openDb(join(tmp, "core", "floyd-test.db"));
 seed(db);
 
+test("seed preserves legacy credential rows until verified Vault migration", () => {
+  db.exec(`
+    CREATE TABLE connector_credentials (credential_ref TEXT PRIMARY KEY, ciphertext BLOB);
+    INSERT INTO connector_credentials VALUES ('legacy-provider', X'0102');
+    CREATE TABLE connected_app_profiles (id TEXT PRIMARY KEY);
+    CREATE TABLE connected_app_credentials (credential_ref TEXT PRIMARY KEY, ciphertext BLOB);
+    INSERT INTO connected_app_profiles VALUES ('legacy-notes');
+    INSERT INTO connected_app_credentials VALUES ('legacy-app', X'0304');
+  `);
+  seed(db);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM connector_credentials").get() as { count: number }).count, 1);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM connected_app_credentials").get() as { count: number }).count, 1);
+  assert.deepEqual(
+    (db.prepare("SELECT id FROM connected_app_registry").all() as Array<{ id: string }>).map((row) => row.id),
+    ["legacy-notes"],
+  );
+});
+
 test("evidence is append-only at the storage engine", () => {
   const id = appendEvidence(db, "test.event", "test", { a: 1 });
   assert.ok(id.startsWith("evt_"));

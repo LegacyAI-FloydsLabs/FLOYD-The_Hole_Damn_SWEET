@@ -66,9 +66,11 @@ test("browser model stream omits an empty Core token so an HttpOnly local sessio
   });
   const events = [];
   for await (const event of client.modelStream({
-    provider: "openai", apiKey: "provider-secret", model: "gpt-test", messages: [],
+    provider: "openai", model: "gpt-test", messages: [],
   })) events.push(event);
   assert.equal(seen.headers.has("x-floyd-token"), false);
+  assert.equal(seen.headers.has("authorization"), false);
+  assert.equal(seen.headers.has("x-api-key"), false);
   assert.equal(seen.credentials, "same-origin");
   assert.deepEqual(events, [{ type: "done", data: { ok: true } }]);
 });
@@ -85,7 +87,6 @@ test("browser model stream rejects EOF without an explicit terminal event", asyn
   await assert.rejects(async () => {
     for await (const event of client.modelStream({
       provider: "openai",
-      apiKey: "provider-secret",
       model: "gpt-test",
       messages: [{ role: "user", content: "hello" }],
     })) received.push(event);
@@ -105,7 +106,6 @@ test("browser model stream surfaces an explicit provider error without replacing
   const received = [];
   for await (const event of client.modelStream({
     provider: "openai",
-    apiKey: "provider-secret",
     model: "gpt-test",
     messages: [{ role: "user", content: "hello" }],
   })) received.push(event);

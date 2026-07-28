@@ -8,19 +8,32 @@ import { registerSkill, ensureSkillsSchema } from "./skills.ts";
  * approved route (FABLE5_HANDOFF hard stop); everything else stays absent.
  */
 export function seed(db: Db): void {
+  // Core retains only non-secret IDs for portable-experience referential
+  // integrity. OAuth authority, credentials, and transport live in Vault.
+  db.exec("CREATE TABLE IF NOT EXISTS connected_app_registry (id TEXT PRIMARY KEY)");
+  try {
+    db.exec("INSERT OR IGNORE INTO connected_app_registry (id) SELECT id FROM connected_app_profiles");
+  } catch {
+    // Fresh databases have no pre-Vault connected-app profile table.
+  }
   const have = db.prepare(`SELECT id FROM provider_profiles WHERE id = 'glm-coding-plan'`).get();
   if (!have) {
     db.prepare(
       `INSERT INTO provider_profiles (id, vendor, billing_class, plan_name, region, credential_ref, endpoint_class, model_allowlist_json, approved, fallback_policy)
-       VALUES ('glm-coding-plan', 'zai', 'subscription', 'GLM Coding Plan', 'global', 'omp-auth-broker:zai', 'coding-plan', ?, 1, 'fail_closed')`,
-    ).run(JSON.stringify(["glm-4.6", "glm-4.5-air"]));
+       VALUES ('glm-coding-plan', 'zai', 'subscription', 'GLM Coding Plan', 'global', 'floyd-vault:core', 'coding-plan', ?, 1, 'fail_closed')`,
+    ).run(JSON.stringify(["glm-4.7", "glm-5.2"]));
     appendEvidence(db, "provider.profile_seeded", "floyd-core", {
       id: "glm-coding-plan",
       billing_class: "subscription",
-      credential_ref: "omp-auth-broker:zai",
+      credential_ref: "floyd-vault:core",
       note: "only approved route; all other providers disabled by default",
     });
   }
+  db.prepare(
+    `UPDATE provider_profiles
+     SET credential_ref = 'floyd-vault:core', model_allowlist_json = ?
+     WHERE id = 'glm-coding-plan' AND credential_ref <> 'floyd-vault:core'`,
+  ).run(JSON.stringify(["glm-4.7", "glm-5.2"]));
   const specs = [
     {
       id: "builder-glm",

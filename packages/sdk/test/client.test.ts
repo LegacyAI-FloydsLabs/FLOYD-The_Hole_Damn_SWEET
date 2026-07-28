@@ -96,7 +96,7 @@ test("aborting a surface stream propagates to the network request", async () => 
   assert.equal(networkAborted, true);
 });
 
-test("model driver separates Core auth, preserves provider auth, and reads normalized SSE", async () => {
+test("model driver sends only Core auth and provider selection", async () => {
   let seen: Request | undefined;
   let cancelled = false;
   const fetchMock: typeof fetch = async (input, init) => {
@@ -112,7 +112,7 @@ test("model driver separates Core auth, preserves provider auth, and reads norma
   };
   const client = new FloydModelClient({ token: "core-secret", fetch: fetchMock });
   const events = client.streamChat({
-    route: { provider: "opencode-go", apiKey: "provider-secret" },
+    route: { provider: "moonshot" },
     model: "kimi-test",
     messages: [{ role: "user", content: "build it" }],
   });
@@ -120,12 +120,13 @@ test("model driver separates Core auth, preserves provider auth, and reads norma
   assert.deepEqual(first.value, { type: "delta", data: { text: "hello" } });
   await events.return(undefined);
   assert.equal(seen?.headers.get("x-floyd-token"), "core-secret");
-  assert.equal(seen?.headers.get("authorization"), "Bearer provider-secret");
-  assert.equal(seen?.headers.get("x-floyd-provider"), "opencode-go");
+  assert.equal(seen?.headers.get("authorization"), null);
+  assert.equal(seen?.headers.get("x-api-key"), null);
+  assert.equal(seen?.headers.get("x-floyd-provider"), "moonshot");
   assert.equal(cancelled, true);
 });
 
-test("model driver uses Anthropic key/version headers and preserves exact relay errors", async () => {
+test("model driver preserves exact relay errors without accepting Anthropic credentials", async () => {
   let seen: Request | undefined;
   const fetchMock: typeof fetch = async (input, init) => {
     seen = input instanceof Request ? input : new Request(input, init);
@@ -138,7 +139,7 @@ test("model driver uses Anthropic key/version headers and preserves exact relay 
   await assert.rejects(
     async () => {
       for await (const _event of client.streamChat({
-        route: { provider: "anthropic", apiKey: "anthropic-secret" },
+        route: { provider: "anthropic" },
         model: "claude-test",
         messages: [{ role: "user", content: "hello" }],
       })) { /* no frames on error */ }
@@ -150,12 +151,12 @@ test("model driver uses Anthropic key/version headers and preserves exact relay 
       return true;
     },
   );
-  assert.equal(seen?.headers.get("x-api-key"), "anthropic-secret");
-  assert.equal(seen?.headers.get("anthropic-version"), "2023-06-01");
+  assert.equal(seen?.headers.get("x-api-key"), null);
+  assert.equal(seen?.headers.get("anthropic-version"), null);
   assert.equal(seen?.headers.get("authorization"), null);
 });
 
-test("model driver uses connector references without exposing raw provider headers", async () => {
+test("model driver ignores obsolete direct-key, reference, and address fields", async () => {
   let seen: Request | undefined;
   const fetchMock: typeof fetch = async (input, init) => {
     seen = input instanceof Request ? input : new Request(input, init);
@@ -166,21 +167,21 @@ test("model driver uses connector references without exposing raw provider heade
   const client = new FloydModelClient({ token: "core-secret", fetch: fetchMock });
   const received = [];
   for await (const _event of client.streamChat({
-    route: { provider: "openai", credentialRef: "floyd-connector:user-openai" },
+    route: {
+      provider: "openai",
+      apiKey: "must-not-travel",
+      credentialRef: "floyd-connector:retired",
+      baseUrl: "https://api.openai.com/v1",
+    } as never,
     model: "gpt-test",
     messages: [{ role: "user", content: "hello" }],
   })) { received.push(_event); }
   assert.deepEqual(received, [{ type: "error", data: { error: { type: "overloaded" } } }]);
-  assert.equal(seen?.headers.get("x-floyd-credential-ref"), "floyd-connector:user-openai");
+  assert.equal(seen?.headers.get("x-floyd-credential-ref"), null);
+  assert.equal(seen?.headers.get("x-floyd-base-url"), null);
   assert.equal(seen?.headers.get("authorization"), null);
   assert.equal(seen?.headers.get("x-api-key"), null);
-  await assert.rejects(async () => {
-    for await (const _event of client.streamChat({
-      route: { provider: "openai", apiKey: "raw", credentialRef: "floyd-connector:user-openai" },
-      model: "gpt-test",
-      messages: [],
-    })) { /* never reached */ }
-  }, /exactly one/);
+  assert.doesNotMatch(String(await seen?.clone().text()), /must-not-travel|floyd-connector|api\.openai\.com/);
 });
 
 test("model driver rejects EOF without an explicit done or error terminal", async () => {
@@ -192,7 +193,7 @@ test("model driver rejects EOF without an explicit done or error terminal", asyn
   const received: unknown[] = [];
   await assert.rejects(async () => {
     for await (const event of client.streamChat({
-      route: { provider: "openai", apiKey: "provider-secret" },
+      route: { provider: "openai" },
       model: "gpt-test",
       messages: [{ role: "user", content: "hello" }],
     })) received.push(event);
