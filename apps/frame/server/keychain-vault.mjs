@@ -53,21 +53,56 @@ export class MacOSKeychainVault {
   set(account, secret) {
     validateAccount(account);
     if (typeof secret !== "string" || !secret) throw new Error("Keychain secret must be a non-empty string");
-    this.exec("/usr/bin/security", [
-      "add-generic-password",
-      "-U",
-      "-a", account,
-      "-s", this.service,
-      "-D", "application password",
-      "-T", "",
-      // Keep -w last with no argv value. The security tool reads stdin, so
-      // the secret is not exposed in the child process command line.
-      "-w",
-    ], {
-      encoding: "utf8",
-      input: `${secret}\n`,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    if (/[\r\n]/.test(secret)) throw new Error("Keychain secret must be a single line");
+    // Always delete-then-create. Updating an existing item (-U) rewrites its
+    // ACL, and SecKeychainItemSetAccess prompts the user for the login
+    // password every time. Creating a fresh item sets the ACL silently.
+    this.delete(account);
+    if (secret.length <= INTERACTIVE_LINE_SAFE_LIMIT) {
+      // Interactive mode: the full command line arrives on stdin, so the
+      // secret never appears in the child argv. Prompt mode (-w with no
+      // value) is unusable: readpassphrase silently truncates at 128 bytes
+      // while still exiting 0.
+      this.exec("/usr/bin/security", ["-i"], {
+        encoding: "utf8",
+        input: `${[
+          "add-generic-password",
+          "-a", account,
+          "-s", this.service,
+          "-D", "application password",
+          // Trust the security CLI itself. An empty ACL (-T "") makes macOS
+          // prompt the user for the login password on EVERY read, and
+          // same-user processes can invoke the CLI anyway (see the
+          // threat-model note above), so an empty ACL adds prompts, not
+          // protection.
+          "-T", "/usr/bin/security",
+          "-w", secret,
+        ].map(interactiveQuote).join(" ")}\n`,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } else {
+      // security -i truncates lines around 4KB. For larger values (OAuth
+      // token bundles) pass the secret via argv: on macOS argv is readable
+      // only by the same user and root, which the threat model above
+      // already treats as equivalent to the process itself.
+      this.exec("/usr/bin/security", [
+        "add-generic-password",
+        "-a", account,
+        "-s", this.service,
+        "-D", "application password",
+        "-T", "/usr/bin/security",
+        "-w", secret,
+      ], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+    // Both security input modes have silent-truncation failure shapes that
+    // exit 0, so every write is verified by read-back.
+    const written = this.get(account);
+    if (written !== secret) {
+      throw new Error(`macOS Keychain write verification failed for ${account}`);
+    }
   }
 
   delete(account) {
@@ -128,4 +163,12 @@ function validateAccount(account) {
   if (!Object.values(FLOYD_KEYCHAIN_ACCOUNTS).includes(account)) {
     throw new Error(`unsupported FLOYD Keychain account: ${account}`);
   }
+}
+
+// security -i truncates its input line around 4096 bytes; stay well below
+// the observed limit so quoting overhead never pushes a value across it.
+const INTERACTIVE_LINE_SAFE_LIMIT = 3500;
+
+function interactiveQuote(value) {
+  return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
