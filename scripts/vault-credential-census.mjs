@@ -169,6 +169,61 @@ const KNOWN_BENIGN = [
     scope: "key-shape",
     justification: "Codex session logs quote key-shaped example/scan strings; not exact matches of any Vault credential.",
   })),
+  // Codex session transcripts also quote the repo's own openai-shaped test
+  // placeholder ("sk-proj-abcdefghijklmnop...") while working on the vault
+  // test suite. That literal placeholder is not a credential.
+  {
+    pathPattern: /\/\.codex\/sessions\/.*\.jsonl$/,
+    provider: "openai",
+    scope: "key-shape",
+    justification: "Codex session logs quote the repo's sk-proj-abcdefghijklmnop... test placeholder from scripts/test/materialize-vault-client-config.test.mjs; not a real key.",
+  },
+  // One session transcript contains a long base64url blob (an opaque encoded
+  // payload) in which "ghp_" + 36 alphanumerics occurs mid-blob, flanked on
+  // both sides by more base64url data rather than delimiters. A real PAT is a
+  // standalone delimited token; this is a substring coincidence.
+  {
+    pathPattern: /\/\.codex\/sessions\/.*\.jsonl$/,
+    provider: "github",
+    scope: "key-shape",
+    justification: "ghp_-shaped substring occurs mid base64url blob in a session transcript (continuous encoded data on both sides); coincidence, not a delimited token.",
+  },
+  // The repo's own vault-client-config test fixture uses an obviously fake
+  // sequential placeholder key ("sk-proj-abcdefghijklmnopqrstuvwxyz..."). The
+  // FLOYD_RUNTIME release tree carries verbatim copies of the repo.
+  {
+    pathPattern: /\/scripts\/test\/materialize-vault-client-config\.test\.mjs$/,
+    provider: "openai",
+    scope: "key-shape",
+    justification: "Test fixture placeholder 'sk-proj-abcdefghijklmnopqrstuvwxyzABCDEF...123456' (sequential alphabet, checked in intentionally); not a real key.",
+  },
+  // floyd-icon.svg embeds a base64 data URI whose encoded bytes happen to
+  // contain the substring "AIza" + 35 base64 characters mid-stream.
+  {
+    pathPattern: /\/apps\/frame\/public\/assets\/floyd-icon\.svg$/,
+    provider: "google",
+    scope: "key-shape",
+    justification: "AIza-shaped substring occurs inside the icon's base64 data URI payload (flanked by continuous base64 on both sides); encoding coincidence, not a key.",
+  },
+  // Codex's own logs_2.sqlite(-wal) store compressed/encoded blobs whose
+  // base64 payloads coincidentally contain AIza...-shaped substrings, and log
+  // rows quoting the repo's sk-proj-abcdef... test placeholder. Live database:
+  // never edited; acknowledged per-provider after manual strings review.
+  ...["google", "openai"].map((provider) => ({
+    pathPattern: new RegExp(`^${homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.codex/logs_2\\.sqlite(?:-wal)?$`),
+    provider,
+    scope: "key-shape",
+    justification: "Codex log database blobs contain base64-coincidence AIza substrings and the repo's sk-proj test placeholder; verified via strings review, not real keys.",
+  })),
+  // The compiled codex plugin-appserver binary's string table concatenates
+  // env-var names ("github_pat_" prefix constant + "GH_TOKENGITHUB_TOKEN...")
+  // which the github_pat_ regex matches across the concatenation boundary.
+  {
+    pathPattern: new RegExp(`^${homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.codex/plugins/\\.plugin-appserver/codex$`),
+    provider: "github",
+    scope: "key-shape",
+    justification: "Mach-O string table concatenation ('github_pat_' + 'GH_TOKENGITHUB_TOKEN...') matches the PAT regex across adjacent constants; compiled binary, not a token.",
+  },
 ];
 
 // Only these finding classes may ever be acknowledged. Everything else —
