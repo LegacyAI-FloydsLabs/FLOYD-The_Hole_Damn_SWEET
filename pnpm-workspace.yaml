@@ -4,3 +4,5 @@ packages:
   - core/*
   - clients/*
   - apps/*
+  # Independent embedded repo with its own remote; never part of this workspace.
+  - "!apps/remote-portal"

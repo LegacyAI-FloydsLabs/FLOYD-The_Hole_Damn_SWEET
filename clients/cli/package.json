@@ -7,6 +7,6 @@
     "floyd": "./src/main.ts"
   },
   "dependencies": {
-    "@floyd/sdk": "*"
+    "@floyd/sdk": "workspace:*"
   }
 }
