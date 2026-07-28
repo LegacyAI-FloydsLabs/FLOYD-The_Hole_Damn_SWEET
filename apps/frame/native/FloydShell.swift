@@ -6,7 +6,6 @@
 // is a separate thing and is untouched by this shell.
 // Build: swiftc -O -framework Cocoa -framework WebKit FloydShell.swift -o FloydShell
 import Cocoa
-import Security
 import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
@@ -30,18 +29,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return request
     }
 
+    // Vault Keychain items are created by /usr/bin/security with an ACL that
+    // trusts only /usr/bin/security itself, so a direct SecItemCopyMatching
+    // from this binary would prompt (or fail). Reading through /usr/bin/security
+    // stays on the item ACL and is silent.
     private func keychainSecret(account: String) -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: "space.legacyai.floyd.vault",
-            kSecAttrAccount: account,
-            kSecMatchLimit: kSecMatchLimitOne,
-            kSecReturnData: true,
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = [
+            "find-generic-password",
+            "-a", account,
+            "-s", "space.legacyai.floyd.vault",
+            "-w",
         ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            NSLog("FloydShell: failed to launch /usr/bin/security for keychain account '%@': %@",
+                  account, error.localizedDescription)
+            return nil
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        _ = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            NSLog("FloydShell: /usr/bin/security find-generic-password exited %d for account '%@' (service space.legacyai.floyd.vault); management bootstrap header will be missing",
+                  process.terminationStatus, account)
+            return nil
+        }
         return String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
