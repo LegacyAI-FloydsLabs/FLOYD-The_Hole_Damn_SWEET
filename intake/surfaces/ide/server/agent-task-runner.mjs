@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { isAbsolute, resolve, sep } from 'node:path';
 
 const ALLOWED_EXECUTABLES = new Set(['node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'git', 'rg', 'tsc', 'vite', 'vitest', 'pytest', 'python3', 'cargo', 'rustc', 'go', 'make']);
 const READ_ONLY_GIT = new Set(['status', 'diff', 'log', 'show', 'grep', 'ls-files', 'rev-parse', 'branch']);
@@ -16,9 +16,9 @@ const MAX_OUTPUT = 4 * 1024 * 1024;
  * confirmation-gated host routes.
  */
 export function createAgentTaskRunner({ workspaceRoot }) {
-  let root = workspaceRoot;
+  let root = resolveWorkspaceRoot(workspaceRoot);
   return {
-    setWorkspaceRoot(nextRoot) { root = nextRoot; },
+    setWorkspaceRoot(nextRoot) { root = resolveWorkspaceRoot(nextRoot); },
     async run(request, signal) {
       const executable = String(request?.executable || '').trim();
       const args = validateArgs(request?.args);
@@ -26,7 +26,7 @@ export function createAgentTaskRunner({ workspaceRoot }) {
       if (executable === 'git' && (!args[0] || !READ_ONLY_GIT.has(args[0]) || (args[0] === 'branch' && args.length > 1))) {
         throw httpError(403, 'Agent Git tasks are read-only. Use the dedicated Git UI for mutations.');
       }
-      const cwd = await confinedDirectory(root, request?.cwd || root);
+      const cwd = confinedDirectory(root, request?.cwd || root);
       const timeoutMs = Math.max(1000, Math.min(120_000, Number(request?.timeoutMs) || 60_000));
       const startedAt = Date.now();
       return await new Promise((resolvePromise, reject) => {
@@ -55,10 +55,14 @@ function validateArgs(value) {
   });
 }
 
-async function confinedDirectory(root, requested) {
-  const candidate = resolve(root, requested);
-  const resolved = await realpath(candidate);
-  if (resolved !== root && !resolved.startsWith(`${root}/`)) throw httpError(403, 'Task cwd escapes the workspace.');
+function confinedDirectory(root, requested) {
+  const candidate = isAbsolute(requested) ? resolve(requested) : resolve(root, String(requested || ''));
+  const resolved = realpathSync(candidate);
+  if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) throw httpError(403, 'Task cwd escapes the workspace.');
   return resolved;
+}
+
+function resolveWorkspaceRoot(nextRoot) {
+  return realpathSync(resolve(nextRoot));
 }
 function httpError(status, message) { const error = new Error(message); error.status = status; return error; }

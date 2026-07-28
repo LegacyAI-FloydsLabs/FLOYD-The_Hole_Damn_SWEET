@@ -334,6 +334,7 @@ const MANAGED = {
     cmd: NODE_BIN, args: ["server/cursem-server.mjs"],
     env: {
       CURSEM_PORT: "13012",
+      CURSEM_TERMINAL_PORT: "13013",
       // Allow embedding ONLY by local frame origins. Remote access is disabled
       // until a private overlay is configured.
       CURSEM_FRAME_ANCESTORS: "http://127.0.0.1:13030 http://localhost:13030 http://floyd.localhost:13030",

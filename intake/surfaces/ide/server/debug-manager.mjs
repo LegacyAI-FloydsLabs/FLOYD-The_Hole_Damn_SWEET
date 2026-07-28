@@ -1,15 +1,16 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, resolve, sep } from 'node:path';
 
 /** Trusted Node inspector adapter used by the standalone debug panel. */
 export function createDebugManager(initialWorkspaceRoot) {
-  let workspaceRoot = resolve(initialWorkspaceRoot);
+  let workspaceRoot = resolveWorkspaceRoot(initialWorkspaceRoot);
   const sessions = new Map();
 
   return {
-    setWorkspaceRoot(root) { workspaceRoot = resolve(root); },
+    setWorkspaceRoot(root) { workspaceRoot = resolveWorkspaceRoot(root); },
     async launch(config) {
       if (config?.type !== 'node') throw new Error('This standalone build currently supports the Node debug adapter.');
       if (typeof config.program !== 'string' || !config.program.trim()) throw new Error('A Node program path is required.');
@@ -78,6 +79,11 @@ export function createDebugManager(initialWorkspaceRoot) {
     if (actual !== workspaceRoot && !actual.startsWith(`${workspaceRoot}${sep}`)) throw new Error('Debug path escapes the approved workspace.');
     return actual;
   }
+}
+
+function resolveWorkspaceRoot(value) {
+  const resolved = resolve(value || '');
+  return realpathSync(resolved);
 }
 
 async function waitForInspector(child) {

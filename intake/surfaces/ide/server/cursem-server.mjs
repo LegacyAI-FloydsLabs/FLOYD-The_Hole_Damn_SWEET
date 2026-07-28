@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { extname, join, normalize, resolve } from 'node:path';
@@ -26,6 +27,7 @@ const requestedPort = parsePort(process.env.CURSEM_PORT, 0);
 const workspaceArg = process.argv.indexOf('--workspace');
 const workspaceRoot = workspaceArg >= 0 ? process.argv[workspaceArg + 1] : process.env.CURSEM_WORKSPACE_ROOT || process.env.INIT_CWD || process.cwd();
 if (!workspaceRoot) throw new Error('--workspace requires a folder path.');
+const resolvedWorkspaceRoot = realpathSync(workspaceRoot);
 
 let terminalChild = null;
 let terminalEndpoint = process.env.CURSEM_TERMINAL_URL || '';
@@ -92,9 +94,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'HEAD') res.end(); else createReadStream(file).pipe(res);
 });
 
-const lspManager = createLspGateway({ server, workspaceRoot: resolve(workspaceRoot), appRoot });
-const debugManager = createDebugManager(resolve(workspaceRoot));
-standalone = await createStandaloneHost({ initialWorkspaceRoot: workspaceRoot, terminalEndpoint, terminalToken, lspManager, debugManager });
+const lspManager = createLspGateway({ server, workspaceRoot: resolve(resolvedWorkspaceRoot), appRoot });
+const debugManager = createDebugManager(resolve(resolvedWorkspaceRoot));
+standalone = await createStandaloneHost({ initialWorkspaceRoot: resolvedWorkspaceRoot, terminalEndpoint, terminalToken, lspManager, debugManager });
 
 server.listen(requestedPort, '127.0.0.1', () => {
   const address = server.address();

@@ -9,6 +9,7 @@ export const FLOYD_KEYCHAIN_ACCOUNTS = Object.freeze({
   connectedAppMaster: "connected-app-master",
   modelConnectorMaster: "model-connector-master",
   remoteMcpTargets: "remote-mcp-targets",
+  stagedWriteScratch: "staged-keychain-write",
   migrationBackups: "migration-backup-keys",
 });
 
@@ -61,7 +62,7 @@ export class MacOSKeychainVault {
     this.exec = exec;
     // If a previous process died between delete-generic-password and
     // add-generic-password, the only copy of that secret is the staged
-    // envelope in the migration-backup account. Restore it before anything
+    // envelope in the staged-write scratch account. Restore it before anything
     // else touches the Keychain.
     MacOSKeychainVault.recoverStagedWrite(this);
   }
@@ -105,17 +106,17 @@ export class MacOSKeychainVault {
       // as a value would make get() misinterpret it as chunk metadata.
       throw new Error("Keychain secret uses the reserved fvchunks manifest prefix");
     }
-    const backupAccount = FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups;
+    const backupAccount = FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch;
     let staged = false;
     if (account !== backupAccount) {
       // Crash safety: delete-then-create has a window where the process can
       // die with the item deleted but not yet re-created, and the Keychain is
       // the ONLY storage for these secrets. Stage the old FULL LOGICAL value
       // (reassembled from chunks when applicable, never the manifest string)
-      // in the backup account first; recoverStagedWrite() replays it at
+      // in the scratch account first; recoverStagedWrite() replays it at
       // startup if the swap never completed or left the chunked value
-      // unreadable. The backup account itself is written without staging (it
-      // IS the backup), which also breaks the recursion.
+      // unreadable. The scratch account itself is written without staging (it
+      // is the dedicated envelope), which also breaks the recursion.
       const existing = this.get(account);
       if (existing !== null) {
         this.#writeLogical(backupAccount, JSON.stringify({
@@ -240,7 +241,7 @@ export class MacOSKeychainVault {
    * chunk writes and the manifest swap looks like.
    */
   static recoverStagedWrite(vault) {
-    const backupAccount = FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups;
+    const backupAccount = FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch;
     let raw;
     try {
       raw = vault.get(backupAccount);

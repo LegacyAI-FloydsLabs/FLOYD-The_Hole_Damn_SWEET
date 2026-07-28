@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import {
   mkdir,
   readFile,
@@ -358,7 +359,7 @@ class WorkspaceBoundary {
 
   async setRoot(value) {
     if (typeof value !== 'string' || !value.trim()) throw new HttpError(400, 'Workspace root is required.');
-    const resolved = await realpath(resolve(value));
+    const resolved = await resolvePathWithMissingParent(resolve(value));
     if (!(await stat(resolved)).isDirectory()) throw new HttpError(400, 'Workspace root must be a directory.');
     this.root = resolved;
   }
@@ -370,33 +371,33 @@ class WorkspaceBoundary {
   candidate(value) {
     if (typeof value !== 'string' || !value.trim()) throw new HttpError(400, 'A filesystem path is required.');
     const target = resolve(isAbsolute(value) ? value : resolve(this.root, value));
-    if (!this.containsLexically(target)) throw new HttpError(403, 'Path escapes the approved workspace root.');
-    return target;
+    const resolved = resolvePathWithMissingParentSync(target);
+    if (!this.containsLexically(resolved)) throw new HttpError(403, 'Path escapes the approved workspace root.');
+    return resolved;
   }
 
   async existing(value) {
     const candidate = this.candidate(value);
-    const resolved = await realpath(candidate);
-    if (!this.containsLexically(resolved)) throw new HttpError(403, 'Symlink escapes the approved workspace root.');
-    return resolved;
+    if (!(await isDirectoryOrFile(candidate))) throw new HttpError(404, `Path not found: ${candidate}`);
+    return candidate;
   }
 
   async writable(value) {
     const candidate = this.candidate(value);
-    const parent = await realpath(dirname(candidate));
+    const parent = resolvePathWithMissingParentSync(dirname(candidate));
     if (!this.containsLexically(parent)) throw new HttpError(403, 'Write target escapes the approved workspace root.');
     return candidate;
   }
 
   async writableTree(value) {
     const candidate = this.candidate(value);
-    let ancestor = dirname(candidate);
-    while (this.containsLexically(ancestor)) {
-      try {
-        const resolved = await realpath(ancestor);
-        if (!this.containsLexically(resolved)) throw new HttpError(403, 'Write target escapes the approved workspace root.');
-        return candidate;
-      } catch (error) {
+      let ancestor = dirname(candidate);
+      while (this.containsLexically(ancestor)) {
+        try {
+          const resolved = resolvePathWithMissingParentSync(ancestor);
+          if (!this.containsLexically(resolved)) throw new HttpError(403, 'Write target escapes the approved workspace root.');
+          return candidate;
+        } catch (error) {
         if (error?.code !== 'ENOENT') throw error;
         if (ancestor === this.root) break;
         ancestor = dirname(ancestor);
@@ -564,6 +565,49 @@ async function describeWorkspace(root) {
 
 function workspaceId(root) {
   return `local-${Buffer.from(root).toString('base64url').slice(0, 32)}`;
+}
+
+async function isDirectoryOrFile(value) {
+  try {
+    const file = await stat(value);
+    return file.isDirectory() || file.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function resolvePathWithMissingParentSync(candidate) {
+  let unresolved = candidate;
+  let suffix = '';
+  while (true) {
+    try {
+      const resolved = realpathSync(unresolved);
+      return `${resolved}${suffix}`;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      const parent = dirname(unresolved);
+      if (parent === unresolved) return candidate;
+      suffix = `${unresolved.slice(parent.length)}${suffix}`;
+      unresolved = parent;
+    }
+  }
+}
+
+async function resolvePathWithMissingParent(value) {
+  let unresolved = resolve(value);
+  let suffix = '';
+  while (true) {
+    try {
+      const resolved = await realpath(unresolved);
+      return `${resolved}${suffix}`;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      const parent = dirname(unresolved);
+      if (parent === unresolved) return value;
+      suffix = `${unresolved.slice(parent.length)}${suffix}`;
+      unresolved = parent;
+    }
+  }
 }
 
 async function chooseWorkspaceMacOS(currentRoot) {
