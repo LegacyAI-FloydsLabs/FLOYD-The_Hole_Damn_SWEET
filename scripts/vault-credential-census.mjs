@@ -111,6 +111,88 @@ const patternSuspects = [];
 const unreadable = [];
 let filesScanned = 0;
 let bytesScanned = 0;
+// ---------------------------------------------------------------------------
+// Known-benign residue allowlist.
+//
+// Each entry acknowledges one class of finding that has been manually reviewed
+// and is NOT an active credential. Acknowledged findings are reported under
+// `acknowledged`/`acknowledgedCount` instead of `outsideVaultCount` so that a
+// clean run exits 0 while the evidence remains visible in the report.
+//
+// Safety rule (enforced in code below, not just by this table): only two
+// classes of finding may ever be acknowledged:
+//   1. scope "key-shape" patternSuspects — regex-shaped lookalikes that are not
+//      exact matches of any credential known to the Vault. An exact match of a
+//      real credential is reported separately under `matches` and can never be
+//      silenced by this table.
+//   2. scope "file" matches whose provider is exactly "openai-oauth-account_id"
+//      — the ChatGPT account UUID is an identifier, not a bearer secret; it
+//      cannot authenticate anything on its own.
+// Real active-key matches (every other provider, and every
+// "process-environment" scope finding) are structurally excluded from
+// acknowledgment.
+const KNOWN_BENIGN = [
+  // The OpenAI OAuth account id (a UUID naming the ChatGPT account, not a
+  // token) is embedded by Codex itself throughout its own state databases and
+  // session transcripts. It is not a secret and cannot be replayed as one.
+  {
+    pathPattern: new RegExp(`^${homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.codex/`),
+    provider: "openai-oauth-account_id",
+    scope: "file",
+    justification: "Codex writes its own account UUID into ~/.codex sqlite/state files and session logs; it is an identifier, not a credential.",
+  },
+  // The internal browser profile logged the ChatGPT web session, whose pages
+  // include the same account UUID in Local Storage.
+  {
+    pathPattern: /\/internal-browser-profile\//,
+    provider: "openai-oauth-account_id",
+    scope: "file",
+    justification: "ChatGPT web session persisted the account UUID (an identifier, not a secret) into browser Local Storage.",
+  },
+  // Browser-profile pattern noise: Chromium history/favicons/autofill/proto
+  // stores contain AIza..., hf_..., and tvly-... shaped strings from ordinary
+  // web browsing (public Google web API keys baked into pages, docs examples,
+  // form-field metadata). Verified not to be exact matches of any Vault-held
+  // credential — exact matches are detected independently above.
+  ...["google", "huggingface", "tavily"].map((provider) => ({
+    pathPattern: /\/internal-browser-profile\//,
+    provider,
+    scope: "key-shape",
+    justification: "Chromium profile stores key-shaped strings from ordinary browsing (public web API keys, autofill/history noise); not exact matches of any Vault credential.",
+  })),
+  // Codex session transcripts quote key-shaped strings while discussing or
+  // scanning for them (including this census's own patterns). Verified not to
+  // be exact matches of any Vault-held credential.
+  ...["google", "huggingface", "tavily"].map((provider) => ({
+    pathPattern: /\/\.codex\/sessions\/.*\.jsonl$/,
+    provider,
+    scope: "key-shape",
+    justification: "Codex session logs quote key-shaped example/scan strings; not exact matches of any Vault credential.",
+  })),
+];
+
+// Only these finding classes may ever be acknowledged. Everything else —
+// notably exact matches of live provider keys and process-environment
+// findings — must always count as outsideVault regardless of KNOWN_BENIGN.
+const ACKNOWLEDGEABLE_FILE_MATCH_PROVIDERS = new Set(["openai-oauth-account_id"]);
+
+function findAcknowledgment(finding) {
+  if (finding.scope === "key-shape") {
+    // pattern suspects only; eligible by construction
+  } else if (finding.scope === "file" && ACKNOWLEDGEABLE_FILE_MATCH_PROVIDERS.has(finding.provider)) {
+    // identifier-class fingerprints only
+  } else {
+    return null;
+  }
+  for (const entry of KNOWN_BENIGN) {
+    if (entry.scope !== finding.scope) continue;
+    if (entry.provider !== finding.provider) continue;
+    if (typeof finding.path !== "string" || !entry.pathPattern.test(finding.path)) continue;
+    return entry;
+  }
+  return null;
+}
+
 const providerPatterns = [
   ["anthropic", /sk-ant-api\d{2}-[A-Za-z0-9_-]{60,}/g],
   ["openai", /sk-(?:proj|svcacct)-[A-Za-z0-9_-]{40,}/g],
@@ -222,16 +304,32 @@ try {
   // Some hardened environments do not expose other process environments.
 }
 
-const outsideVault = matches.filter((match) => !match.protectedVaultStorage);
+const acknowledged = [];
+const activeMatches = [];
+for (const match of matches) {
+  const entry = findAcknowledgment(match);
+  if (entry) acknowledged.push({ ...match, justification: entry.justification });
+  else activeMatches.push(match);
+}
+const activePatternSuspects = [];
+for (const suspect of patternSuspects) {
+  const entry = findAcknowledgment(suspect);
+  if (entry) acknowledged.push({ ...suspect, justification: entry.justification });
+  else activePatternSuspects.push(suspect);
+}
+
+const outsideVault = activeMatches.filter((match) => !match.protectedVaultStorage);
 console.log(JSON.stringify({
   version: 1,
   filesScanned,
   bytesScanned,
   credentialsCompared: credentials.map(({ provider, fingerprint }) => ({ provider, fingerprint })),
-  matches,
-  patternSuspects,
+  matches: activeMatches,
+  patternSuspects: activePatternSuspects,
   unreadableCount: unreadable.length,
   unreadable: unreadable.slice(0, 50),
   outsideVaultCount: outsideVault.length,
+  acknowledgedCount: acknowledged.length,
+  acknowledged,
 }, null, 2));
-process.exitCode = outsideVault.length || patternSuspects.length || unreadable.length ? 2 : 0;
+process.exitCode = outsideVault.length || activePatternSuspects.length || unreadable.length ? 2 : 0;
