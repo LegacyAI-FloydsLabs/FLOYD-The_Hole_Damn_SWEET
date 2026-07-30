@@ -34,6 +34,12 @@ interface SessionState {
   pid?: number;
   outputCallbacks: Set<(data: string) => void>;
   exitCallbacks: Set<(code: number) => void>;
+  inputBuffer: string;
+  inputFlushTimer: ReturnType<typeof setTimeout> | null;
+  inputDataListener?: { dispose: () => void } | null;
+  resizeObserver?: ResizeObserver | null;
+  resizeElement?: HTMLElement | null;
+  outputHandler?: ((data: string) => void) | null;
 }
 
 interface TerminalOneMessage {
@@ -42,6 +48,9 @@ interface TerminalOneMessage {
   code?: number | string;
   message?: string;
 }
+
+const INPUT_BATCH_INTERVAL_MS = 12;
+const INPUT_BATCH_CHUNK_SIZE = 4096;
 
 export class TerminalOneAdapter {
   private gateway: HostGateway;
@@ -123,6 +132,12 @@ export class TerminalOneAdapter {
       status: 'connecting',
       outputCallbacks: new Set(),
       exitCallbacks: new Set(),
+      inputBuffer: '',
+      inputFlushTimer: null,
+      inputDataListener: null,
+      resizeObserver: null,
+      resizeElement: null,
+      outputHandler: null,
     };
 
     return new Promise((resolve, reject) => {
@@ -267,18 +282,17 @@ export class TerminalOneAdapter {
     term.open(container);
     fit.fit();
 
-    // User input → send to TerminalOne bridge
-    term.onData((data) => {
-      if (state.ws?.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'input', data }));
-      }
+    const dataListener = term.onData((data) => {
+      this.queueInput(state, data);
     });
+    state.inputDataListener = dataListener;
 
     // TerminalOne output → write to xterm.js
     const outputHandler = (data: string) => {
       term.write(data);
     };
     state.outputCallbacks.add(outputHandler);
+    state.outputHandler = outputHandler;
 
     // Resize handling
     const resizeObserver = new ResizeObserver(() => {
@@ -292,6 +306,8 @@ export class TerminalOneAdapter {
       }
     });
     resizeObserver.observe(container);
+    state.resizeObserver = resizeObserver;
+    state.resizeElement = container;
 
     state.term = term;
     state.fit = fit;
@@ -302,6 +318,24 @@ export class TerminalOneAdapter {
   detachRenderer(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
+    if (state.inputFlushTimer) {
+      clearTimeout(state.inputFlushTimer);
+      state.inputFlushTimer = null;
+    }
+    state.inputBuffer = '';
+    if (state.inputDataListener?.dispose) {
+      state.inputDataListener.dispose();
+      state.inputDataListener = null;
+    }
+    if (state.outputHandler) {
+      state.outputCallbacks.delete(state.outputHandler);
+      state.outputHandler = null;
+    }
+    if (state.resizeObserver && state.resizeElement) {
+      state.resizeObserver.unobserve(state.resizeElement);
+      state.resizeObserver = null;
+      state.resizeElement = null;
+    }
     state.term?.dispose();
     state.term = null;
     state.fit = null;
@@ -311,8 +345,42 @@ export class TerminalOneAdapter {
   /** Send input to terminal. */
   sendInput(sessionId: string, data: string): void {
     const state = this.sessions.get(sessionId);
-    if (state?.ws?.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'input', data }));
+    if (!state) return;
+    this.queueInput(state, data);
+  }
+
+  private queueInput(state: SessionState, data: string): void {
+    if (!data) return;
+    state.inputBuffer += data;
+
+    if (state.inputFlushTimer) {
+      if (state.inputBuffer.length >= INPUT_BATCH_CHUNK_SIZE) {
+        clearTimeout(state.inputFlushTimer);
+        state.inputFlushTimer = null;
+        const payload = state.inputBuffer;
+        state.inputBuffer = '';
+        this.flushInput(state, payload);
+      }
+      return;
+    }
+
+    state.inputFlushTimer = setTimeout(() => {
+      const payload = state.inputBuffer;
+      state.inputBuffer = '';
+      state.inputFlushTimer = null;
+      this.flushInput(state, payload);
+    }, INPUT_BATCH_INTERVAL_MS);
+  }
+
+  private flushInput(state: SessionState, data: string): void {
+    if (!data || state.ws?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    for (let offset = 0; offset < data.length; offset += INPUT_BATCH_CHUNK_SIZE) {
+      state.ws.send(JSON.stringify({
+        type: 'input',
+        data: data.substring(offset, offset + INPUT_BATCH_CHUNK_SIZE),
+      }));
     }
   }
 
@@ -332,7 +400,28 @@ export class TerminalOneAdapter {
       state.ws.send(JSON.stringify({ type: 'close' }));
       state.ws.close();
     }
+    if (state.inputFlushTimer) {
+      clearTimeout(state.inputFlushTimer);
+      state.inputFlushTimer = null;
+    }
+    state.inputBuffer = '';
+    if (state.inputDataListener?.dispose) {
+      state.inputDataListener.dispose();
+      state.inputDataListener = null;
+    }
+    if (state.outputHandler) {
+      state.outputCallbacks.delete(state.outputHandler);
+      state.outputHandler = null;
+    }
+    if (state.resizeObserver && state.resizeElement) {
+      state.resizeObserver.unobserve(state.resizeElement);
+      state.resizeObserver = null;
+      state.resizeElement = null;
+    }
     state.term?.dispose();
+    state.term = null;
+    state.fit = null;
+    state.search = null;
     this.sessions.delete(sessionId);
   }
 
@@ -442,6 +531,12 @@ export class TerminalOneAdapter {
         status: 'connecting',
         outputCallbacks: new Set(),
         exitCallbacks: new Set(),
+        inputBuffer: '',
+        inputFlushTimer: null,
+        inputDataListener: null,
+        resizeObserver: null,
+        resizeElement: null,
+        outputHandler: null,
       });
     }
   }

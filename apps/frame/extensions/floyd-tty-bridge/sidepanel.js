@@ -45,6 +45,9 @@ const TERM_THEME = {
   white: '#e0e0e0',
 };
 
+const SIDE_PANEL_INPUT_FLUSH_MS = 10;
+const SIDE_PANEL_INPUT_CHUNK_SIZE = 8192;
+
 // ─── Terminal Session ────────────────────────────────────────────────────────
 
 class TerminalSession {
@@ -58,6 +61,9 @@ class TerminalSession {
     this._resizing = false;
     this._resizeRAF = null;
     this._observer = null;
+    this._inputBuffer = '';
+    this._inputFlushTimer = null;
+    this._onDataDisposer = null;
     this._init();
   }
 
@@ -189,6 +195,9 @@ class TerminalSession {
   }
 
   startObserving() {
+    if (this._observer) {
+      this._observer.disconnect();
+    }
     const container = document.getElementById(this.containerId);
     if (!container) return;
     this._observer = new ResizeObserver(() => {
@@ -201,6 +210,54 @@ class TerminalSession {
       });
     });
     this._observer.observe(container);
+  }
+
+  enqueueInput(data) {
+    if (typeof data !== 'string' || !data || !port) return;
+    this._inputBuffer += data;
+    if (this._inputFlushTimer) {
+      if (this._inputBuffer.length >= SIDE_PANEL_INPUT_CHUNK_SIZE * 2) {
+        clearTimeout(this._inputFlushTimer);
+        this._inputFlushTimer = null;
+        this.flushInput();
+      }
+      return;
+    }
+    this._inputFlushTimer = setTimeout(() => {
+      this.flushInput();
+    }, SIDE_PANEL_INPUT_FLUSH_MS);
+  }
+
+  flushInput() {
+    const data = this._inputBuffer;
+    if (this._inputFlushTimer) {
+      clearTimeout(this._inputFlushTimer);
+      this._inputFlushTimer = null;
+    }
+    this._inputBuffer = '';
+    if (!data || !port) return;
+    if (data.length <= SIDE_PANEL_INPUT_CHUNK_SIZE) {
+      try { port.postMessage({ type: 'pty_input', data, session: this.sessionId }); } catch (_) {}
+      return;
+    }
+    let offset = 0;
+    while (offset < data.length) {
+      const chunk = data.substring(offset, offset + SIDE_PANEL_INPUT_CHUNK_SIZE);
+      try { port.postMessage({ type: 'pty_input', data: chunk, session: this.sessionId }); } catch (_) {}
+      offset += SIDE_PANEL_INPUT_CHUNK_SIZE;
+    }
+  }
+
+  disposeInputListener() {
+    if (this._onDataDisposer?.dispose) {
+      this._onDataDisposer.dispose();
+    }
+    if (this._inputFlushTimer) {
+      clearTimeout(this._inputFlushTimer);
+      this._inputFlushTimer = null;
+    }
+    this._inputBuffer = '';
+    this._onDataDisposer = null;
   }
 
   focus() {
@@ -422,25 +479,9 @@ function handleSystemEvent(msg) {
 
 // ─── Input Handling ──────────────────────────────────────────────────────────
 
-const CHUNK_SIZE = 8192;
-
 function setupTerminalInput(session) {
-  session.term.onData((data) => {
-    if (!port) return;
-    if (data.length <= CHUNK_SIZE) {
-      try { port.postMessage({ type: 'pty_input', data, session: session.sessionId }); } catch (_) {}
-    } else {
-      let offset = 0;
-      const sendChunk = () => {
-        if (offset < data.length && port) {
-          const chunk = data.substring(offset, offset + CHUNK_SIZE);
-          try { port.postMessage({ type: 'pty_input', data: chunk, session: session.sessionId }); } catch (_) {}
-          offset += CHUNK_SIZE;
-          setTimeout(sendChunk, 0);
-        }
-      };
-      sendChunk();
-    }
+  session._onDataDisposer = session.term.onData((data) => {
+    session.enqueueInput(data);
   });
 }
 

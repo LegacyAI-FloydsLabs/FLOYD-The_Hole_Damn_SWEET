@@ -7,6 +7,24 @@ import { useUIStore } from '@/store/uiStore';
 import { toTerminalTheme } from '@/theme';
 import { fontStack } from '@/font';
 
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
+type TerminalPaneRuntime = {
+  adapter: TerminalOneAdapter | null;
+  sessions: TerminalOneSession[];
+  activeId: string | null;
+  status: ConnectionStatus;
+  workspaceRoot: string | null;
+};
+
+const terminalPaneRuntime: TerminalPaneRuntime = {
+  adapter: null,
+  sessions: [],
+  activeId: null,
+  status: 'connecting',
+  workspaceRoot: null,
+};
+
 export function TerminalPane() {
   const containerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<TerminalOneAdapter | null>(null);
@@ -17,9 +35,9 @@ export function TerminalPane() {
   const addToast = useUIStore((state) => state.addToast);
   const themeId = useUIStore((state) => state.preferences.theme);
   const fontFamily = useUIStore((state) => state.preferences.fontFamily);
-  const [sessions, setSessions] = useState<TerminalOneSession[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [sessions, setSessions] = useState<TerminalOneSession[]>(terminalPaneRuntime.sessions);
+  const [activeId, setActiveId] = useState<string | null>(terminalPaneRuntime.activeId);
+  const [status, setStatus] = useState<ConnectionStatus>(terminalPaneRuntime.status);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -43,7 +61,12 @@ export function TerminalPane() {
     setStatus('connecting');
     try {
       const session = await adapter.createSession(workspaceRoot, 80, 24);
-      setSessions((current) => [...current, { ...session, title: `terminal ${current.length + 1}` }]);
+      const nextSessions = [...terminalPaneRuntime.sessions, { ...session, title: `terminal ${terminalPaneRuntime.sessions.length + 1}` }];
+      terminalPaneRuntime.sessions = nextSessions;
+      setSessions(nextSessions);
+      setActiveId(session.id);
+      terminalPaneRuntime.activeId = session.id;
+      terminalPaneRuntime.status = 'connected';
       setStatus('connected');
       requestAnimationFrame(() => attach(session.id));
     } catch (error) {
@@ -52,13 +75,82 @@ export function TerminalPane() {
     }
   }, [addToast, attach, workspaceRoot]);
 
+  const clearRuntimeSessions = useCallback(() => {
+    if (terminalPaneRuntime.adapter) {
+      for (const session of terminalPaneRuntime.sessions) {
+        terminalPaneRuntime.adapter.killSession(session.id);
+      }
+    }
+    terminalPaneRuntime.sessions = [];
+    terminalPaneRuntime.activeId = null;
+    setSessions([]);
+    setActiveId(null);
+    setStatus('disconnected');
+    terminalPaneRuntime.status = 'disconnected';
+    activeIdRef.current = null;
+    if (containerRef.current) {
+      containerRef.current.replaceChildren();
+    }
+  }, []);
+
   useEffect(() => {
     const preferences = useUIStore.getState().preferences;
-    const adapter = new TerminalOneAdapter(gateway, toTerminalTheme(preferences.theme), fontStack(preferences.fontFamily));
+    if (!terminalPaneRuntime.adapter) {
+      terminalPaneRuntime.adapter = new TerminalOneAdapter(
+        gateway,
+        toTerminalTheme(preferences.theme),
+        fontStack(preferences.fontFamily),
+      );
+    }
+    const adapter = terminalPaneRuntime.adapter;
     adapterRef.current = adapter;
-    void createTerminal();
-    return () => { adapter.dispose(); adapterRef.current = null; };
-  }, [createTerminal, gateway]);
+    let needsCreate = false;
+    if (!workspaceRoot) {
+      setStatus('disconnected');
+      terminalPaneRuntime.status = 'disconnected';
+      if (activeIdRef.current) {
+        adapter.detachRenderer(activeIdRef.current);
+      }
+      adapterRef.current = null;
+      return () => {
+        adapterRef.current = null;
+      };
+    }
+    if (terminalPaneRuntime.workspaceRoot && terminalPaneRuntime.workspaceRoot !== workspaceRoot) {
+      clearRuntimeSessions();
+    }
+    terminalPaneRuntime.workspaceRoot = workspaceRoot;
+
+    const recover = () => {
+      const recoveredSessions = adapter.listSessions();
+      terminalPaneRuntime.sessions = recoveredSessions;
+      setSessions(recoveredSessions);
+      setStatus(recoveredSessions.length > 0 ? 'connected' : 'disconnected');
+      const currentActiveId = terminalPaneRuntime.activeId;
+      const nextActiveId = recoveredSessions.find((session) => session.id === currentActiveId)?.id ?? recoveredSessions.at(-1)?.id ?? null;
+      setActiveId(nextActiveId);
+      terminalPaneRuntime.activeId = nextActiveId;
+      if (nextActiveId) {
+        requestAnimationFrame(() => attach(nextActiveId));
+      } else {
+        needsCreate = true;
+      }
+      if (needsCreate) {
+        void createTerminal();
+      }
+    };
+
+    recover();
+
+    return () => {
+      if (activeIdRef.current) {
+        adapter.detachRenderer(activeIdRef.current);
+      }
+      adapterRef.current = null;
+    };
+  },
+    [attach, clearRuntimeSessions, createTerminal, gateway, workspaceRoot],
+  );
 
   useEffect(() => {
     adapterRef.current?.setRendererTheme(toTerminalTheme(themeId));
@@ -68,8 +160,16 @@ export function TerminalPane() {
     adapterRef.current?.setRendererFontFamily(fontStack(fontFamily));
   }, [fontFamily]);
 
+  useEffect(() => {
+    terminalPaneRuntime.sessions = sessions;
+    terminalPaneRuntime.status = status;
+    terminalPaneRuntime.activeId = activeId;
+    terminalPaneRuntime.workspaceRoot = workspaceRoot;
+  }, [sessions, status, activeId, workspaceRoot]);
+
   const closeSession = (sessionId: string) => {
     adapterRef.current?.killSession(sessionId);
+    terminalPaneRuntime.sessions = terminalPaneRuntime.sessions.filter((session) => session.id !== sessionId);
     setSessions((current) => {
       const next = current.filter((session) => session.id !== sessionId);
       if (activeId === sessionId) {
