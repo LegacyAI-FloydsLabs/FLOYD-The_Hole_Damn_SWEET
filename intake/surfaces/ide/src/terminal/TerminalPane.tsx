@@ -52,6 +52,27 @@ export function TerminalPane() {
     setActiveId(sessionId);
   }, []);
 
+  const openSession = useCallback(async (sessionId: string) => {
+    const adapter = adapterRef.current;
+    if (!adapter) return;
+    const session = terminalPaneRuntime.sessions.find((item) => item.id === sessionId);
+    if (!session) return;
+
+    if (session.attached === false && session.resumable) {
+      setStatus('connecting');
+      try {
+        await adapter.resumeSession(sessionId, 80, 24);
+      } catch (error) {
+        setStatus('disconnected');
+        addToast(error instanceof Error ? error.message : 'Terminal resume failed.', 'error');
+        return;
+      }
+    }
+
+    requestAnimationFrame(() => attach(sessionId));
+    setStatus('connected');
+  }, [addToast, attach]);
+
   const createTerminal = useCallback(async () => {
     const adapter = adapterRef.current;
     if (!adapter || !workspaceRoot) {
@@ -74,6 +95,32 @@ export function TerminalPane() {
       addToast(error instanceof Error ? error.message : 'TerminalOne connection failed.', 'error');
     }
   }, [addToast, attach, workspaceRoot]);
+
+  const refreshRuntimeSessions = useCallback(async (workspace: string) => {
+    const adapter = adapterRef.current;
+    if (!adapter) return;
+
+    let recovered = await adapter.discoverSessions(workspace);
+    if (recovered.length === 0) {
+      recovered = adapter.listSessions();
+    }
+
+    terminalPaneRuntime.sessions = recovered;
+    setSessions(recovered);
+    setStatus(recovered.some((session) => session.attached) ? 'connected' : 'disconnected');
+
+    const nextActiveId = terminalPaneRuntime.sessions.find((session) => session.id === terminalPaneRuntime.activeId)?.id
+      ?? terminalPaneRuntime.sessions.at(-1)?.id
+      ?? null;
+    terminalPaneRuntime.activeId = nextActiveId;
+    setActiveId(nextActiveId);
+
+    if (nextActiveId) {
+      await openSession(nextActiveId);
+    } else {
+      await createTerminal();
+    }
+  }, [createTerminal, openSession]);
 
   const clearRuntimeSessions = useCallback(() => {
     if (terminalPaneRuntime.adapter) {
@@ -104,7 +151,6 @@ export function TerminalPane() {
     }
     const adapter = terminalPaneRuntime.adapter;
     adapterRef.current = adapter;
-    let needsCreate = false;
     if (!workspaceRoot) {
       setStatus('disconnected');
       terminalPaneRuntime.status = 'disconnected';
@@ -121,26 +167,26 @@ export function TerminalPane() {
     }
     terminalPaneRuntime.workspaceRoot = workspaceRoot;
 
-    const recover = () => {
-      const recoveredSessions = adapter.listSessions();
-      terminalPaneRuntime.sessions = recoveredSessions;
-      setSessions(recoveredSessions);
-      setStatus(recoveredSessions.length > 0 ? 'connected' : 'disconnected');
-      const currentActiveId = terminalPaneRuntime.activeId;
-      const nextActiveId = recoveredSessions.find((session) => session.id === currentActiveId)?.id ?? recoveredSessions.at(-1)?.id ?? null;
-      setActiveId(nextActiveId);
-      terminalPaneRuntime.activeId = nextActiveId;
-      if (nextActiveId) {
-        requestAnimationFrame(() => attach(nextActiveId));
-      } else {
-        needsCreate = true;
+    (async () => {
+      try {
+        await refreshRuntimeSessions(workspaceRoot);
+      } catch {
+        // Fallback to legacy in-memory sessions when admin endpoint is unavailable.
+        const recoveredSessions = adapter.listSessions();
+        terminalPaneRuntime.sessions = recoveredSessions;
+        setSessions(recoveredSessions);
+        setStatus(recoveredSessions.length > 0 ? 'connected' : 'disconnected');
+        const currentActiveId = terminalPaneRuntime.activeId;
+        const nextActiveId = recoveredSessions.find((session) => session.id === currentActiveId)?.id ?? recoveredSessions.at(-1)?.id ?? null;
+        terminalPaneRuntime.activeId = nextActiveId;
+        setActiveId(nextActiveId);
+        if (nextActiveId) {
+          void openSession(nextActiveId);
+        } else {
+          void createTerminal();
+        }
       }
-      if (needsCreate) {
-        void createTerminal();
-      }
-    };
-
-    recover();
+    })();
 
     return () => {
       if (activeIdRef.current) {
@@ -149,7 +195,7 @@ export function TerminalPane() {
       adapterRef.current = null;
     };
   },
-    [attach, clearRuntimeSessions, createTerminal, gateway, workspaceRoot],
+    [clearRuntimeSessions, createTerminal, openSession, refreshRuntimeSessions, gateway, workspaceRoot],
   );
 
   useEffect(() => {
@@ -198,9 +244,9 @@ export function TerminalPane() {
   return (
     <section className="terminal-pane" aria-label="TerminalOne">
       <header className="terminal-header">
-        <div className="panel-tabs" role="tablist" aria-label="Terminal sessions">
-          {sessions.map((session) => (
-            <button key={session.id} className={`panel-tab ${session.id === activeId ? 'active' : ''}`} onClick={() => attach(session.id)} role="tab" aria-selected={session.id === activeId}>
+      <div className="panel-tabs" role="tablist" aria-label="Terminal sessions">
+        {sessions.map((session) => (
+            <button key={session.id} className={`panel-tab ${session.id === activeId ? 'active' : ''}`} onClick={() => void openSession(session.id)} role="tab" aria-selected={session.id === activeId}>
               <span>{session.title}</span><span className="session-status" data-status={session.status} />
               <span className="panel-tab-close" role="button" aria-label={`Close ${session.title}`} onClick={(event) => { event.stopPropagation(); closeSession(session.id); }}><Icon name="close" size={12} /></span>
             </button>

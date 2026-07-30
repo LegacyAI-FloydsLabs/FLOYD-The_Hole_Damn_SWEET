@@ -32,6 +32,7 @@ interface SessionState {
   cwd: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error';
   pid?: number;
+  canResume: boolean;
   outputCallbacks: Set<(data: string) => void>;
   exitCallbacks: Set<(code: number) => void>;
   inputBuffer: string;
@@ -49,8 +50,21 @@ interface TerminalOneMessage {
   message?: string;
 }
 
+interface TerminalOneAdminSession {
+  id?: unknown;
+  command?: unknown;
+  attached?: unknown;
+  resumable?: unknown;
+  processExited?: unknown;
+}
+
+interface TerminalOneAdminPayload {
+  sessions?: unknown;
+}
+
 const INPUT_BATCH_INTERVAL_MS = 12;
 const INPUT_BATCH_CHUNK_SIZE = 4096;
+const TERMINAL_ADMIN_ROUTE = '/admin/sessions';
 
 export class TerminalOneAdapter {
   private gateway: HostGateway;
@@ -87,6 +101,37 @@ export class TerminalOneAdapter {
   /** Open the Floyd-authorized TerminalOne bridge. */
   private openSocket(auth: TerminalAuth): WebSocket {
     return new WebSocket(auth.endpoint, auth.token ? [auth.token] : undefined);
+  }
+
+  /** Convert a WS endpoint to the local TerminalOne admin sessions endpoint URL. */
+  private adminUrl(auth: TerminalAuth): string | null {
+    try {
+      const parsed = new URL(auth.endpoint);
+      if (parsed.protocol === 'ws:' || parsed.protocol === 'wss:') {
+        parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+      }
+      return `${parsed.origin}${TERMINAL_ADMIN_ROUTE}`;
+    } catch {
+      if (!auth.endpoint) return null;
+      return `${String(auth.endpoint).replace(/\/$/, '')}${TERMINAL_ADMIN_ROUTE}`;
+    }
+  }
+
+  /** Pull TerminalOne sessions from the local admin endpoint for resume safety. */
+  private async fetchAdminSessions(auth: TerminalAuth): Promise<TerminalOneAdminSession[]> {
+    const url = this.adminUrl(auth);
+    if (!url) return [];
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+      },
+    });
+    if (!response.ok) return [];
+    const payload = await response.json().catch(() => null) as TerminalOneAdminPayload | null;
+    if (!payload || !Array.isArray(payload.sessions)) return [];
+    return payload.sessions as TerminalOneAdminSession[];
   }
 
   /** Apply messages shared by fresh, resumed, and reconnected sessions. */
@@ -130,6 +175,7 @@ export class TerminalOneAdapter {
       sessionId: null,
       cwd,
       status: 'connecting',
+      canResume: false,
       outputCallbacks: new Set(),
       exitCallbacks: new Set(),
       inputBuffer: '',
@@ -162,6 +208,7 @@ export class TerminalOneAdapter {
             clearTimeout(timeout);
             state.sessionId = msg.sessionId;
             state.pid = msg.pid;
+            state.canResume = true;
             state.status = 'connected';
             this.sessions.set(msg.sessionId, state);
 
@@ -230,10 +277,11 @@ export class TerminalOneAdapter {
           const msg = JSON.parse(ev.data);
           if (msg.type === 'ready') {
             clearTimeout(timeout);
-            const state = this.sessions.get(sessionId);
+              const state = this.sessions.get(sessionId);
             if (state) {
               state.ws = ws;
               state.cwd = msg.cwd || state.cwd;
+              state.canResume = true;
               state.status = 'connected';
             }
             resolve({
@@ -486,6 +534,7 @@ export class TerminalOneAdapter {
             if (msg.type === 'ready') {
               clearTimeout(timeout);
               state.ws = ws;
+              state.canResume = true;
               state.status = 'connected';
               if (msg.replay) {
                 state.term?.write(msg.replay);
@@ -515,11 +564,42 @@ export class TerminalOneAdapter {
       title: state.cwd.split('/').pop() || 'terminal',
       cwd: state.cwd,
       status: state.status === 'connected' ? 'connected' : 'disconnected',
+      pid: state.pid,
+      resumable: state.canResume,
+      attached: !!state.ws && state.ws.readyState === WebSocket.OPEN,
     }));
   }
 
+  /** Load sessions from TerminalOne admin endpoint for resume recovery. */
+  async discoverSessions(workspaceRoot: string): Promise<TerminalOneSession[]> {
+    const auth = await this.ensureAuth();
+    const adminSessions = await this.fetchAdminSessions(auth);
+
+    const restored = adminSessions
+      .filter((session) => typeof session?.id === 'string')
+      .filter((session) => session.attached === true || session.resumable === true)
+      .map((session) => {
+        const id = String(session.id);
+        return {
+          id,
+          title: typeof session.command === 'string' ? (session.command.split('/').pop() || 'terminal') : 'terminal',
+          cwd: workspaceRoot,
+          status: session.attached ? ('connected' as const) : ('disconnected' as const),
+          resumable: !!session.resumable,
+          attached: !!session.attached,
+        } as TerminalOneSession;
+      });
+
+    for (const session of restored) {
+      if (!this.sessions.has(session.id)) {
+        this.registerSession(session.id, session.cwd, session.status, session.resumable ?? false);
+      }
+    }
+    return restored;
+  }
+
   /** Register a session internally. */
-  registerSession(sessionId: string, cwd: string): void {
+  registerSession(sessionId: string, cwd: string, status: SessionState['status'] = 'connecting', canResume = false): void {
     if (!this.sessions.has(sessionId)) {
       this.sessions.set(sessionId, {
         ws: null,
@@ -528,7 +608,8 @@ export class TerminalOneAdapter {
         search: null,
         sessionId,
         cwd,
-        status: 'connecting',
+        status,
+        canResume,
         outputCallbacks: new Set(),
         exitCallbacks: new Set(),
         inputBuffer: '',

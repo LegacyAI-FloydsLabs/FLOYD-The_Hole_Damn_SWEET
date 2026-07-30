@@ -290,6 +290,9 @@ export interface TerminalOneSession {
   cwd: string;
   status: 'connected' | 'disconnected' | 'error';
   pid?: number;
+  /** Recovery metadata from TerminalOne admin session tracking. */
+  resumable?: boolean;
+  attached?: boolean;
 }
 
 // ─── Theme ────────────────────────────────────────────────────────────

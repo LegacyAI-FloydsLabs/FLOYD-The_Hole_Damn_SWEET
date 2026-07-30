@@ -89,7 +89,9 @@ describe('TerminalOneAdapter protocol', () => {
     expect(output).toHaveBeenCalledWith('terminal output');
 
     adapter.sendInput('session-1', 'pwd\r');
-    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: 'input', data: 'pwd\r' });
+    await vi.waitFor(() => {
+      expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({ type: 'input', data: 'pwd\r' });
+    });
 
     adapter.killSession('session-1');
     expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: 'close' });
@@ -113,6 +115,41 @@ describe('TerminalOneAdapter protocol', () => {
 
     socket.receive({ type: 'ready', sessionId: 'session-2', cwd: '/workspace' });
     await expect(resumePromise).resolves.toMatchObject({ id: 'session-2', status: 'connected' });
+  });
+
+  it('discovers recoverable sessions from TerminalOne admin endpoint', async () => {
+    const sessions = [
+      {
+        id: 'admin-session-1',
+        command: '/bin/zsh',
+        attached: false,
+        resumable: true,
+        processExited: false,
+      },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ sessions }),
+    }) as unknown as Response));
+
+    const adapter = new TerminalOneAdapter(gateway);
+    const discovered = await adapter.discoverSessions('/workspace');
+
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]).toEqual({
+      id: 'admin-session-1',
+      title: 'zsh',
+      cwd: '/workspace',
+      status: 'disconnected',
+      resumable: true,
+      attached: false,
+    });
+
+    const listed = adapter.listSessions();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toEqual(expect.objectContaining({ id: 'admin-session-1', resumable: true, attached: false }));
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('http://floyd.test/admin/sessions', expect.objectContaining({ method: 'GET' }));
   });
 
   it('stays aligned with the copied TerminalOne server dispatcher', () => {
