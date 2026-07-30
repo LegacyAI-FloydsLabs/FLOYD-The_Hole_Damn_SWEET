@@ -333,6 +333,7 @@ const MANAGED = {
     cwd: join(SURFACES, "ide"),
     cmd: NODE_BIN, args: ["server/cursem-server.mjs"],
     env: {
+      FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "ide"),
       CURSEM_PORT: "13012",
       CURSEM_TERMINAL_PORT: "13013",
       // Allow embedding ONLY by local frame origins. Remote access is disabled
@@ -344,13 +345,13 @@ const MANAGED = {
     port: 13010,
     cwd: join(SURFACES, "desktop"),
     cmd: NODE_BIN, args: ["dist-server/index.js"],
-    env: { PORT: "13010", MCP_WS_PORT: "13011" },
+    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "desktop"), PORT: "13010", MCP_WS_PORT: "13011" },
   },
   "harness-launcher": {
     port: 13014,
     cwd: join(SURFACES, "launcher"),
     cmd: NODE_BIN, args: ["src/server.js"],
-    env: { PORT: "13014", HOST: "127.0.0.1" },
+    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "launcher"), PORT: "13014", HOST: "localhost" },
   },
   "floyd-code-cli": {
     port: 13022,
@@ -374,7 +375,7 @@ const MANAGED = {
     cwd: PTY_COPY,
     cmd: NODE_BIN, args: ["src/server.js"],
     // Plain shell — no SHELL override, TerminalOne falls back to zsh.
-    env: { PORT: "13013", TERMINALONE_ALLOWED_ORIGIN: "http://127.0.0.1:13013" },
+    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "pty"), PORT: "13013", TERMINALONE_ALLOWED_ORIGIN: "http://localhost:13013" },
   },
 };
 
@@ -399,7 +400,11 @@ async function ensureApp(id) {
   if (!spec) return { id, managed: false };
   if (await portOpen(spec.port)) return { id, managed: true, up: true, port: spec.port };
   if (!existsSync(spec.cwd)) return { id, managed: true, up: false, error: `missing cwd ${spec.cwd}` };
-  const requested = { ...process.env, FLOYD_RUNTIME_ROOT: RUNTIME_ROOT, ...(typeof spec.env === "function" ? spec.env() : spec.env) };
+  const requested = { ...process.env, ...(typeof spec.env === "function" ? spec.env() : spec.env), FLOYD_RUNTIME_ROOT: RUNTIME_ROOT };
+  // Each surface must report live identity from the current checkout, not stale parent
+  // environment values that can linger across restarts.
+  delete requested.FLOYD_SURFACE_COMMIT;
+  delete requested.FLOYD_SOURCE_COMMIT;
   const env = vaultEnv(id, requested);
   const child = spawn(spec.cmd, spec.args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   children.set(id, child);

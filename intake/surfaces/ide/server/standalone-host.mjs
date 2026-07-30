@@ -30,11 +30,12 @@ const GIT_TIMEOUT_MS = 60_000;
 import { execFileSync } from 'node:child_process';
 const SURFACE_IDENTITY = (() => {
   const surfaceId = process.env.FLOYD_SURFACE_ID || 'ide';
-  let sourceRoot = process.cwd();
-  let sourceCommit = process.env.FLOYD_SOURCE_COMMIT || '';
+  let sourceRoot = process.env.FLOYD_SURFACE_SOURCE_ROOT || process.cwd();
+  let sourceCommit = process.env.FLOYD_SOURCE_COMMIT || process.env.FLOYD_SURFACE_COMMIT || '';
   try {
-    sourceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-    sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    if (!sourceCommit) {
+      sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8' }).trim();
+    }
   } catch { /* non-git deployment */ }
   return { surface_id: surfaceId, source_root: sourceRoot, source_commit: sourceCommit };
 })();

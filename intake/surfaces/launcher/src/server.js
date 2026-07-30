@@ -478,12 +478,13 @@ app.use('/node_modules/@xterm/addon-web-links', express.static(path.join(NODE_MO
 // Admitted-surface identity for Floyd Core discovery. Read from this copy's
 // git HEAD at startup so the surface honestly reports the code it runs.
 const SURFACE_IDENTITY = (() => {
-  let sourceRoot = path.resolve(__dirname, '..');
-  let sourceCommit = process.env.FLOYD_SOURCE_COMMIT || '';
+  let sourceRoot = process.env.FLOYD_SURFACE_SOURCE_ROOT || process.cwd();
+  let sourceCommit = process.env.FLOYD_SOURCE_COMMIT || process.env.FLOYD_SURFACE_COMMIT || '';
   try {
     const { execFileSync } = require('node:child_process');
-    sourceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: sourceRoot, encoding: 'utf8' }).trim();
-    sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8' }).trim();
+    if (!sourceCommit) {
+      sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8' }).trim();
+    }
   } catch { /* non-git deployment */ }
   return Object.freeze({
     surface_id: process.env.FLOYD_SURFACE_ID || 'launcher',

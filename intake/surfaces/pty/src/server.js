@@ -34,11 +34,10 @@ const MAX_ROWS = 200;
 const SURFACE_IDENTITY = (() => {
   // Admitted-surface identity for Floyd Core discovery. Read from this copy's
   // git HEAD at startup so the surface honestly reports the code it runs.
-  let sourceRoot = path.resolve(__dirname, '..');
-  let sourceCommit = process.env.FLOYD_SURFACE_COMMIT || '';
+  let sourceRoot = process.env.FLOYD_SURFACE_SOURCE_ROOT || process.cwd();
+  let sourceCommit = process.env.FLOYD_SURFACE_COMMIT || process.env.FLOYD_SOURCE_COMMIT || '';
   try {
     const { execFileSync } = require('node:child_process');
-    sourceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: sourceRoot, encoding: 'utf8' }).trim();
     if (!sourceCommit) {
       sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8' }).trim();
     }

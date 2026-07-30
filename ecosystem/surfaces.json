@@ -23,7 +23,7 @@
       "integration": {
         "status": "verified_component_branch",
         "branch": "feat/floyd-core-runtime",
-        "commit": "822ee6367aa48acb63f55db48a826b48d53c7d56",
+        "commit": "e39e497f31be4b3b472d8d8e02fd71c45b787e76",
         "remote_ref": "origin/feat/floyd-core-runtime",
         "contract": "vendored @floyd/sdk -> server-side Floyd Core bridge -> managed OpenCode SDK",
         "production_audit_vulnerabilities": 0,
@@ -68,7 +68,7 @@
       "integration": {
         "status": "verified_component_branch",
         "branch": "feat/floyd-core-runtime",
-        "commit": "ed81b2fe190ebd2f941c458d27eef92b065024cd",
+        "commit": "e39e497f31be4b3b472d8d8e02fd71c45b787e76",
         "remote_ref": "origin/feat/floyd-core-runtime",
         "contract": "vendored @floyd/sdk -> server-side Floyd Core bridge -> managed OpenCode SDK",
         "production_audit_vulnerabilities": 0,
@@ -121,7 +121,7 @@
       "integration": {
         "status": "verified_component_branch",
         "branch": "feat/floyd-core-runtime",
-        "commit": "a1c9c06350dda8079ccf0ad5315569f198d823ff",
+        "commit": "e39e497f31be4b3b472d8d8e02fd71c45b787e76",
         "remote_ref": "origin/feat/floyd-core-runtime",
         "contract": "workspace @floyd/sdk -> Floyd Core -> managed OpenCode SDK",
         "production_audit_vulnerabilities": 0,
@@ -176,7 +176,7 @@
       "integration": {
         "status": "verified_component_branch",
         "branch": "feat/floyd-core-runtime",
-        "commit": "91ebc395c2276f747c6ba42fb7838bb161be0f2a",
+        "commit": "e39e497f31be4b3b472d8d8e02fd71c45b787e76",
         "remote_ref": "origin/feat/floyd-core-runtime",
         "contract": "vendored @floyd/sdk -> loopback Floyd Core health bridge + canonical CLI PTY -> managed OpenCode SDK",
         "production_audit_vulnerabilities": 0,
@@ -215,7 +215,7 @@
       "integration": {
         "status": "verified_local_copy_commit",
         "branch": "feat/floyd-core-runtime",
-        "commit": "f9ea13c9b559488907079e91a724cddbdc0932b5",
+        "commit": "e39e497f31be4b3b472d8d8e02fd71c45b787e76",
         "remote_ref": null,
         "remote_note": "origin is the protected local donor; intentionally not pushed",
         "contract": "vendored @floyd/sdk -> loopback Floyd Core health bridge + canonical CLI harness -> managed OpenCode SDK",
