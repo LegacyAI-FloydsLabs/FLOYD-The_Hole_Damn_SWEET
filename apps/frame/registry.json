@@ -59,24 +59,6 @@
       "health": "http://127.0.0.1:13014/",
       "accent": "#f59e0b",
       "remote_port": 8453
-    },
-    {
-      "id": "terminalone",
-      "name": "TERMINALONE",
-      "subtitle": "Plain shell",
-      "kind": "url",
-      "target": "http://127.0.0.1:13013/",
-      "health": "http://127.0.0.1:13013/health",
-      "accent": "#34d399",
-      "remote_port": 8456
-    },
-    {
-      "id": "browser",
-      "name": "BROWSER",
-      "subtitle": "Chrome · TTY Bridge · Native control",
-      "kind": "action",
-      "action": "open-chrome",
-      "accent": "#ef4444"
     }
   ]
 }

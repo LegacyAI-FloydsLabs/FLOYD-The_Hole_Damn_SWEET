@@ -104,6 +104,17 @@
   body[data-vertical="mobile"] .sheet { display: block; }
   .sheet.open { transform: none; }
   .sheet h2 { font-size: 13px; letter-spacing: .1em; color: var(--muted); margin-bottom: 10px; }
+  /* ---------- settings popover: real menu behind the gear ---------- */
+  .settings-pop { position: fixed; z-index: 60; left: calc(var(--drawer-closed, 64px) + 10px); bottom: 12px; width: 250px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: none; }
+  .settings-pop.open { display: block; }
+  .settings-pop h2 { font: 700 11px ui-monospace, monospace; letter-spacing: .12em; color: var(--muted); margin: 0 0 10px; text-transform: uppercase; }
+  .settings-pop .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .settings-pop .row:last-child { margin-bottom: 0; }
+  .settings-pop button.opt { flex: 1 1 40%; min-height: 34px; background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; font: 11px ui-monospace, monospace; cursor: pointer; }
+  .settings-pop button.opt.active { border-color: var(--accent); color: var(--accent); }
+  body[data-vertical="mobile"] .settings-pop { left: 10px; right: 10px; width: auto; bottom: calc(70px + env(safe-area-inset-bottom)); }
 
   /* ---------- home hint ---------- */
   .hint { position: fixed; z-index: 10; bottom: 26px; left: 50%; transform: translateX(-50%); color: var(--faint); font: 11px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; opacity: .8; pointer-events: none; }
@@ -225,8 +236,6 @@
   <span class="spacer"></span>
   <button class="chip" id="chipChrono" title="Chrono sandbox: snapshots, rewinds, forks">⏱ Chrono</button>
   <button class="chip" id="chipKeys" title="Floyd Vault credentials and ChatGPT/Codex subscription">🔑 Vault</button>
-  <button class="chip" id="chipTerminal" title="Summon TerminalOne">Terminal</button>
-  <button class="chip" id="chipBrowser" title="Open Chrome with Floyd TTY Bridge">Browser</button>
   <button class="chip" id="chipBg" title="Cycle background">BG</button>
   <button class="chip" id="chipHome" title="Back to the frame">Home</button>
 </header>
@@ -237,9 +246,19 @@
   <div class="drawer-head"><div class="mark"><img src="/assets/floyd-labs-logo.png" alt="Floyd's Labs"></div><div class="wordmark">FLOYD'S LABS</div></div>
   <div class="apps" id="appList"></div>
   <div class="drawer-foot">
-    <button class="app" id="settingsBtn" style="min-height:44px"><div class="app-icon">⚙</div><div class="app-meta"><strong>Settings</strong><span>Background · verticals</span></div></button>
+    <button class="app" id="settingsBtn" style="min-height:44px"><div class="app-icon">⚙</div><div class="app-meta"><strong>Settings</strong><span>Layout · background</span></div></button>
   </div>
 </nav>
+<div class="settings-pop" id="settingsPop" aria-label="Settings">
+  <h2>Settings — Layout</h2>
+  <div class="row">
+    <button class="opt" data-layout="">Auto</button>
+    <button class="opt" data-layout="desktop">Desktop</button>
+    <button class="opt" data-layout="tablet">Tablet</button>
+    <button class="opt" data-layout="mobile">Mobile</button>
+  </div>
+  <div class="row"><button class="opt" id="settingsBg">Cycle background</button></div>
+</div>
 
 <nav class="bottomnav" id="bottomnav" aria-label="Floyd apps (mobile)"></nav>
 <div class="sheet" id="mobileSheet"><h2>ALL APPS</h2><div id="sheetList" class="apps" style="padding:0"></div></div>
@@ -461,6 +480,9 @@ function activate(id) {
   localStorage.setItem("floyd.activeApp", id);
   document.body.dataset.app = id;
   for (const [fid, frame] of state.frames) frame.classList.toggle("active", fid === id);
+  // Hand the keyboard to the app just opened; without this the frame keeps
+  // focus and the terminal/editor inside never receives a keystroke.
+  state.frames.get(id)?.contentWindow?.focus();
   const app = state.registry.find((a) => a.id === id);
   el("titleAppName").textContent = app ? app.name : "";
   // Returning home: rotate the stage art so the backdrop alternates too.
@@ -814,16 +836,27 @@ addEventListener("hashchange", followManagementLocation);
 followManagementLocation();
 
 el("chipBg").addEventListener("click", cycleBackground);
-el("chipTerminal").addEventListener("click", () => openApp("terminalone"));
-el("chipBrowser").addEventListener("click", async () => {
-  try { await fetch("/api/action/open-chrome", { method: "POST", body: "{}" }); } catch (e) { toast(e); }
+el("settingsBtn").addEventListener("click", (event) => {
+  event.stopPropagation();
+  syncLayoutButtons();
+  el("settingsPop").classList.toggle("open");
 });
-el("settingsBtn").addEventListener("click", () => {
-  const next = { null: "mobile", mobile: "tablet", tablet: "desktop", desktop: null }[String(state.override)];
-  state.override = next;
+const settingsPop = el("settingsPop");
+function syncLayoutButtons() {
+  const current = state.override ?? "";
+  settingsPop.querySelectorAll("[data-layout]").forEach((btn) => btn.classList.toggle("active", btn.dataset.layout === current));
+}
+function setLayoutOverride(next) {
+  state.override = next || null;
   if (next) localStorage.setItem("floyd.verticalOverride", next); else localStorage.removeItem("floyd.verticalOverride");
-  state.vertical = null; applyVertical();
-  toast(`Vertical override: ${next ?? "auto (capability)"}`);
+  state.vertical = null; applyVertical(); syncLayoutButtons();
+}
+settingsPop.querySelectorAll("[data-layout]").forEach((btn) => btn.addEventListener("click", () => setLayoutOverride(btn.dataset.layout)));
+el("settingsBg").addEventListener("click", cycleBackground);
+document.addEventListener("click", (event) => {
+  if (!settingsPop.classList.contains("open")) return;
+  if (settingsPop.contains(event.target) || el("settingsBtn").contains(event.target)) return;
+  settingsPop.classList.remove("open");
 });
 /* keyboard: ⌘K opens drawer, ⌘1..9 direct app switch, Esc home */
 addEventListener("keydown", (e) => {
@@ -832,7 +865,9 @@ addEventListener("keydown", (e) => {
     const app = state.registry[Number(e.key) - 1];
     if (app) { e.preventDefault(); openApp(app.id); }
   }
-  if (e.key === "Escape" && !e.metaKey) activate("home");
+  // Esc goes home only from chrome (drawer open or already home) — never
+  // while an app is active, where it would nuke the user's plane mid-typing.
+  if (e.key === "Escape" && !e.metaKey && (state.activeApp === "home" || drawer.classList.contains("open"))) activate("home");
 });
 
 applyVertical();

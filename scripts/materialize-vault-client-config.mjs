@@ -12,9 +12,12 @@ import {
 import { join, relative, resolve } from "node:path";
 import {
   buildFloydProviderConfig,
+  buildFloydProviderConfigLive,
   buildOmpProviderConfig,
+  applyFloydModelPolicy,
   assertVaultOnlyClientConfiguration,
   assertVaultOnlyClientText,
+  fetchVaultKeyedProviders,
   readVaultAppProfile,
 } from "../lib/vault-routing.mjs";
 
@@ -34,10 +37,33 @@ try {
 
 mkdirSync(managedDir, { recursive: true, mode: 0o700 });
 
+// Keyed-only routing (D5): providers without a Vault key are dropped from
+// the materialized client configs. A null result (status route unreachable)
+// keeps every provider so launch never breaks.
+const keyedProviders = await fetchVaultKeyedProviders(profile.token, profile.proxy);
+
 if (client === "ff") {
   let config = {};
   try { config = JSON.parse(readFileSync(join(sourceDir, "floyd.json"), "utf8")); } catch { /* first launch */ }
-  config.providers = buildFloydProviderConfig(profile.token, profile.proxy);
+  // The TUI persists picker changes into the managed floyd.json, so carry
+  // its model state forward over the source copy. applyFloydModelPolicy
+  // below still decides preserve vs re-seed by Vault key.
+  let previous = {};
+  try { previous = JSON.parse(readFileSync(join(managedDir, "floyd.json"), "utf8")); } catch { /* first launch */ }
+  if (previous.models && typeof previous.models === "object") {
+    config.models = {
+      ...(config.models && typeof config.models === "object" ? config.models : {}),
+      ...previous.models,
+    };
+  }
+  if (Array.isArray(previous.recent_models)) config.recent_models = previous.recent_models;
+  config.providers = await buildFloydProviderConfigLive(profile.token, profile.proxy, { keyedProviders })
+    .catch(() => {
+      const fallback = buildFloydProviderConfig(profile.token, profile.proxy);
+      if (keyedProviders) for (const id of Object.keys(fallback)) if (!keyedProviders.has(id)) delete fallback[id];
+      return fallback;
+    });
+  applyFloydModelPolicy(config, keyedProviders);
   config.options = {
     ...(config.options && typeof config.options === "object" ? config.options : {}),
     disable_default_providers: true,
@@ -53,7 +79,7 @@ if (client === "ff") {
   const output = join(managedDir, "models.yml");
   // JSON is valid YAML and avoids a runtime parser dependency.
   writeFileSync(output, JSON.stringify({
-    providers: buildOmpProviderConfig(profile.token, profile.proxy),
+    providers: buildOmpProviderConfig(profile.token, profile.proxy, keyedProviders),
   }, null, 2), { mode: 0o600 });
   chmodSync(output, 0o600);
   const policy = join(managedDir, "vault-policy.yml");

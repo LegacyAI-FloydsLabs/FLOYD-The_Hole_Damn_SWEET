@@ -23,8 +23,11 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'n
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import {
+  applyFloydModelPolicy,
   assertVaultOnlyClientConfiguration,
   buildFloydProviderConfig,
+  buildFloydProviderConfigLive,
+  fetchVaultKeyedProviders,
   readVaultAppProfile,
 } from '../../../../../lib/vault-routing.mjs';
 
@@ -89,11 +92,16 @@ try {
   console.error(`merge-config: Vault application profile unavailable (${err.message}); refusing to launch`);
   process.exit(78);
 }
-const managedProviders = buildFloydProviderConfig(profile.token, profile.proxy);
+const keyedProviders = await fetchVaultKeyedProviders(profile.token, profile.proxy);
+const managedProviders = await buildFloydProviderConfigLive(profile.token, profile.proxy, { keyedProviders })
+  .catch(() => buildFloydProviderConfig(profile.token, profile.proxy));
 merged.providers = {};
 for (const [id, route] of Object.entries(managedProviders)) {
+  if (keyedProviders && !keyedProviders.has(id)) continue;
   merged.providers[id] = route;
 }
+// D1/D2: seed zai GLM tiers, keep user/agent picks whose provider is keyed.
+applyFloydModelPolicy(merged, keyedProviders);
 merged.options = {
   ...(merged.options && typeof merged.options === 'object' ? merged.options : {}),
   disable_default_providers: true,

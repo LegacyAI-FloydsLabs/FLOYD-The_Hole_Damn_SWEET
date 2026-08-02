@@ -28,7 +28,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { VAULT_PROVIDER_CATALOG } from "../../../lib/vault-provider-catalog.mjs";
+import { VAULT_PROVIDER_CATALOG, VAULT_PROVIDER_IDS } from "../../../lib/vault-provider-catalog.mjs";
 import {
   createExactSecretRedactor,
   pipeRedactedBody,
@@ -63,6 +63,36 @@ export const UPSTREAMS = Object.freeze(Object.fromEntries(
       inject: (headers, key) => injectCredential(provider.auth, headers, key),
     })]),
 ));
+
+// ---- live model catalog broker ---------------------------------------------
+// One normalized answer to "what models does provider X offer right now",
+// fetched upstream with the vault key so apps never see it. Short in-memory
+// cache; on failure the last good answer or the catalog's static fallback is
+// served (clearly marked) instead of an error page.
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
+const MODELS_FETCH_TIMEOUT_MS = 4_000;
+
+function normalizeProviderModels(shape, payload) {
+  const rows = shape === "google" ? payload?.models : payload?.data;
+  if (!Array.isArray(rows)) return null;
+  const models = rows.map((row) => {
+    if (!row || typeof row !== "object") return null;
+    const rawId = row.id ?? row.name;
+    if (typeof rawId !== "string" || !rawId) return null;
+    const id = shape === "google" ? rawId.replace(/^models\//, "") : rawId;
+    const display = row.display_name ?? row.displayName;
+    return { id, name: typeof display === "string" && display ? display : id };
+  }).filter(Boolean);
+  return models.length ? models : null;
+}
+
+function staticModelsPayload(providerId) {
+  const provider = VAULT_PROVIDER_CATALOG[providerId];
+  const models = (provider?.models || []).map((id) => ({ id, name: id }));
+  return models.length
+    ? { provider: providerId, source: "fallback", fetchedAt: null, models }
+    : null;
+}
 
 // ---- ChatGPT subscription (sole OpenAI credential) -------------------------
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -320,6 +350,141 @@ export function createVaultProxy({
   });
   const subscription = new SubscriptionAuth(authFile, subscriptionStore);
   const upgradedSockets = new Set();
+  const modelsCache = new Map(); // provider -> { at, payload } — per proxy instance
+
+  /** One provider's model catalog: live when reachable, cache/static otherwise.
+   * Shared by the /models routes, the GLM fallback model picker, and the
+   * frame catalog merge. `app` enables route telemetry when present. */
+  async function resolveProviderModels(providerId, { app = null, signal = null } = {}) {
+    const provider = VAULT_PROVIDER_CATALOG[providerId];
+    if (!provider) return { status: 404, payload: { error: { message: `unknown provider ${providerId}` } } };
+    if (!provider.modelsPath) {
+      const fallback = staticModelsPayload(providerId);
+      if (fallback) return { status: 200, payload: fallback };
+      return { status: 404, payload: { error: { message: `provider ${providerId} has no model catalog` } } };
+    }
+    let key;
+    try { key = realKey(providerId); } catch { key = null; }
+    if (!key) return { status: 503, payload: { error: { message: `vault has no key for ${providerId}` } } };
+    const up = upstreams[providerId];
+    if (!up) return { status: 404, payload: { error: { message: `no model catalog route for provider ${providerId}` } } };
+    const cached = modelsCache.get(providerId);
+    if (cached && Date.now() - cached.at < MODELS_CACHE_TTL_MS) {
+      return { status: 200, payload: { ...cached.payload, source: "cache" } };
+    }
+    try {
+      const target = routeTarget(providerId, up.base + provider.modelsPath);
+      const headers = {};
+      up.inject(headers, key);
+      const response = await fetchImpl(target, {
+        headers,
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(MODELS_FETCH_TIMEOUT_MS)])
+          : AbortSignal.timeout(MODELS_FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error(`provider answered HTTP ${response.status}`);
+      const models = normalizeProviderModels(provider.modelsShape, await response.json());
+      if (!models) throw new Error("provider returned an unrecognized model list");
+      const payload = { provider: providerId, source: "live", fetchedAt: new Date().toISOString(), models };
+      modelsCache.set(providerId, { at: Date.now(), payload });
+      if (app) store.recordRoute(app, `${providerId}:models`, 200);
+      return { status: 200, payload };
+    } catch {
+      if (cached) return { status: 200, payload: { ...cached.payload, source: "cache" } };
+      const fallback = staticModelsPayload(providerId);
+      if (fallback) return { status: 200, payload: fallback };
+      return { status: 502, payload: { error: { message: `could not fetch the ${providerId} model catalog` } } };
+    }
+  }
+
+  // ---- GLM always-fallback (chat routes) -------------------------------------
+  // D3: when the resolved provider has no vault key, or its upstream HARD-fails
+  // (network error, timeout, or HTTP 5xx — never 4xx), retry the request ONCE
+  // via zai when zai is keyed and was not the requested provider. The dialect
+  // is unchanged, so the body only needs its model rewritten to zai's.
+  // D5: once a response has started streaming to the app, there is no retry.
+
+  /** zai's current model: first entry of the live model broker, else the
+   * catalog's static zai model. */
+  async function resolveFallbackModel(signal) {
+    try {
+      const { status, payload } = await resolveProviderModels("zai", { signal });
+      if (status === 200 && payload.models?.length) return payload.models[0].id;
+    } catch { /* fall through to the static catalog model */ }
+    return VAULT_PROVIDER_CATALOG.zai?.models?.[0] || null;
+  }
+
+  /** Serves one chat request via zai on behalf of a failed provider. Stamps
+   * the truthful-telemetry headers (D4) and records the ACTUAL route served. */
+  async function chatViaZaiFallback(req, res, { dialect, body, app, originalProviderId, zaiKey, signal }) {
+    const up = upstreams.zai;
+    const route = up?.[dialect];
+    if (!up || !route || !zaiKey) return false;
+    const model = await resolveFallbackModel(signal);
+    if (!model) return false;
+    const target = routeTarget("zai", route);
+    const fallbackBody = adjustProviderBody("zai", Buffer.from(JSON.stringify({ ...body, model })));
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (["host", "connection", "content-length", "authorization", "x-api-key", "xi-api-key", "x-goog-api-key"].includes(k)) continue;
+      headers[k] = v;
+    }
+    up.inject(headers, zaiKey);
+    const upstream = await fetchImpl(target, {
+      method: req.method,
+      headers,
+      body: fallbackBody,
+      duplex: "half",
+      signal,
+    });
+    store.recordRoute(app, `zai:fallback-from-${originalProviderId}`, upstream.status);
+    res.writeHead(upstream.status, {
+      ...Object.fromEntries([...upstream.headers]
+        .filter(([k]) => !["transfer-encoding", "content-encoding", "content-length", "connection"].includes(k))
+        .map(([name, value]) => [name, redactSecretText(value, [zaiKey])])),
+      "x-floyd-fallback": originalProviderId,
+      "x-floyd-fallback-model": model,
+    });
+    await pipeRedactedBody(upstream.body, res, [zaiKey]);
+    res.end();
+    return true;
+  }
+
+  /** Chat forward with the GLM safety net. Hard failures before the first
+   * byte retry once via zai; 4xx and 2xx responses pass through untouched. */
+  async function forwardChat(req, res, { target, up, key, body, app, providerId, dialect, rawBody, zaiKey, fallbackReady, signal }) {
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (["host", "connection", "content-length", "authorization", "x-api-key", "xi-api-key", "x-goog-api-key"].includes(k)) continue;
+      headers[k] = v;
+    }
+    up.inject(headers, key);
+    let upstream;
+    try {
+      upstream = await fetchImpl(target, {
+        method: req.method,
+        headers,
+        body: body || undefined,
+        duplex: body ? "half" : undefined,
+        signal,
+      });
+    } catch (error) {
+      if (fallbackReady
+        && await chatViaZaiFallback(req, res, { dialect, body: rawBody, app, originalProviderId: providerId, zaiKey, signal })) return;
+      throw error;
+    }
+    if (upstream.status >= 500 && fallbackReady) {
+      try { await upstream.body?.cancel?.(); } catch { /* best effort */ }
+      if (await chatViaZaiFallback(req, res, { dialect, body: rawBody, app, originalProviderId: providerId, zaiKey, signal })) return;
+      return json(res, upstream.status, { error: { message: `${providerId} upstream answered HTTP ${upstream.status} and the zai fallback is unavailable` } });
+    }
+    store.recordRoute(app, providerId, upstream.status);
+    res.writeHead(upstream.status, Object.fromEntries([...upstream.headers]
+      .filter(([k]) => !["transfer-encoding", "content-encoding", "content-length", "connection"].includes(k))
+      .map(([name, value]) => [name, redactSecretText(value, [key])])));
+    await pipeRedactedBody(upstream.body, res, [key]);
+    res.end();
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -390,6 +555,29 @@ export function createVaultProxy({
           configuredProviders,
           authority: "floyd-vault-keychain",
         });
+      }
+
+      // Live model catalogs, keyed providers only. Choosers across the
+      // ecosystem sync from these answers, so adding a vault key is all it
+      // takes for a provider (and its real, current models) to show up.
+      if (req.method === "GET" && (path === "/models" || path.startsWith("/models/"))) {
+        const resolveOne = (providerId) => resolveProviderModels(providerId, { app, signal: requestAbort.signal });
+        if (path === "/models") {
+          const keyed = VAULT_PROVIDER_IDS.filter((id) => {
+            const provider = VAULT_PROVIDER_CATALOG[id];
+            if (!provider?.modelsPath) return false;
+            try { return Boolean(realKey(id)); } catch { return false; }
+          });
+          const providers = {};
+          await Promise.all(keyed.map(async (id) => {
+            const { payload } = await resolveOne(id);
+            providers[id] = payload;
+          }));
+          return json(res, 200, { providers, fetchedAt: new Date().toISOString() });
+        }
+        const providerId = decodeURIComponent(path.slice("/models/".length));
+        const { status, payload } = await resolveOne(providerId);
+        return json(res, status, payload);
       }
 
       if (path === "/connected-apps" || path.startsWith("/connected-apps/")) {
@@ -480,20 +668,29 @@ export function createVaultProxy({
         if (!defaultTarget) return json(res, 400, { error: { message: `no ${dialect} route for provider ${providerId}` } });
         const target = routeTarget(providerId, defaultTarget);
         const key = realKey(providerId);
-        if (!key) return json(res, 503, { error: { message: `vault has no key for ${providerId}` } });
-        return await forward(
-          req,
-          res,
+        // D3 GLM always-fallback: zai is the safety net for every chat route
+        // when it is keyed and was not the requested provider.
+        let zaiKey = null;
+        try { zaiKey = realKey("zai"); } catch { zaiKey = null; }
+        const fallbackReady = providerId !== "zai" && Boolean(zaiKey && upstreams.zai?.[dialect]);
+        if (!key) {
+          if (fallbackReady
+            && await chatViaZaiFallback(req, res, { dialect, body, app, originalProviderId: providerId, zaiKey, signal: requestAbort.signal })) return;
+          return json(res, 503, { error: { message: `vault has no key for ${providerId}` } });
+        }
+        return await forwardChat(req, res, {
           target,
           up,
           key,
-          adjustProviderBody(providerId, Buffer.from(JSON.stringify({ ...body, model }))),
+          body: adjustProviderBody(providerId, Buffer.from(JSON.stringify({ ...body, model }))),
           app,
           providerId,
-          fetchImpl,
-          store,
-          requestAbort.signal,
-        );
+          dialect,
+          rawBody: body,
+          zaiKey,
+          fallbackReady,
+          signal: requestAbort.signal,
+        });
       }
       const generic = path.match(/^\/p\/([a-z0-9-]+)(\/.*)?$/);
       if (generic) {
@@ -613,6 +810,24 @@ export function createVaultProxy({
 
   return {
     server, store, subscription, connections,
+    // Live model lists for the frame catalog merge: keyed providers only,
+    // each marked "live" when the broker reached the provider (cache counts),
+    // "fallback" when the static catalog list was served.
+    liveProviderModels: async (providerIds = VAULT_PROVIDER_IDS) => {
+      const out = {};
+      await Promise.all(providerIds.map(async (providerId) => {
+        let key = null;
+        try { key = realKey(providerId); } catch { key = null; }
+        if (!key) return;
+        const { status, payload } = await resolveProviderModels(providerId);
+        if (status !== 200 || !payload.models?.length) return;
+        out[providerId] = {
+          models: payload.models.map((model) => model.id),
+          source: payload.source === "fallback" ? "fallback" : "live",
+        };
+      }));
+      return out;
+    },
     listen: () => new Promise((resolve) => server.listen(port, host, () => resolve(server.address()))),
     close: async () => {
       const closed = new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -719,6 +934,18 @@ export function inferProvider(model, dialect) {
   if (m.startsWith("mistral") || m.startsWith("codestral")) return "mistral";
   if (m.startsWith("grok")) return "xai";
   return dialect === "anthropic" ? "anthropic" : "openai";
+}
+
+/** Additive catalog merge for /api/vault/catalog: providers with a live
+ * broker answer get their models replaced and a source marker; everyone else
+ * keeps the static list marked "fallback". Never drops existing fields. */
+export function mergeLiveProviderModels(providers, live) {
+  return providers.map((entry) => {
+    const merged = live?.[entry.id];
+    return merged
+      ? { ...entry, models: merged.models, source: merged.source }
+      : { ...entry, source: "fallback" };
+  });
 }
 
 /** Forward to the real upstream with the real key. Streams straight through. */

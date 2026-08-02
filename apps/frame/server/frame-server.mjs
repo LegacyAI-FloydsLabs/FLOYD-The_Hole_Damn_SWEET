@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import net from "node:net";
-import { createVaultProxy } from "./vault-proxy.mjs";
+import { createVaultProxy, mergeLiveProviderModels } from "./vault-proxy.mjs";
 import { createConnectedAppVault } from "./connected-app-vault.mjs";
 import { createModelConnectorVault } from "./model-connector-vault.mjs";
 import { createVaultMcpManagement } from "./vault-mcp-management.mjs";
@@ -327,6 +327,10 @@ function normalizeCustomEndpoint(input) {
   return endpoint.toString().replace(/\/$/, "");
 }
 
+// Shared loopback token so trusted frame apps (the IDE's terminal pane) can
+// attach to the canonical terminal without the browser origin+ticket flow.
+const TERMINAL_APP_TOKEN = randomBytes(24).toString("base64url");
+
 const MANAGED = {
   "cursem-ide": {
     port: 13012,
@@ -336,6 +340,10 @@ const MANAGED = {
       FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "ide"),
       CURSEM_PORT: "13012",
       CURSEM_TERMINAL_PORT: "13013",
+      // The IDE's terminal pane attaches to the canonical terminal server
+      // (launched first via DEPENDS_ON) using the shared loopback token.
+      CURSEM_TERMINAL_URL: "ws://127.0.0.1:13013",
+      CURSEM_TERMINAL_TOKEN: TERMINAL_APP_TOKEN,
       // Allow embedding ONLY by local frame origins. Remote access is disabled
       // until a private overlay is configured.
       CURSEM_FRAME_ANCESTORS: "http://127.0.0.1:13030 http://localhost:13030 http://floyd.localhost:13030",
@@ -351,7 +359,7 @@ const MANAGED = {
     port: 13014,
     cwd: join(SURFACES, "launcher"),
     cmd: NODE_BIN, args: ["src/server.js"],
-    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "launcher"), PORT: "13014", HOST: "localhost" },
+    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "launcher"), PORT: "13014", HOST: "127.0.0.1" },
   },
   "floyd-code-cli": {
     port: 13022,
@@ -374,8 +382,10 @@ const MANAGED = {
     port: 13013,
     cwd: PTY_COPY,
     cmd: NODE_BIN, args: ["src/server.js"],
-    // Plain shell — no SHELL override, TerminalOne falls back to zsh.
-    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "pty"), PORT: "13013", TERMINALONE_ALLOWED_ORIGIN: "http://localhost:13013" },
+    // Plain shell — no SHELL override, TerminalOne falls back to zsh. Trusted
+    // frame apps (the IDE's terminal pane) attach with the shared token
+    // instead of the browser origin+ticket flow.
+    env: { FLOYD_SURFACE_SOURCE_ROOT: join(SURFACES, "pty"), PORT: "13013", TERMINALONE_ALLOWED_ORIGIN: "http://127.0.0.1:13013", TERMINALONE_AUTH_TOKEN: TERMINAL_APP_TOKEN },
   },
 };
 
@@ -384,6 +394,10 @@ const MANAGED = {
 MANAGED["browork"] = MANAGED["floyd-desktop"];
 
 const children = new Map(); // id -> ChildProcess
+
+// Launch dependencies: an app only spawns after its backing services are up,
+// so the IDE always finds the canonical terminal waiting on 13013.
+const DEPENDS_ON = { "cursem-ide": ["terminalone"] };
 
 function portOpen(port) {
   return new Promise((done) => {
@@ -400,6 +414,7 @@ async function ensureApp(id) {
   if (!spec) return { id, managed: false };
   if (await portOpen(spec.port)) return { id, managed: true, up: true, port: spec.port };
   if (!existsSync(spec.cwd)) return { id, managed: true, up: false, error: `missing cwd ${spec.cwd}` };
+  for (const dep of DEPENDS_ON[id] || []) await ensureApp(dep);
   const requested = { ...process.env, ...(typeof spec.env === "function" ? spec.env() : spec.env), FLOYD_RUNTIME_ROOT: RUNTIME_ROOT };
   // Each surface must report live identity from the current checkout, not stale parent
   // environment values that can linger across restarts.
@@ -726,10 +741,14 @@ const server = http.createServer(async (req, res) => {
     if (path === "/api/vault/catalog" && req.method === "GET") {
       const vault = readVault();
       const routeStatus = routeStatusByProvider();
+      // Merge the vault proxy's live model broker into the static catalog so
+      // choosers see real, current models. Additive only: a per-provider
+      // "source" field ("live"|"fallback") marks where the list came from.
+      const live = await vaultProxy.liveProviderModels(PROVIDERS.map((provider) => provider.id));
       return json(res, 200, {
         version: 1,
         proxyUrl: VAULT_PROXY_BASE,
-        providers: publicProviderCatalog(Object.fromEntries(PROVIDERS.map((provider) => [
+        providers: mergeLiveProviderModels(publicProviderCatalog(Object.fromEntries(PROVIDERS.map((provider) => [
           provider.id,
           {
             configured: provider.id === "openai"
@@ -740,7 +759,7 @@ const server = http.createServer(async (req, res) => {
               : vault[provider.id]?.verified ?? null,
             ...routeStatus[provider.id],
           },
-        ]))),
+        ]))), live),
       });
     }
     if (path === "/api/heartbeat" && req.method === "POST") {
