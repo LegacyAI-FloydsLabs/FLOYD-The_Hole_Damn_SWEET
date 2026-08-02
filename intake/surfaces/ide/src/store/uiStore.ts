@@ -39,6 +39,8 @@ interface UIState {
   sidePanelWidth: number;
   terminalHeight: number;
   aiPanelWidth: number;
+  aiProviderId: string | null;
+  aiModel: string | null;
   preferences: EditorPreferences;
   toasts: Toast[];
 
@@ -53,6 +55,7 @@ interface UIState {
   setSidePanelWidth: (width: number) => void;
   setTerminalHeight: (height: number) => void;
   setAIPanelWidth: (width: number) => void;
+  setAIModelSelection: (providerId: string, model: string) => void;
   updatePreferences: (patch: Partial<EditorPreferences>) => void;
   resetPreferences: () => void;
   addToast: (message: string, kind?: ToastKind) => string;
@@ -85,6 +88,8 @@ export const useUIStore = create<UIState>()(persist((set) => ({
   sidePanelWidth: 272,
   terminalHeight: 240,
   aiPanelWidth: 470,
+  aiProviderId: null,
+  aiModel: null,
   preferences: DEFAULT_PREFERENCES,
   toasts: [],
 
@@ -101,6 +106,7 @@ export const useUIStore = create<UIState>()(persist((set) => ({
   setSidePanelWidth: (width) => set({ sidePanelWidth: Math.max(210, Math.min(480, width)) }),
   setTerminalHeight: (height) => set({ terminalHeight: Math.max(130, Math.min(560, height)) }),
   setAIPanelWidth: (width) => set({ aiPanelWidth: Math.max(360, Math.min(760, width)) }),
+  setAIModelSelection: (providerId, model) => set({ aiProviderId: providerId, aiModel: model }),
   updatePreferences: (patch) => set((state) => ({
     preferences: { ...state.preferences, ...patch },
   })),
@@ -136,6 +142,8 @@ export const useUIStore = create<UIState>()(persist((set) => ({
     sidePanelWidth: state.sidePanelWidth,
     terminalHeight: state.terminalHeight,
     aiPanelWidth: state.aiPanelWidth,
+    aiProviderId: state.aiProviderId,
+    aiModel: state.aiModel,
     preferences: state.preferences,
   }),
 }));

@@ -4,6 +4,7 @@
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width, initial-scale=1.0">
  <title>Harness Launcher</title>
+ <link rel="icon" type="image/jpeg" href="/HarnessLauncherLogo.jpeg">
  <link rel="preconnect" href="https://fonts.googleapis.com">
  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -775,6 +776,8 @@
    term.loadAddon(fitAddon);
    term.loadAddon(new WebLinksAddon());
    term.open(termEl);
+   // xterm does not autofocus on open; dead typing starts here.
+   term.focus();
    requestAnimationFrame(() => fitAddon.fit());
 
    term.onData((data) => {
@@ -1047,9 +1050,9 @@
     hint.textContent = 'Could not reach server — start with npm start';
    }
 
-   // Terminal-first: spawn a live shell immediately, hide the welcome screen.
-   $('#welcomeScreen').style.display = 'none';
-   connectShell();
+   // Open on the ready screen ("Terminal-first launcher"): the terminal
+   // becomes the primary workspace after the user picks a harness — not before.
+   $('#welcomeScreen').style.display = 'flex';
   })();
  </script>
 </body>

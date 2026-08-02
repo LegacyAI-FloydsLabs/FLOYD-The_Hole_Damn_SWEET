@@ -23,6 +23,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   pending?: boolean;
+  fallback?: { requestedProvider: string; model: string };
 }
 
 interface PendingProposal {
@@ -33,6 +34,15 @@ interface PendingProposal {
 }
 
 type ProviderOption = (typeof PROVIDERS)[ProviderId];
+
+interface ModelOption {
+  id: string;
+  name: string;
+}
+
+// Ecosystem policy: GLM (zai) is the default route whenever the user has no
+// persisted provider+model selection of their own.
+const DEFAULT_PROVIDER_ID: ProviderId = 'zai';
 
 const SYSTEM_PROMPT = `You are the selected model running as CURSEM, the coding assistant inside CURSEM IDE.
 Your goal is to help the user understand, debug, edit, and verify the open codebase. Be precise, candid, and implementation-oriented. Use supplied workspace and file context when relevant, and distinguish verified code facts from recommendations.`;
@@ -110,13 +120,21 @@ export function AIChatPane() {
   const cursor = useEditorStore((state) => state.cursor);
   const toggleAIChat = useUIStore((state) => state.toggleAIChat);
   const addToast = useUIStore((state) => state.addToast);
+  const persistedProviderId = useUIStore((state) => state.aiProviderId);
+  const persistedModel = useUIStore((state) => state.aiModel);
+  const setAIModelSelection = useUIStore((state) => state.setAIModelSelection);
   const client = useMemo(() => new PolicyModelClient(), []);
   const [vaultProviders, setVaultProviders] = useState<ProviderOption[]>([]);
   const [vaultReady, setVaultReady] = useState(false);
-  const [providerId, setProviderId] = useState<ProviderId>('anthropic');
-  const [baseUrl, setBaseUrl] = useState(PROVIDERS.anthropic.baseUrl);
-  const [model, setModel] = useState(PROVIDERS.anthropic.model);
-  const [dialect, setDialect] = useState<Dialect>(PROVIDERS.anthropic.dialect);
+  const bootProviderId: ProviderId = persistedProviderId && persistedProviderId in PROVIDERS ? persistedProviderId as ProviderId : DEFAULT_PROVIDER_ID;
+  const [providerId, setProviderId] = useState<ProviderId>(bootProviderId);
+  const [baseUrl, setBaseUrl] = useState(PROVIDERS[bootProviderId].baseUrl);
+  const [model, setModel] = useState(persistedModel || PROVIDERS[bootProviderId].model);
+  const [dialect, setDialect] = useState<Dialect>(PROVIDERS[bootProviderId].dialect);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [coreRestore, setCoreRestore] = useState<{ modelRoute: { provider: string; model: string } | null } | null>(null);
+  const [draftSyncReady, setDraftSyncReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [includeContext, setIncludeContext] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -143,6 +161,10 @@ export function AIChatPane() {
   const runnerRef = useRef<AgentRunner | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // True while the visible model is only a seed (first run or a re-seeded
+  // provider), so the first live entry replaces the static default.
+  const modelSeedPendingRef = useRef(!(persistedProviderId && persistedModel));
+  const coreRouteAppliedRef = useRef(false);
   const selectedProvider = vaultProviders.find((provider) => provider.id === providerId) || PROVIDERS[providerId];
 
   const resolvedDialect = useMemo(() => {
@@ -178,11 +200,15 @@ export function AIChatPane() {
         setVaultProviders(available);
         setVaultReady(available.length > 0);
         if (available.length && !available.some((provider: ProviderOption) => provider.id === providerId)) {
-          const first = available[0];
-          setProviderId(first.id);
-          setBaseUrl(first.baseUrl);
-          setModel(first.model);
-          setDialect(first.dialect);
+          // The visible provider is not Vault-configured (first run or a stale
+          // persisted selection): re-seed to the GLM route and let the live
+          // model list replace the static default below.
+          const seed = available.find((provider: ProviderOption) => provider.id === DEFAULT_PROVIDER_ID) || available[0];
+          modelSeedPendingRef.current = true;
+          setProviderId(seed.id);
+          setBaseUrl(seed.baseUrl);
+          setModel(seed.model);
+          setDialect(seed.dialect);
         }
         if (!available.length) setLastError('Vault has no configured provider route available to CURSEM.');
       })
@@ -194,6 +220,91 @@ export function AIChatPane() {
       });
     return () => { cancelled = true; };
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setModelsLoading(true);
+    void fetch(`/api/models?provider=${encodeURIComponent(providerId)}`, { headers: { accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Model catalog HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((payload: { models?: Array<{ id?: unknown; name?: unknown }> }) => {
+        if (cancelled) return;
+        const options = (Array.isArray(payload?.models) ? payload.models : [])
+          .filter((entry): entry is { id: string; name?: unknown } => Boolean(entry && typeof entry.id === 'string' && entry.id))
+          .map((entry) => ({ id: entry.id, name: typeof entry.name === 'string' && entry.name ? entry.name : entry.id }));
+        const seedPending = modelSeedPendingRef.current;
+        modelSeedPendingRef.current = false;
+        setModelOptions(options);
+        setModel((current) => !seedPending && options.some((option) => option.id === current) ? current : options[0]?.id || PROVIDERS[providerId].model);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        modelSeedPendingRef.current = false;
+        const fallback = PROVIDERS[providerId].model;
+        setModelOptions(fallback ? [{ id: fallback, name: fallback }] : []);
+        setModel((current) => current || fallback);
+      })
+      .finally(() => { if (!cancelled) setModelsLoading(false); });
+    return () => { cancelled = true; };
+  }, [providerId]);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/core/experience', { headers: { accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Core experience HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((slice: { available?: boolean; modelRoute?: { provider?: unknown; model?: unknown } | null; composerDraft?: unknown }) => {
+        if (cancelled || !slice?.available) return;
+        const composerDraft = typeof slice.composerDraft === 'string' ? slice.composerDraft : '';
+        if (composerDraft) setInput((current) => current || composerDraft);
+        const route = slice.modelRoute;
+        if (route && typeof route.provider === 'string' && typeof route.model === 'string') setCoreRestore({ modelRoute: { provider: route.provider, model: route.model } });
+      })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setDraftSyncReady(true); });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (coreRouteAppliedRef.current || !coreRestore?.modelRoute || !vaultProviders.length) return;
+    coreRouteAppliedRef.current = true;
+    const route = coreRestore.modelRoute;
+    const provider = vaultProviders.find((candidate) => candidate.id === route.provider);
+    if (!provider) return;
+    // A Core-restored route is an explicit cross-surface selection, not a seed.
+    modelSeedPendingRef.current = false;
+    setProviderId(provider.id);
+    setBaseUrl(provider.baseUrl);
+    setModel(route.model);
+    setDialect(provider.dialect);
+  }, [coreRestore, vaultProviders]);
+  useEffect(() => {
+    setAIModelSelection(providerId, model);
+    void fetch('/api/core/experience/publish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ modelRoute: { provider: providerId, model } }),
+    }).catch(() => undefined);
+  }, [model, providerId, setAIModelSelection]);
+  useEffect(() => {
+    if (!draftSyncReady) return;
+    const draft = input;
+    const timer = window.setTimeout(() => {
+      void fetch('/api/core/experience/publish', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ composerDraft: draft }),
+      }).then(async (response) => {
+        if (response.status !== 409) return;
+        // Preserve-and-re-read: adopt the authoritative draft only when the
+        // user has not typed over it since this publish was queued.
+        const slice = await response.json().catch(() => null);
+        if (slice && typeof slice.composerDraft === 'string') setInput((current) => current === draft ? slice.composerDraft : current);
+      }).catch(() => undefined);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [input, draftSyncReady]);
   useEffect(() => {
     if (!requestPhase) return;
     const timer = window.setInterval(() => setRequestElapsedMs(Math.round(performance.now() - requestStartedAtRef.current)), 100);
@@ -383,6 +494,10 @@ export function AIChatPane() {
         }
         setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, content: message.content + text } : message));
       };
+      const noteFallback = (requestedProvider: string, servedModel: string) => {
+        setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, fallback: { requestedProvider, model: servedModel } } : message));
+        void gateway.agentAppendEvent(run.id, 'model.fallback', { requestedProviderId: requestedProvider, servedModel }).catch(() => undefined);
+      };
       let toolCalls = 0;
       setRequestPhase('connecting');
       if (mode !== 'ask') {
@@ -393,6 +508,7 @@ export function AIChatPane() {
           request: { maxTokens: 4096, temperature: 0.2 }, signal: controller.signal,
           onDelta: appendDelta,
           onUsage: (nextUsage) => { finalUsage = nextUsage; setUsage(nextUsage); },
+          onFallback: noteFallback,
           validateFinal: mode === 'edit' ? (text) => validateEditResponse(text, activeTabPath) : undefined,
         });
         assistantText = result.text; toolCalls = result.toolCalls; finalUsage = result.usage;
@@ -400,6 +516,7 @@ export function AIChatPane() {
         for await (const event of client.stream({ providerId, baseUrl, model, dialect, routingPolicy }, { messages: conversation, maxTokens: 4096, temperature: 0.2 }, controller.signal)) {
           if (event.type === 'delta') { assistantText += event.text; appendDelta(event.text); }
           else if (event.type === 'usage') { finalUsage = event.usage; setUsage(event.usage); }
+          else if (event.type === 'fallback') noteFallback(event.requestedProvider, event.model);
           else if (event.type === 'error') throw new Error(formatUnknownError(event.error));
         }
         if (!assistantText.trim()) throw new Error('The selected model completed without returning visible text. Choose a model that returns assistant content for this task.');
@@ -527,7 +644,7 @@ export function AIChatPane() {
             <label><span>Mode</span><select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value as 'ask' | 'edit' | 'agent')}><option value="ask">Ask</option><option value="edit" disabled={!activeTabPath}>Edit active file</option><option value="agent">Agent</option></select></label>
             <label><span>Routing</span><select aria-label="Routing" value={routingPolicy} onChange={(event) => setRoutingPolicy(event.target.value as RoutingPolicy)}><option value="manual">Manual</option><option value="cost-first">Low-cost first</option><option value="latency-first">Fastest measured</option><option value="resilient">Resilient fallback</option></select></label>
           </div>
-          <label><span>Model</span><input aria-label="Model" value={model} onChange={(event) => setModel(event.target.value)} spellCheck={false} autoComplete="off" /></label>
+          <label><span>Model</span><select aria-label="Model" value={model} disabled={modelsLoading || !modelOptions.length} onChange={(event) => setModel(event.target.value)}>{modelsLoading ? <option value={model}>loading models…</option> : modelOptions.length ? modelOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>) : <option value={model}>{model || 'no models available'}</option>}</select></label>
           <div className="vault-routing-note">Provider credentials, addresses, and protocol are supplied by the local Vault.</div>
           <label className="host-credential-toggle"><input aria-label="Enable provider-routed CURSEM Tab ghost text" type="checkbox" checked={inlineCompletionEnabled} onChange={(event) => setInlineCompletionEnabled(event.target.checked)} /><span>Enable provider-routed CURSEM Tab ghost text</span></label>
           <details className="memory-manager"><summary>Approved project memory ({memories.length})</summary><div className="memory-entry"><input aria-label="New approved project memory" value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} maxLength={4000} placeholder="A rule or decision to reuse in future threads" /><button className="button ghost" onClick={() => void saveMemory()} disabled={!memoryDraft.trim()}>Save</button></div>{memories.map((memory) => <div className="saved-memory" key={memory.id}><span>{memory.content}</span><button className="text-button" onClick={() => void deleteMemory(memory.id)}>Delete</button></div>)}</details>
@@ -544,7 +661,7 @@ export function AIChatPane() {
 
       <div className="ai-chat-messages" aria-live="polite">
         {messages.length === 0 && <div className="ai-empty"><div className="ai-orb"><Icon name="spark" size={28} /></div><strong>Build with CURSEM</strong><p>Ask for analysis or switch to Edit mode for a review-gated active-file change. Provider failures are shown without rewriting them.</p><div className="ai-capabilities"><span>Active-file context</span><span>Review-gated edits</span><span>Unified streaming</span><span>Stop propagation</span></div></div>}
-        {messages.map((message) => message.pending && !message.content ? null : <article key={message.id} className={`chat-message ${message.role} ${message.pending ? 'pending' : ''}`}><header>{message.role === 'user' ? 'You' : 'CURSEM'}{message.pending && <span>streaming</span>}</header><div>{displayMessage(message.content)}</div></article>)}
+        {messages.map((message) => message.pending && !message.content && !message.fallback ? null : <article key={message.id} className={`chat-message ${message.role} ${message.pending ? 'pending' : ''}`}><header>{message.role === 'user' ? 'You' : 'CURSEM'}{message.pending && <span>streaming</span>}</header>{message.fallback && <div className="fallback-notice">{providerLabelFor(message.fallback.requestedProvider)} failed — answered by GLM ({message.fallback.model})</div>}<div>{displayMessage(message.content)}</div></article>)}
         <div ref={messagesEndRef} />
       </div>
 
@@ -574,6 +691,10 @@ function formatUnknownError(error: unknown): string {
   if (typeof error === 'string') return error;
   if (error && typeof error === 'object' && typeof (error as Record<string, unknown>).message === 'string') return String((error as Record<string, unknown>).message);
   try { return JSON.stringify(error); } catch { return 'Unknown provider stream error.'; }
+}
+
+function providerLabelFor(providerId: string): string {
+  return providerId in PROVIDERS ? PROVIDERS[providerId as ProviderId].label : providerId;
 }
 
 function displayMessage(content: string): string {

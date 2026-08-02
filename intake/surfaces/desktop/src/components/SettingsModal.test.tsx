@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from './SettingsModal';
 
 const api = vi.hoisted(() => ({
+  getProviders: vi.fn(),
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
 }));
@@ -13,8 +14,19 @@ vi.mock('@/hooks/useApi', () => ({
 
 describe('SettingsModal Vault connector selection', () => {
   beforeEach(() => {
+    api.getProviders.mockReset();
     api.getSettings.mockReset();
     api.updateSettings.mockReset();
+    api.getProviders.mockResolvedValue({
+      providers: [],
+      models: {
+        anthropic: [{ id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet' }],
+        'anthropic-compatible': [{ id: 'glm-4.7', name: 'GLM-4.7' }],
+      },
+      modelSources: { anthropic: 'live', 'anthropic-compatible': 'fallback' },
+      connectors: [],
+      chatgpt: { configured: false },
+    });
     api.getSettings.mockResolvedValue({
       provider: 'anthropic',
       model: 'claude-sonnet-4-5-20250514',

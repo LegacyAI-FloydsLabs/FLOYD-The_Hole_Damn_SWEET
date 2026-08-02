@@ -9,10 +9,14 @@
  * only Desktop's fv_ capability and the loopback Vault address.
  */
 
+import { readVaultFallback, type VaultFallbackNotice } from './vault-fallback.js';
+
 export const CHATGPT_MODELS = [
-  { id: 'gpt-5.5', name: 'GPT-5.5 (Most Capable)' },
-  { id: 'gpt-5.4', name: 'GPT-5.4 (Balanced)' },
-  { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini (Fast)' },
+  { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra (Balanced · Default)' },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (Flagship)' },
+  { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna (Fast)' },
+  { id: 'gpt-5.5', name: 'GPT-5.5' },
+  { id: 'gpt-5.4', name: 'GPT-5.4' },
   { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex (Coding)' },
 ];
 
@@ -33,6 +37,8 @@ export interface StreamCallbacks {
   onText?: (delta: string) => void;
   onToolCall?: (name: string, args: Record<string, unknown>, callId: string) => void;
   onError?: (message: string) => void;
+  /** The Vault answered via its GLM fallback instead of the requested provider. */
+  onFallback?: (notice: VaultFallbackNotice) => void;
 }
 
 export interface TurnResult {
@@ -40,6 +46,8 @@ export interface TurnResult {
   toolCalls: Array<{ name: string; args: Record<string, unknown>; callId: string }>;
   /** Raw output items to append to the conversation for the next turn. */
   outputItems: ResponseInputItem[];
+  /** Set when the Vault served this turn through its GLM fallback. */
+  fallback?: VaultFallbackNotice | null;
 }
 
 export class ChatGPTSubscriptionClient {
@@ -111,6 +119,8 @@ export class ChatGPTSubscriptionClient {
     }
 
     const result: TurnResult = { text: '', toolCalls: [], outputItems: [] };
+    result.fallback = readVaultFallback(res.headers);
+    if (result.fallback) callbacks?.onFallback?.(result.fallback);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';

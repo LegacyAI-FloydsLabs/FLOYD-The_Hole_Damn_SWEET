@@ -212,6 +212,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .chat-message header { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .chat-message header span { color: var(--text-muted); font-size: 8px; animation: chat-pulse 1.2s ease-in-out infinite alternate; }
 .chat-message div { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; }
+.chat-message .fallback-notice { margin: -2px 0 6px; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border)); border-radius: 5px; background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--warning); font-size: 9px; }
 @keyframes chat-pulse { from { opacity: .45; } to { opacity: 1; } }
 .provider-error { flex: none; display: flex; align-items: flex-start; gap: 8px; max-height: 110px; overflow: auto; padding: 8px 11px; border-top: 1px solid color-mix(in srgb, var(--error) 35%, var(--border)); background: color-mix(in srgb, var(--error) 9%, var(--bg-surface)); color: var(--error); }
 .provider-error > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }

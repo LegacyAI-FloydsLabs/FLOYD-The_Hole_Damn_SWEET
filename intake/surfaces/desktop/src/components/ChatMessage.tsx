@@ -7,7 +7,7 @@ import type { Message } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { User, Bot } from 'lucide-react';
+import { User, Bot, AlertTriangle } from 'lucide-react';
 
 interface ChatMessageProps {
   message: Message;
@@ -34,6 +34,15 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
           ? 'bg-sky-600 text-white' 
           : 'bg-slate-800 text-slate-100',
       )}>
+        {!isUser && message.fallback && (
+          <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 mb-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>
+              {message.fallback.provider} failed — answered by GLM
+              {message.fallback.model ? ` (${message.fallback.model})` : ''}
+            </span>
+          </div>
+        )}
         {message.attachments && message.attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
             {message.attachments.map((att, i) => (

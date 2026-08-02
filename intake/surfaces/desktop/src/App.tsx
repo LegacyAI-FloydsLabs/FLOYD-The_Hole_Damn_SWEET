@@ -38,6 +38,7 @@ export default function App() {
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [streamingFallback, setStreamingFallback] = useState<{ provider: string; model: string | null } | null>(null);
   const [_settings, setSettings] = useState<Settings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('loading');
@@ -61,6 +62,11 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamingContentRef = useRef<string>('');
+  const streamingFallbackRef = useRef<{ provider: string; model: string | null } | null>(null);
+  // P5 continuity: gate composer-draft publishing until the portable draft
+  // had a chance to restore, and skip the echo publish that restore causes.
+  const experienceReadyRef = useRef(false);
+  const skipDraftPublishRef = useRef(false);
   const connectionNoticeRef = useRef<{ status: ConnectionStatus; message: string }>({
     status: 'loading',
     message: '',
@@ -92,6 +98,29 @@ export default function App() {
     scrollToBottom();
   }, [messages, streamingContent, scrollToBottom]);
 
+  // Publish composer draft changes to Floyd Core (debounced; P5 continuity)
+  useEffect(() => {
+    if (!experienceReadyRef.current) return;
+    if (skipDraftPublishRef.current) {
+      skipDraftPublishRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      api.postExperienceDraft(input).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [input]);
+
+  // Publish the selected view to Floyd Core (P5 continuity)
+  useEffect(() => {
+    const view = showBrowork ? 'browork'
+      : showProjects ? 'projects'
+      : showSkills ? 'skills'
+      : showSettings ? 'settings'
+      : 'chat';
+    api.postExperienceView(view).catch(() => {});
+  }, [showSettings, showSkills, showProjects, showBrowork]);
+
   // Initialize
   useEffect(() => {
     async function init() {
@@ -99,6 +128,19 @@ export default function App() {
         const health = await api.checkHealth();
         const settingsData = await api.getSettings();
         setSettings(settingsData);
+
+        // Restore the portable composer draft from Floyd Core (P5), if any.
+        try {
+          const experience = await api.getExperienceState();
+          if (experience.available && experience.composerDraft) {
+            skipDraftPublishRef.current = true;
+            setInput(experience.composerDraft);
+          }
+        } catch {
+          // Core unreachable: the composer simply starts empty.
+        } finally {
+          experienceReadyRef.current = true;
+        }
         
         if (!health.hasApiKey) {
           setConnectionNotice(
@@ -166,6 +208,8 @@ export default function App() {
     setIsStreaming(true);
     setStreamingContent('');
     streamingContentRef.current = '';
+    setStreamingFallback(null);
+    streamingFallbackRef.current = null;
     setActiveToolCalls([]);
     
     try {
@@ -185,10 +229,13 @@ export default function App() {
               role: 'assistant',
               content: fullContent,
               timestamp: Date.now(),
+              fallback: streamingFallbackRef.current,
             }]);
           }
           setStreamingContent('');
           streamingContentRef.current = '';
+          setStreamingFallback(null);
+          streamingFallbackRef.current = null;
           setIsStreaming(false);
           setActiveToolCalls([]);
           restoreConnectionNotice();
@@ -203,6 +250,8 @@ export default function App() {
           setIsStreaming(false);
           setStreamingContent('');
           streamingContentRef.current = '';
+          setStreamingFallback(null);
+          streamingFallbackRef.current = null;
           setActiveToolCalls([]);
         },
         // onToolCall
@@ -222,7 +271,14 @@ export default function App() {
               : tc
           ));
         },
-        uploadedAttachments.length > 0 ? uploadedAttachments : undefined
+        uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
+        // onFallback — the Vault answered via its GLM fallback; pin the notice
+        // to this assistant message so the failure stays visible.
+        (provider, model) => {
+          const notice = { provider, model };
+          streamingFallbackRef.current = notice;
+          setStreamingFallback(notice);
+        }
       );
     } catch (err: any) {
       showOperationError(`Error: ${err.message}`);
@@ -514,7 +570,7 @@ export default function App() {
           {/* Streaming message */}
           {isStreaming && streamingContent && (
             <ChatMessage 
-              message={{ role: 'assistant', content: streamingContent }} 
+              message={{ role: 'assistant', content: streamingContent, fallback: streamingFallback }} 
               isStreaming 
             />
           )}

@@ -26,11 +26,24 @@ import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browor
 import { WebSocketMCPServer } from './ws-mcp-server.js';
 import {
   ChatGPTSubscriptionClient,
-  CHATGPT_MODELS,
   userMessage as chatgptUserMessage,
   toolResult as chatgptToolResult,
   type ResponseInputItem,
 } from './chatgpt-subscription.js';
+import {
+  STATIC_PROVIDER_MODELS,
+  resolveBootProviderModel,
+  resolveDesktopProviderModels,
+  resolveGlmSeedModel,
+} from './live-models.js';
+import { captureVaultFallback, type VaultFallbackNotice } from './vault-fallback.js';
+import {
+  DesktopExperienceCoordinator,
+  defaultCoreBaseUrl,
+  desktopProviderForRoute,
+  readGatewayToken,
+  type DesktopExperienceState,
+} from './floyd-core-experience.js';
 import { buildDefaultSystemPrompt } from './prompts/default-system-prompt.js';
 import {
   isDesktopProviderReady,
@@ -131,6 +144,8 @@ interface Message {
   content: string;
   timestamp?: number;
   attachments?: Attachment[];
+  /** Recorded when the Vault served this reply through its GLM fallback. */
+  fallback?: { provider: string; model: string | null } | null;
 }
 
 interface Session {
@@ -175,13 +190,13 @@ async function desktopConnectorCatalog(): Promise<DesktopModelConnector[]> {
   return listVaultModelConnectors({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN });
 }
 
-async function desktopVaultReadiness(): Promise<{
+async function desktopVaultReadiness(signal?: AbortSignal): Promise<{
   connectors: DesktopModelConnector[];
   ready: boolean;
 }> {
   const [connectors, status] = await Promise.all([
-    desktopConnectorCatalog(),
-    readDesktopVaultStatus({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN }),
+    listVaultModelConnectors({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN, signal }),
+    readDesktopVaultStatus({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN, signal }),
   ]);
   return {
     connectors,
@@ -189,58 +204,24 @@ async function desktopVaultReadiness(): Promise<{
   };
 }
 
-// Provider configurations
-const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
-  'chatgpt-subscription': CHATGPT_MODELS,
-  anthropic: [
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Fast)' },
-  ],
-  'anthropic-compatible': [
-    { id: 'glm-4.7', name: 'GLM-4.7 (Standard, Complex Tasks)' },
-    { id: 'glm-4.5-air', name: 'GLM-4.5 Air (Lightweight, Faster)' },
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-    { id: 'custom-model', name: 'Custom Model (specify in settings)' },
-  ],
-  openai: [
-    { id: 'gpt-4o', name: 'GPT-4o (Recommended)' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Cheap)' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'gpt-4', name: 'GPT-4' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)' },
-  ],
-  glm: [
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
-  ],
-};
-
 // Model choice is user-configurable; credentials and addresses are not.
+// Desktop exception (locked by Douglas 2026-07-31): THIS surface defaults
+// to GPT-5.6 Terra on the ChatGPT subscription — the GLM-default rule does
+// not apply here. GLM remains the fallback when a saved provider loses its
+// credential (boot policy in initDataDir).
 let settings: Settings = {
   provider: 'chatgpt-subscription',
-  model: 'gpt-5.4',
+  model: 'gpt-5.6-terra',
   maxTokens: 16384,
 };
 
 // ChatGPT subscription client (single instance; owns token refresh)
 const chatgptClient = new ChatGPTSubscriptionClient();
+
+// Floyd Core experience sync (P5 continuity). Null when Core is unreachable:
+// every publish then degrades to a no-op and boot/chat continue unaffected.
+let experienceSync: DesktopExperienceCoordinator | null = null;
+let latestExperienceState: DesktopExperienceState | null = null;
 
 // Sessions store
 const sessions: Map<string, Session> = new Map();
@@ -251,6 +232,7 @@ async function initDataDir() {
     await fs.mkdir(DATA_DIR, { recursive: true });
     
     // Load settings if exists
+    let hasSavedSettings = false;
     try {
       const settingsData = await fs.readFile(path.join(DATA_DIR, 'settings.json'), 'utf-8');
       const saved = JSON.parse(settingsData) as Partial<Settings>;
@@ -262,9 +244,38 @@ async function initDataDir() {
         ...(typeof saved.systemPrompt === 'string' ? { systemPrompt: saved.systemPrompt } : {}),
         ...(typeof saved.maxTokens === 'number' ? { maxTokens: saved.maxTokens } : {}),
       };
+      hasSavedSettings = true;
       console.log('[Server] Loaded settings from disk');
     } catch {
       console.log('[Server] No existing settings, using defaults');
+    }
+
+    // Boot policy. First run: seed the desktop default — GPT-5.6 Terra on
+    // the ChatGPT subscription (desktop exception to the GLM default rule).
+    // Saved provider whose credential is gone (readiness succeeded and says
+    // not-ready): re-seed GLM live and persist, so the UI shows what is
+    // actually active. Vault unreachable at boot proves nothing: keep saved.
+    const bootReadiness = hasSavedSettings
+      ? await desktopVaultReadiness(AbortSignal.timeout(5000)).catch(() => null)
+      : null;
+    if (!hasSavedSettings) {
+      settings = { ...settings, provider: 'chatgpt-subscription', model: 'gpt-5.6-terra' };
+      delete settings.connectorId;
+      console.log('[Server] Seeded first-run default: ChatGPT subscription (gpt-5.6-terra)');
+    } else if (bootReadiness?.ready === false) {
+      const glmSeedModel = await resolveGlmSeedModel({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN });
+      const boot = resolveBootProviderModel({
+        savedProvider: settings.provider,
+        savedModel: settings.model,
+        savedProviderReady: bootReadiness.ready,
+        glmSeedModel,
+      });
+      settings = { ...settings, provider: boot.provider, model: boot.model };
+      delete settings.connectorId;
+      if (boot.persist) {
+        console.log(`[Server] Saved provider lost its Vault key; re-seeded to GLM (${boot.model})`);
+        await saveSettings();
+      }
     }
     
     // Load sessions if exists
@@ -334,8 +345,9 @@ async function saveSession(session: Session) {
   }
 }
 
-// Create API clients
-function getAnthropicClient(): Anthropic | null {
+// Create API clients. An optional fetch wrapper (e.g. captureVaultFallback)
+// lets callers observe upstream Vault response headers.
+function getAnthropicClient(fetchImpl?: typeof globalThis.fetch): Anthropic | null {
   if (settings.provider !== 'anthropic' && settings.provider !== 'anthropic-compatible') {
     return null;
   }
@@ -343,27 +355,45 @@ function getAnthropicClient(): Anthropic | null {
   return new Anthropic({
     apiKey: VAULT_TOKEN,
     baseURL: vaultBaseURL(settings.provider),
+    fetch: fetchImpl,
   });
 }
 
-function getOpenAIClient(): OpenAI | null {
+function getOpenAIClient(fetchImpl?: typeof globalThis.fetch): OpenAI | null {
   if (settings.provider !== 'openai' && settings.provider !== 'glm') {
     return null;
   }
   return new OpenAI({
     apiKey: VAULT_TOKEN,
     baseURL: vaultBaseURL(settings.provider),
+    fetch: fetchImpl,
   });
 }
 
 // Unified client getter
-function getClient(): Anthropic | OpenAI | null {
+function getClient(fetchImpl?: typeof globalThis.fetch): Anthropic | OpenAI | null {
   if (settings.provider === 'openai' || settings.provider === 'glm') {
-    return getOpenAIClient();
+    return getOpenAIClient(fetchImpl);
   } else if (settings.provider === 'anthropic' || settings.provider === 'anthropic-compatible') {
-    return getAnthropicClient();
+    return getAnthropicClient(fetchImpl);
   }
   return null;
+}
+
+/**
+ * Emit an SSE `fallback` event when the Vault served a reply through its GLM
+ * fallback. The failure must be visible: the operator sees which provider
+ * failed and which model actually answered. Dedupes per response.
+ */
+function makeFallbackNotifier(res: express.Response): (notice: VaultFallbackNotice | null | undefined) => void {
+  let emitted: string | null = null;
+  return (notice) => {
+    if (!notice) return;
+    const key = `${notice.provider}|${notice.model ?? ''}`;
+    if (key === emitted) return;
+    emitted = key;
+    res.write(`data: ${JSON.stringify({ type: 'fallback', provider: notice.provider, model: notice.model })}\n\n`);
+  };
 }
 
 // ============ API Routes ============
@@ -380,11 +410,15 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// Get available providers and models
+// Get available providers and models. Model lists are fetched live through
+// the Vault credential proxy where a list route exists; the static lists are
+// served as offline fallback, with `modelSources` recording which path each
+// provider's list took.
 app.get('/api/providers', async (_req, res) => {
-  const [chatgptStatus, connectors] = await Promise.all([
+  const [chatgptStatus, connectors, modelLists] = await Promise.all([
     chatgptClient.status(),
     desktopConnectorCatalog(),
+    resolveDesktopProviderModels({ vaultUrl: VAULT_URL, vaultToken: VAULT_TOKEN }),
   ]);
   res.json({
     providers: [
@@ -394,7 +428,8 @@ app.get('/api/providers', async (_req, res) => {
       { id: 'openai', name: 'OpenAI' },
       { id: 'glm', name: 'Zai GLM (Zhipu)' },
     ],
-    models: PROVIDER_MODELS,
+    models: modelLists.models,
+    modelSources: modelLists.sources,
     connectors,
     chatgpt: chatgptStatus,
   });
@@ -458,6 +493,43 @@ app.post('/api/settings', async (req, res) => {
 
 app.post('/api/test-key', (_req, res) => {
   res.status(410).json({ success: false, error: 'Direct key testing was removed. Use the Vault application test.' });
+});
+
+// === FLOYD CORE EXPERIENCE SYNC (P5 continuity) ===
+// The composer draft and selected view are portable across surfaces via
+// Core's experience envelope. All endpoints degrade to available:false when
+// Core is unreachable; the desktop keeps working without continuity.
+
+// Current restorable experience state (draft, model route, active context)
+app.get('/api/experience/state', (_req, res) => {
+  if (!experienceSync || !latestExperienceState) {
+    return res.json({ available: false });
+  }
+  res.json({
+    available: true,
+    composerDraft: latestExperienceState.composerDraft,
+    modelRoute: latestExperienceState.modelRoute,
+    active: latestExperienceState.active,
+    selectedView: latestExperienceState.selectedView,
+    revision: latestExperienceState.revision,
+  });
+});
+
+// Publish composer draft changes (debounced + coalesced server-side)
+app.post('/api/experience/draft', (req, res) => {
+  const draft = typeof req.body?.draft === 'string' ? req.body.draft : '';
+  experienceSync?.publish({ composer_draft: draft });
+  res.json({ success: true, available: Boolean(experienceSync) });
+});
+
+// Publish selected view changes (chat/settings/skills/projects/browork)
+app.post('/api/experience/view', (req, res) => {
+  const view = typeof req.body?.view === 'string' ? req.body.view.trim() : '';
+  if (!view) {
+    return res.status(400).json({ error: 'view is required' });
+  }
+  experienceSync?.publish({ selected_view: view });
+  res.json({ success: true, available: Boolean(experienceSync) });
 });
 
 // === SKILLS API ===
@@ -850,6 +922,8 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   let fullResponse = '';
+  const notifyFallback = makeFallbackNotifier(res);
+  let fallbackNotice: VaultFallbackNotice | null = null;
   
   // Build system prompt
   let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() });
@@ -891,14 +965,20 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
             fullResponse += delta;
             res.write(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`);
           },
+          onFallback: (notice) => {
+            fallbackNotice = notice;
+            notifyFallback(notice);
+          },
         },
       });
       fullResponse = turn.text;
     } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       // OpenAI/GLM flow
+      const fallbackCap = captureVaultFallback();
       const client = new OpenAI({ 
         apiKey: VAULT_TOKEN,
         baseURL: vaultBaseURL(settings.provider),
+        fetch: fallbackCap.fetch,
       });
 
       const response = await client.chat.completions.create({
@@ -910,6 +990,8 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
         ],
         stream: true,
       });
+      notifyFallback(fallbackCap.notice());
+      fallbackNotice = fallbackCap.notice() ?? fallbackNotice;
 
       for await (const chunk of response) {
         const delta = chunk.choices[0]?.delta?.content || '';
@@ -920,9 +1002,11 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
       }
     } else {
       // Anthropic-compatible flow
+      const fallbackCap = captureVaultFallback();
       const client = new Anthropic({ 
         apiKey: VAULT_TOKEN,
         baseURL: vaultBaseURL(settings.provider),
+        fetch: fallbackCap.fetch,
       });
 
       const response = await client.messages.create({
@@ -932,6 +1016,8 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
         messages: apiMessages,
         stream: true,
       });
+      notifyFallback(fallbackCap.notice());
+      fallbackNotice = fallbackCap.notice() ?? fallbackNotice;
 
       for await (const chunk of response) {
         if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
@@ -948,6 +1034,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
       role: 'assistant',
       content: fullResponse,
       timestamp: Date.now(),
+      ...(fallbackNotice ? { fallback: fallbackNotice } : {}),
     });
     session.updated = Date.now();
     await saveSession(session);
@@ -1013,6 +1100,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  const notifyFallback = makeFallbackNotifier(res);
   
   try {
     const client = getClient();
@@ -1052,6 +1140,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
         instructions: systemPrompt,
         input,
       });
+      notifyFallback(turn.fallback);
       if (turn.text) {
         continuedContent += turn.text;
         res.write(`data: ${JSON.stringify({ type: 'text', content: turn.text })}\n\n`);
@@ -1069,9 +1158,11 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
       res.end();
 
     } else if (settings.provider === 'openai' || settings.provider === 'glm') {
+      const fallbackCap = captureVaultFallback();
       const openaiClient = new OpenAI({ 
         apiKey: VAULT_TOKEN,
         baseURL: vaultBaseURL(settings.provider),
+        fetch: fallbackCap.fetch,
       });
       
       const response = await openaiClient.chat.completions.create({
@@ -1083,6 +1174,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
           { role: 'assistant', content: continuedContent }, // Include partial response
         ],
       });
+      notifyFallback(fallbackCap.notice());
       
       const assistantMessage = response.choices[0].message;
       if (assistantMessage.content) {
@@ -1104,9 +1196,11 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
       
     } else {
       // Anthropic-compatible flow
+      const fallbackCap = captureVaultFallback();
       const anthropicClient = new Anthropic({ 
         apiKey: VAULT_TOKEN,
         baseURL: vaultBaseURL(settings.provider),
+        fetch: fallbackCap.fetch,
       });
       
       const response = await anthropicClient.messages.create({
@@ -1118,6 +1212,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
           { role: 'assistant', content: continuedContent }, // Include partial response
         ],
       });
+      notifyFallback(fallbackCap.notice());
       
       for (const block of response.content) {
         if (block.type === 'text') {
@@ -1209,7 +1304,8 @@ app.post('/api/chat', async (req, res) => {
   const { sessionId, message } = req.body;
   
   const usingChatGPT = settings.provider === 'chatgpt-subscription';
-  const client = usingChatGPT ? null : getClient();
+  const fallbackCap = captureVaultFallback();
+  const client = usingChatGPT ? null : getClient(fallbackCap.fetch);
   if (usingChatGPT) {
     if (!(await chatgptClient.isConfigured())) {
       return res.status(400).json({ error: 'ChatGPT subscription is not configured in Floyd Vault.' });
@@ -1240,6 +1336,7 @@ app.post('/api/chat', async (req, res) => {
   try {
     let assistantContent: string;
     let usage: unknown = undefined;
+    let fallbackNotice: VaultFallbackNotice | null = null;
     if (usingChatGPT) {
       const input: ResponseInputItem[] = session.messages.map(m =>
         m.role === 'user'
@@ -1252,6 +1349,7 @@ app.post('/api/chat', async (req, res) => {
         input,
       });
       assistantContent = turn.text;
+      fallbackNotice = turn.fallback ?? null;
     } else {
       const response = await (client as Anthropic).messages.create({
         model: settings.model,
@@ -1262,6 +1360,7 @@ app.post('/api/chat', async (req, res) => {
           content: m.content,
         })),
       });
+      fallbackNotice = fallbackCap.notice();
       assistantContent = response.content
         .filter((block: any) => block.type === 'text')
         .map((block: any) => block.text)
@@ -1274,6 +1373,7 @@ app.post('/api/chat', async (req, res) => {
       role: 'assistant',
       content: assistantContent,
       timestamp: Date.now(),
+      ...(fallbackNotice ? { fallback: fallbackNotice } : {}),
     });
     
     session.updated = Date.now();
@@ -1283,6 +1383,7 @@ app.post('/api/chat', async (req, res) => {
       success: true,
       response: assistantContent,
       usage,
+      fallback: fallbackNotice,
       session: {
         id: session.id,
         title: session.title,
@@ -1572,6 +1673,10 @@ app.post('/api/chat/stream', async (req, res) => {
   let fullResponse = '';
   let turnCount = 0;
   const maxTurns = 10;
+  // Vault GLM-fallback visibility: surface any fallback to the client and
+  // record it on the saved assistant message.
+  const notifyFallback = makeFallbackNotifier(res);
+  let fallbackNotice: VaultFallbackNotice | null = null;
   
   // Build system prompt with skills and project context
   let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() });
@@ -1614,6 +1719,10 @@ app.post('/api/chat/stream', async (req, res) => {
               fullResponse += delta;
               res.write(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`);
             },
+            onFallback: (notice) => {
+              fallbackNotice = notice;
+              notifyFallback(notice);
+            },
           },
         });
 
@@ -1630,9 +1739,11 @@ app.post('/api/chat/stream', async (req, res) => {
       }
     } else if (settings.provider === 'openai' || settings.provider === 'glm') {
       // OpenAI-compatible flow (OpenAI and GLM)
+      const fallbackCap = captureVaultFallback();
       const client = new OpenAI({ 
         apiKey: VAULT_TOKEN,
         baseURL: vaultBaseURL(settings.provider),
+        fetch: fallbackCap.fetch,
       });
       const openaiTools = enableTools ? getOpenAITools() : undefined;
       
@@ -1648,6 +1759,8 @@ app.post('/api/chat/stream', async (req, res) => {
           ],
           tools: openaiTools,
         });
+        notifyFallback(fallbackCap.notice());
+        fallbackNotice = fallbackCap.notice() ?? fallbackNotice;
         
         const choice = response.choices[0];
         const assistantMessage = choice.message;
@@ -1706,9 +1819,11 @@ app.post('/api/chat/stream', async (req, res) => {
       }
     } else {
       // Anthropic-compatible flow (uses Anthropic client with custom baseURL)
+      const fallbackCap = captureVaultFallback();
       const client = new Anthropic({ 
         apiKey: VAULT_TOKEN,
         baseURL: vaultBaseURL(settings.provider),
+        fetch: fallbackCap.fetch,
       });
       const anthropicTools = enableTools ? getAnthropicTools() : undefined;
       
@@ -1722,6 +1837,8 @@ app.post('/api/chat/stream', async (req, res) => {
           messages: apiMessages,
           tools: anthropicTools,
         });
+        notifyFallback(fallbackCap.notice());
+        fallbackNotice = fallbackCap.notice() ?? fallbackNotice;
         
         // Process response content
         let hasToolUse = false;
@@ -1784,6 +1901,7 @@ app.post('/api/chat/stream', async (req, res) => {
         role: 'assistant',
         content: fullResponse,
         timestamp: Date.now(),
+        ...(fallbackNotice ? { fallback: fallbackNotice } : {}),
       });
     }
     session.updated = Date.now();
@@ -1816,8 +1934,71 @@ app.get('*', (req, res) => {
 const PORT = Number(process.env.PORT) || 3001;
 const MCP_WS_PORT = Number(process.env.MCP_WS_PORT) || 13011;
 
+/**
+ * Floyd Core experience sync (P5): negotiate and register as surface
+ * "desktop", restore the portable model route, then keep the envelope fresh
+ * for optimistic publications. An unreachable Core never blocks boot — the
+ * desktop simply runs without continuity.
+ */
+async function startExperienceSync() {
+  try {
+    const token = await readGatewayToken();
+    const coordinator = new DesktopExperienceCoordinator({
+      baseUrl: defaultCoreBaseUrl(),
+      token,
+      onEnvelope: (state) => {
+        latestExperienceState = state;
+      },
+      onError: (error) => {
+        console.log('[Floyd Core] Experience sync error:', error instanceof Error ? error.message : String(error));
+      },
+    });
+    const restored = await coordinator.start();
+    experienceSync = coordinator;
+    latestExperienceState = restored;
+
+    // Apply the portable model route when it maps to a Desktop provider.
+    // In-memory only: the operator's saved settings stay untouched.
+    const provider = desktopProviderForRoute(restored.modelRoute.provider);
+    if (provider && restored.modelRoute.model) {
+      settings = { ...settings, provider, model: restored.modelRoute.model };
+      delete settings.connectorId;
+      broworkManager.setProvider(provider);
+      broworkManager.setModel(restored.modelRoute.model);
+      broworkManager.setConnector(undefined);
+      console.log(`[Floyd Core] Applied portable model route: ${provider} / ${restored.modelRoute.model}`);
+    }
+    console.log(`[Floyd Core] Experience sync active (envelope revision ${restored.revision})`);
+  } catch (error: any) {
+    experienceSync = null;
+    latestExperienceState = null;
+    console.log(`[Floyd Core] Experience sync unavailable: ${error?.message || error} (continuing without continuity)`);
+  }
+}
+
+// Publish surface presence and drain pending publications on shutdown.
+async function shutdownExperienceSync() {
+  const coordinator = experienceSync;
+  experienceSync = null;
+  if (!coordinator) return;
+  await Promise.race([
+    (async () => {
+      await coordinator.publishPresence();
+      await coordinator.stop();
+    })(),
+    new Promise((resolve) => setTimeout(resolve, 1500)),
+  ]).catch(() => {});
+}
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void shutdownExperienceSync().finally(() => process.exit(0));
+  });
+}
+
 // Also start WebSocket MCP server for Chrome extension
 initDataDir().then(async () => {
+  await startExperienceSync();
+
   // Start Express API server — loopback only. This server exposes file,
   // shell, and code-execution tools with no authentication; it must never
   // listen on external interfaces. The frame proxies locally.

@@ -104,6 +104,14 @@ export async function handleGateway(req, res, options = {}) {
       'x-accel-buffering': 'no',
     });
 
+    // The Vault marks a GLM-served fallback via response headers. Surface it
+    // before any provider bytes so clients can show which provider failed and
+    // which model actually answered instead of hiding the failure.
+    const fallbackProvider = firstHeaderValue(upstreamResponse.headers['x-floyd-fallback']);
+    if (fallbackProvider) {
+      await writeSSE(res, { type: 'fallback', requestedProvider: fallbackProvider, model: firstHeaderValue(upstreamResponse.headers['x-floyd-fallback-model']) });
+    }
+
     if (!contentType.includes('text/event-stream')) {
       const raw = await readBoundedStream(upstreamResponse, MAX_JSON_RESPONSE_BYTES);
       const payload = JSON.parse(raw.toString('utf8'));
@@ -200,6 +208,10 @@ function selectResponseHeaders(source) {
     if (value !== undefined) headers[name] = value;
   }
   return headers;
+}
+
+function firstHeaderValue(value) {
+  return Array.isArray(value) ? String(value[0] || '') : typeof value === 'string' ? value : '';
 }
 
 async function readBoundedBody(req, limit) {

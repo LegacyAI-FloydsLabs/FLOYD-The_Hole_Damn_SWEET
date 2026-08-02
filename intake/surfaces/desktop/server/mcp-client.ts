@@ -263,6 +263,19 @@ export const BUILTIN_TOOLS = [
     },
   },
   {
+    name: 'generate_image',
+    description: 'Generate an image from a text prompt and save it as a PNG file. Returns the saved file path. Use for any request to create, draw, render, or generate a picture, graphic, illustration, poster, or visual asset.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Detailed description of the image to generate' },
+        path: { type: 'string', description: 'Optional explicit save path for the PNG. Defaults to the generated-media artifacts directory.' },
+        size: { type: 'string', description: 'Optional dimensions, e.g. "1024x1024" (default), "1536x1024", "1024x1536"' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
     name: 'edit_block',
     description: 'Apply surgical text replacement in a file. Use for small, focused edits. Supports fuzzy matching fallback.',
     inputSchema: {

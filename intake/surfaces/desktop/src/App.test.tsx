@@ -34,12 +34,18 @@ describe('App New Chat recovery', () => {
     deleteSession: vi.fn(),
     uploadFiles: vi.fn(),
     sendMessageStream: vi.fn(),
+    getExperienceState: vi.fn(),
+    postExperienceDraft: vi.fn(),
+    postExperienceView: vi.fn(),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     api.checkHealth.mockResolvedValue({ hasApiKey: true, model: 'gpt-test' });
     api.getSettings.mockResolvedValue({ model: 'gpt-test', hasApiKey: true, apiKeyPreview: null });
+    api.getExperienceState.mockResolvedValue({ available: false });
+    api.postExperienceDraft.mockResolvedValue({ success: true, available: false });
+    api.postExperienceView.mockResolvedValue({ success: true, available: false });
     api.getSessions.mockResolvedValue([existingSession]);
     api.getSession.mockResolvedValue(existingSession);
     api.createSession

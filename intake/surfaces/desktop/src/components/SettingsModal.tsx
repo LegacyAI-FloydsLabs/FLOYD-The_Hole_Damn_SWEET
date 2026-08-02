@@ -20,53 +20,7 @@ type VaultConnector = {
   dialect: 'openai' | 'anthropic';
   configured: boolean;
 };
-
-const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
-  'chatgpt-subscription': [
-    { id: 'gpt-5.5', name: 'GPT-5.5 (Most Capable)' },
-    { id: 'gpt-5.4', name: 'GPT-5.4 (Balanced)' },
-    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini (Fast)' },
-    { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex (Coding)' },
-  ],
-  anthropic: [
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Fast)' },
-  ],
-  'anthropic-compatible': [
-    { id: 'glm-4.7', name: 'GLM-4.7 (Standard, Complex Tasks)' },
-    { id: 'glm-4.5-air', name: 'GLM-4.5 Air (Lightweight, Faster)' },
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-    { id: 'custom-model', name: 'Custom Model (specify in settings)' },
-  ],
-  openai: [
-    { id: 'gpt-4o', name: 'GPT-4o (Recommended)' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Cheap)' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'gpt-4', name: 'GPT-4' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)' },
-  ],
-  glm: [
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
-  ],
-};
+type ModelOption = { id: string; name: string };
 
 export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const api = useApi();
@@ -75,14 +29,21 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const [model, setModel] = useState('claude-sonnet-4-5-20250514');
   const [connectorId, setConnectorId] = useState('');
   const [connectors, setConnectors] = useState<VaultConnector[]>([]);
+  const [providerModels, setProviderModels] = useState<Record<string, ModelOption[]>>({});
   const [systemPrompt, setSystemPrompt] = useState('');
   const [effectivePrompt, setEffectivePrompt] = useState('');
   const [maxTokens, setMaxTokens] = useState(16384);
   const [saving, setSaving] = useState(false);
 
-  // Load settings
+  // Load settings and the server-provided model catalogs (live via Vault,
+  // static fallback) — no model lists are hardcoded in the client.
   useEffect(() => {
     if (isOpen) {
+      api.getProviders()
+        .then((data) => setProviderModels(data.models || {}))
+        .catch(() => {
+          // Server unreachable: keep whatever lists were already loaded.
+        });
       api.getSettings().then((settings) => {
         setProvider(settings.provider || 'anthropic');
         setModel(settings.model);
@@ -101,10 +62,11 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
     }
   }, [isOpen]);
 
-  // When provider changes, set default model
+  // When provider changes, set default model from its server-provided list
   const handleProviderChange = (newProvider: Provider) => {
     setProvider(newProvider);
-    setModel(PROVIDER_MODELS[newProvider][0].id);
+    const list = providerModels[newProvider] || [];
+    if (list.length > 0) setModel(list[0].id);
     if (newProvider === 'anthropic-compatible' && !connectorId) {
       setConnectorId(connectors.find((connector) => connector.configured)?.id || '');
     }
@@ -133,7 +95,12 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
 
   if (!isOpen) return null;
 
-  const models = PROVIDER_MODELS[provider];
+  const models = providerModels[provider] || [];
+  // Keep the saved selection visible even if it is not in the fetched list
+  // (e.g. renamed upstream before the catalogs finish loading).
+  const modelOptions = model && !models.some((m) => m.id === model)
+    ? [{ id: model, name: model }, ...models]
+    : models;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -260,7 +227,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
               onChange={(e) => setModel(e.target.value)}
               className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
             >
-              {models.map((m) => (
+              {modelOptions.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
                 </option>

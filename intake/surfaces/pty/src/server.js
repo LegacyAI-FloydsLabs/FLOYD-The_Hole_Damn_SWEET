@@ -567,7 +567,8 @@ app.post('/admin/sessions/:id/kill', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 const ALLOWED_ORIGIN = process.env.TERMINALONE_ALLOWED_ORIGIN || `http://${HOST}:${PORT}`;
-installWebSocketAuth({ app, server, wss, allowedOrigin: ALLOWED_ORIGIN });
+const AUTH_TOKEN = String(process.env.TERMINALONE_AUTH_TOKEN || '');
+installWebSocketAuth({ app, server, wss, allowedOrigin: ALLOWED_ORIGIN, authToken: AUTH_TOKEN });
 
 // Bind failures used to surface as an unhandled WebSocketServer exception.
 // Keep the failure explicit and structured without pretending the app started.

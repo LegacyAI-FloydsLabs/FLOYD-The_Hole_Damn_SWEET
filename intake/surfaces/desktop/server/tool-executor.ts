@@ -73,6 +73,8 @@ export class ToolExecutor {
           return await this.moveFile(args);
         case 'get_file_info':
           return await this.getFileInfo(args);
+        case 'generate_image':
+          return await this.generateImage(args);
         case 'edit_block':
           return await this.editBlock(args);
         
@@ -384,6 +386,46 @@ export class ToolExecutor {
         isSymlink: stats.isSymbolicLink(),
       },
     };
+  }
+
+  /** Generate an image from a text prompt via the vault-brokered image backend
+   * and save the PNG. Server-side config only — no UI surface for this. */
+  private async generateImage(args: Record<string, unknown>): Promise<ToolResult> {
+    const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : '';
+    if (!prompt) return { success: false, error: 'generate_image requires a non-empty prompt' };
+    const size = typeof args.size === 'string' && /^\d{3,4}x\d{3,4}$/.test(args.size) ? args.size : '1024x1024';
+    const proxyUrl = process.env.FLOYD_VAULT_PROXY_URL || process.env.CURSEM_CREDENTIAL_PROXY_URL || '';
+    const token = process.env.FLOYD_VAULT_PROXY_TOKEN || process.env.CURSEM_CREDENTIAL_PROXY_TOKEN || '';
+    if (!proxyUrl || !token) return { success: false, error: 'image backend unavailable (no proxy credential)' };
+    const runtimeRoot = process.env.FLOYD_RUNTIME_ROOT || path.join(process.env.HOME || '/', '.floyd');
+    const target = typeof args.path === 'string' && args.path.trim()
+      ? path.resolve(args.path.trim())
+      : path.join(runtimeRoot, 'artifacts', 'generated', `img-${Date.now()}.png`);
+    if (!target.toLowerCase().endsWith('.png')) return { success: false, error: 'save path must end in .png' };
+    if (!this.isPathAllowed(target)) return { success: false, error: `Access denied: ${target}` };
+
+    const response = await fetch(`${proxyUrl}/p/zai/api/paas/v4/images/generations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ model: 'glm-image', prompt, size }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!response.ok) return { success: false, error: `image backend answered HTTP ${response.status}` };
+    const payload = await response.json() as { data?: Array<{ url?: string; b64_json?: string }> };
+    const item = payload.data?.[0];
+    let bytes: Buffer;
+    if (item?.b64_json) {
+      bytes = Buffer.from(item.b64_json, 'base64');
+    } else if (item?.url) {
+      const img = await fetch(item.url, { signal: AbortSignal.timeout(60_000) });
+      if (!img.ok) return { success: false, error: `image download failed (HTTP ${img.status})` };
+      bytes = Buffer.from(await img.arrayBuffer());
+    } else {
+      return { success: false, error: 'image backend returned no image' };
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, bytes);
+    return { success: true, result: { path: target, bytes: bytes.length, model: 'glm-image', size } };
   }
 
   /**

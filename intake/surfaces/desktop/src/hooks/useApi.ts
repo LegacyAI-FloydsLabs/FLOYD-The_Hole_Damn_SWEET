@@ -32,6 +32,43 @@ export function useApi() {
     return fetchJson<{ status: string; hasApiKey: boolean; model: string }>('/health');
   }, [fetchJson]);
 
+  // Providers and model catalogs (live via Vault, static fallback)
+  const getProviders = useCallback(async () => {
+    return fetchJson<{
+      providers: Array<{ id: string; name: string; configured?: boolean }>;
+      models: Record<string, Array<{ id: string; name: string }>>;
+      modelSources?: Record<string, 'live' | 'fallback'>;
+      connectors: Array<{ id: string; displayName: string; dialect: 'openai' | 'anthropic'; configured: boolean }>;
+      chatgpt: { configured: boolean };
+    }>('/providers');
+  }, [fetchJson]);
+
+  // Floyd Core experience sync (P5 continuity)
+  const getExperienceState = useCallback(async () => {
+    return fetchJson<{
+      available: boolean;
+      composerDraft?: string;
+      modelRoute?: { provider: string | null; model: string | null };
+      active?: { project_id: string | null; session_id: string | null; run_id: string | null };
+      selectedView?: string | null;
+      revision?: number;
+    }>('/experience/state');
+  }, [fetchJson]);
+
+  const postExperienceDraft = useCallback(async (draft: string) => {
+    return fetchJson<{ success: boolean; available: boolean }>('/experience/draft', {
+      method: 'POST',
+      body: JSON.stringify({ draft }),
+    });
+  }, [fetchJson]);
+
+  const postExperienceView = useCallback(async (view: string) => {
+    return fetchJson<{ success: boolean; available: boolean }>('/experience/view', {
+      method: 'POST',
+      body: JSON.stringify({ view }),
+    });
+  }, [fetchJson]);
+
   // Settings
   const getSettings = useCallback(async () => {
     return fetchJson<Settings>('/settings');
@@ -112,7 +149,8 @@ export function useApi() {
       type: string;
       mimeType: string;
       data: string;
-    }>
+    }>,
+    onFallback?: (provider: string, model: string | null) => void
   ) => {
     setLoading(true);
     setError(null);
@@ -154,6 +192,8 @@ export function useApi() {
                 onToolResult?.(data.tool, data.id, data.result, data.success);
               } else if (data.type === 'done') {
                 onDone(data.usage, data.sessionId);
+              } else if (data.type === 'fallback') {
+                onFallback?.(data.provider, data.model ?? null);
               } else if (data.type === 'error') {
                 onError(data.error);
               }
@@ -218,6 +258,10 @@ export function useApi() {
     loading,
     error,
     checkHealth,
+    getProviders,
+    getExperienceState,
+    postExperienceDraft,
+    postExperienceView,
     getSettings,
     updateSettings,
     getSessions,

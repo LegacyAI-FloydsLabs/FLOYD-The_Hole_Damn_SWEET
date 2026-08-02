@@ -16,7 +16,7 @@ function rejectUpgrade(socket, statusCode, message) {
   socket.destroy();
 }
 
-function installWebSocketAuth({ app, server, wss, allowedOrigin, ticketTtlMs = DEFAULT_TICKET_TTL_MS }) {
+function installWebSocketAuth({ app, server, wss, allowedOrigin, authToken = '', ticketTtlMs = DEFAULT_TICKET_TTL_MS }) {
   const expectedHost = new URL(allowedOrigin).host;
   const tickets = new Map();
 
@@ -40,6 +40,19 @@ function installWebSocketAuth({ app, server, wss, allowedOrigin, ticketTtlMs = D
   });
 
   server.on('upgrade', (req, socket, head) => {
+    // Trusted local apps (e.g. CURSEM-IDE) may authenticate with a shared
+    // token offered as a WebSocket subprotocol, instead of the browser
+    // origin+ticket flow. Loopback only, exact match, mirrors the donor's
+    // TERMINALONE_AUTH_TOKEN behavior.
+    if (authToken) {
+      const remote = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      const loopback = remote === '127.0.0.1' || remote === '::1';
+      const protocols = String(req.headers['sec-websocket-protocol'] || '').split(',').map((value) => value.trim());
+      if (loopback && protocols.includes(authToken)) {
+        wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+        return;
+      }
+    }
     if (req.headers.origin !== allowedOrigin || req.headers.host !== expectedHost) {
       rejectUpgrade(socket, 403, 'WebSocket origin rejected');
       return;

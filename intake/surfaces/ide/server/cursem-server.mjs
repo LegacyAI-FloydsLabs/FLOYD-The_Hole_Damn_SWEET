@@ -11,6 +11,8 @@ import { createLspGateway } from './lsp-gateway.mjs';
 import { createDebugManager } from './debug-manager.mjs';
 import { ensureNodePtySpawnHelperExecutable } from './node-pty-runtime.mjs';
 import { checkCredentialProxy, resolveCredentialProxy } from './credential-proxy.mjs';
+import { createCoreExperience } from './core-experience.mjs';
+import { PROVIDERS } from '../src/model-routing/core.mjs';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const staticRoot = join(appRoot, 'dist');
@@ -33,17 +35,25 @@ let terminalChild = null;
 let terminalEndpoint = process.env.CURSEM_TERMINAL_URL || '';
 let terminalToken = process.env.CURSEM_TERMINAL_TOKEN || '';
 if (!terminalEndpoint) {
-  ensureNodePtySpawnHelperExecutable(appRoot);
-  const terminalPort = process.env.CURSEM_TERMINAL_PORT ? parsePort(process.env.CURSEM_TERMINAL_PORT) : await reservePort();
-  terminalToken = terminalToken || randomBytes(24).toString('base64url');
-  terminalEndpoint = `ws://127.0.0.1:${terminalPort}`;
-  terminalChild = spawn(process.execPath, [join(appRoot, 'vendor/TerminalOne/src/server.js')], {
-    cwd: join(appRoot, 'vendor/TerminalOne'),
-    env: { ...process.env, PORT: String(terminalPort), TERMINALONE_AUTH_TOKEN: terminalToken },
-    stdio: ['ignore', 'inherit', 'inherit'],
-  });
-  terminalChild.once('error', (error) => process.stderr.write(`TerminalOne failed to start: ${error.message}\n`));
-  await waitForTerminal(terminalPort, terminalChild);
+  // Under the frame, the canonical TerminalOne (intake/surfaces/pty) already
+  // owns 13013 — attach to it instead of spawning the vendored copy. The
+  // vendored copy only ever runs when the IDE is truly standalone.
+  const preferredPort = process.env.CURSEM_TERMINAL_PORT ? parsePort(process.env.CURSEM_TERMINAL_PORT) : 0;
+  if (preferredPort && await terminalPortServing(preferredPort)) {
+    terminalEndpoint = `ws://127.0.0.1:${preferredPort}`;
+  } else {
+    ensureNodePtySpawnHelperExecutable(appRoot);
+    const terminalPort = preferredPort || await reservePort();
+    terminalToken = terminalToken || randomBytes(24).toString('base64url');
+    terminalEndpoint = `ws://127.0.0.1:${terminalPort}`;
+    terminalChild = spawn(process.execPath, [join(appRoot, 'vendor/TerminalOne/src/server.js')], {
+      cwd: join(appRoot, 'vendor/TerminalOne'),
+      env: { ...process.env, PORT: String(terminalPort), TERMINALONE_AUTH_TOKEN: terminalToken },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    terminalChild.once('error', (error) => process.stderr.write(`TerminalOne failed to start: ${error.message}\n`));
+    await waitForTerminal(terminalPort, terminalChild);
+  }
 }
 
 const contentTypes = {
@@ -60,6 +70,7 @@ const frameAncestors = (process.env.CURSEM_FRAME_ANCESTORS || '')
 const frameAncestorsDirective = frameAncestors.length ? frameAncestors.join(' ') : "'none'";
 
 let standalone;
+const coreExperience = createCoreExperience();
 const server = http.createServer(async (req, res) => {
   if (req.url === '/gateway' || req.url?.startsWith('/gateway?')) return handleGateway(req, res, { resolveCredentialProxy });
   if (req.url === '/api/vault/catalog' && req.method === 'GET') {
@@ -79,6 +90,54 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'Vault catalog unavailable' }));
     }
   }
+  if ((req.url === '/api/models' || req.url?.startsWith('/api/models?')) && req.method === 'GET') {
+    // Live model list for one provider, relayed through the Vault credential
+    // proxy. Every failure mode resolves to the static routing default so the
+    // pane always renders a usable model dropdown.
+    const providerId = new URL(req.url, 'http://127.0.0.1').searchParams.get('provider') || '';
+    const staticModel = PROVIDERS[providerId]?.model || '';
+    const sendFallback = () => {
+      const body = JSON.stringify({ provider: providerId, source: 'fallback', models: staticModel ? [{ id: staticModel, name: staticModel }] : [] });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(body);
+    };
+    try {
+      const proxy = await resolveCredentialProxy();
+      const upstream = await fetch(new URL(`/models/${encodeURIComponent(providerId)}`, proxy.url), {
+        headers: { accept: 'application/json', authorization: `Bearer ${proxy.token}` },
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (!upstream.ok) return sendFallback();
+      const body = Buffer.from(await upstream.arrayBuffer());
+      JSON.parse(body.toString('utf8'));
+      res.writeHead(200, {
+        'content-type': upstream.headers.get('content-type') || 'application/json',
+        'content-length': body.byteLength,
+        'cache-control': 'no-store',
+      });
+      return res.end(body);
+    } catch {
+      return sendFallback();
+    }
+  }
+  if (req.url === '/api/core/experience' && req.method === 'GET') {
+    const body = JSON.stringify(coreExperience.snapshot());
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(body);
+  }
+  if (req.url === '/api/core/experience/publish' && req.method === 'POST') {
+    let change;
+    try {
+      change = JSON.parse((await readBoundedBody(req, 512 * 1024)).toString('utf8') || '{}');
+    } catch {
+      res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ error: 'Invalid experience publish body' }));
+    }
+    const result = await coreExperience.publishUi(change);
+    const status = result.conflict ? 409 : result.available === false ? 503 : 200;
+    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(result));
+  }
   if (req.url?.startsWith('/api/')) return standalone.handle(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { allow: 'GET, HEAD' }); res.end(); return; }
   const pathname = decodeURIComponent(new URL(req.url || '/', 'http://127.0.0.1').pathname);
@@ -96,7 +155,14 @@ const server = http.createServer(async (req, res) => {
 
 const lspManager = createLspGateway({ server, workspaceRoot: resolve(resolvedWorkspaceRoot), appRoot });
 const debugManager = createDebugManager(resolve(resolvedWorkspaceRoot));
-standalone = await createStandaloneHost({ initialWorkspaceRoot: resolvedWorkspaceRoot, terminalEndpoint, terminalToken, lspManager, debugManager });
+standalone = await createStandaloneHost({
+  initialWorkspaceRoot: resolvedWorkspaceRoot,
+  terminalEndpoint,
+  terminalToken,
+  lspManager,
+  debugManager,
+  onWorkspaceChanged: (root) => coreExperience.publishWorkspace(root).catch(() => undefined),
+});
 
 server.listen(requestedPort, '127.0.0.1', () => {
   const address = server.address();
@@ -104,17 +170,40 @@ server.listen(requestedPort, '127.0.0.1', () => {
   process.stdout.write(`CURSEM IDE listening on http://127.0.0.1:${port}/\nWorkspace: ${standalone.workspaceRoot}\n`);
 });
 
+// Floyd Core experience sync is additive: boot never waits on Core, and every
+// failure degrades to local-only state.
+void coreExperience.start({ workspaceRoot: standalone.workspaceRoot }).then(async (restore) => {
+  if (!restore.available) {
+    process.stdout.write('Floyd Core experience sync unavailable; continuing with local state only.\n');
+    return;
+  }
+  process.stdout.write(`Floyd Core experience sync online (revision ${restore.revision}).\n`);
+  if (restore.workspaceRoot && restore.workspaceRoot !== standalone.workspaceRoot) {
+    try {
+      await standalone.setWorkspaceRoot(restore.workspaceRoot);
+      process.stdout.write(`Workspace restored from Floyd Core: ${restore.workspaceRoot}\n`);
+    } catch (error) {
+      process.stderr.write(`Core-restored workspace is not usable here: ${error instanceof Error ? error.message : 'unknown error'}\n`);
+    }
+  }
+}).catch(() => undefined);
+
 let shuttingDown = false;
 let parentWatch = null;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  standalone.close();
-  terminalChild?.kill('SIGTERM');
-  if (parentWatch) clearInterval(parentWatch);
-  server.closeAllConnections?.();
-  server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2_000).unref();
+  // Final surface-presence publish (bounded inside stop) before teardown.
+  void coreExperience.stop()
+    .catch(() => undefined)
+    .finally(() => {
+      standalone.close();
+      terminalChild?.kill('SIGTERM');
+      if (parentWatch) clearInterval(parentWatch);
+      server.closeAllConnections?.();
+      server.close(() => process.exit(0));
+    });
 };
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);
@@ -133,6 +222,20 @@ function parsePort(value, fallback) {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be an integer between 1 and 65535.');
   return port;
+}
+
+async function readBoundedBody(req, limit) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.byteLength;
+    if (total > limit) {
+      req.destroy(new Error(`Payload exceeds ${limit} bytes.`));
+      throw new Error(`Payload exceeds ${limit} bytes.`);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 async function reservePort() {
@@ -156,4 +259,13 @@ async function waitForTerminal(port, child) {
   }
   child.kill('SIGTERM');
   throw new Error('TerminalOne did not become healthy within 15 seconds.');
+}
+
+async function terminalPortServing(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(800) });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

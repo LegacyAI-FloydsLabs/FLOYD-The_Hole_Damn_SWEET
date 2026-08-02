@@ -65,6 +65,24 @@ describe('loopback gateway relay', () => {
     expect(text.match(/event: done/g)).toHaveLength(1);
   });
 
+  it('surfaces a Vault GLM fallback as the first stream event', async () => {
+    const vault = await listen((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'x-floyd-fallback': 'deepseek', 'x-floyd-fallback-model': 'glm-4.8' });
+      res.end('data: {"choices":[{"delta":{"content":"served by glm"},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    });
+    const relay = await relayUrl(async () => ({ url: new URL(vault), token: TOKEN }));
+    const response = await fetch(`${relay}/gateway`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: gatewayBody(),
+    });
+    const text = await response.text();
+    expect(response.status).toBe(200);
+    expect(text).toContain('event: fallback\ndata: {"type":"fallback","requestedProvider":"deepseek","model":"glm-4.8"}');
+    expect(text.indexOf('event: fallback')).toBeLessThan(text.indexOf('"type":"delta"'));
+    expect(text).toContain('"type":"delta","text":"served by glm"');
+  });
+
   it('uses the Vault Anthropic route while preserving protocol translation', async () => {
     const observed = {};
     const vault = await listen(async (req, res) => {

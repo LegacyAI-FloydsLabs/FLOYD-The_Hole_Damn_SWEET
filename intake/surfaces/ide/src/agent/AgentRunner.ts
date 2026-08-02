@@ -18,6 +18,7 @@ export interface AgentRunnerOptions {
   signal: AbortSignal;
   onDelta?: (text: string) => void;
   onUsage?: (usage: Record<string, number>) => void;
+  onFallback?: (requestedProvider: string, model: string) => void;
   onTool?: (tool: AgentToolCall, phase: 'started' | 'completed' | 'failed') => void;
   validateFinal?: (text: string) => string | null;
 }
@@ -57,6 +58,7 @@ export class AgentRunner {
           for await (const event of options.client.stream(options.routing, { messages: conversation, maxTokens: options.request?.maxTokens || 4096, temperature: options.request?.temperature ?? 0.2 }, controller.signal)) {
             if (event.type === 'delta') { response += event.text; options.onDelta?.(event.text); }
             else if (event.type === 'usage') { usage = event.usage; options.onUsage?.(event.usage); }
+            else if (event.type === 'fallback') options.onFallback?.(event.requestedProvider, event.model);
             else if (event.type === 'error') throw new Error(formatToolError(event));
           }
         } catch (error) {

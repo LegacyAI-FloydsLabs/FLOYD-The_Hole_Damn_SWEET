@@ -80,6 +80,19 @@ export async function createStandaloneHost(options = {}) {
     patchTransactions = createPatchTransactions({ boundary, store: agentStore });
   };
 
+  async function applyWorkspaceRoot(selected) {
+    await boundary.setRoot(selected);
+    debugManager?.setWorkspaceRoot(boundary.root);
+    repositoryContext.setWorkspaceRoot(boundary.root);
+    agentTaskRunner.setWorkspaceRoot(boundary.root);
+    taskDiscovery.setWorkspaceRoot(boundary.root);
+    await mcpManager.setWorkspaceRoot(boundary.root);
+    resetAgentState();
+    const workspace = await describeWorkspace(boundary.root);
+    await options.onWorkspaceChanged?.(boundary.root);
+    return workspace;
+  }
+
   async function handle(req, res) {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -98,14 +111,7 @@ export async function createStandaloneHost(options = {}) {
       if (url.pathname === '/api/platform/workspace/select' && req.method === 'POST') {
         const selected = await chooseWorkspace(boundary.root);
         if (!selected) return sendJson(res, 200, { workspace: null });
-        await boundary.setRoot(selected);
-        debugManager?.setWorkspaceRoot(boundary.root);
-        repositoryContext.setWorkspaceRoot(boundary.root);
-        agentTaskRunner.setWorkspaceRoot(boundary.root);
-        taskDiscovery.setWorkspaceRoot(boundary.root);
-        await mcpManager.setWorkspaceRoot(boundary.root);
-        resetAgentState();
-        return sendJson(res, 200, { workspace: await describeWorkspace(boundary.root) });
+        return sendJson(res, 200, { workspace: await applyWorkspaceRoot(selected) });
       }
       if (url.pathname === '/api/platform/agent' && req.method === 'GET') return sendJson(res, 200, null);
       if (url.pathname === '/api/platform/theme' && req.method === 'GET') return sendJson(res, 200, null);
@@ -352,7 +358,7 @@ export async function createStandaloneHost(options = {}) {
     mcpManager.close();
   }
 
-  return { handle, close, get workspaceRoot() { return boundary.root; } };
+  return { handle, close, setWorkspaceRoot: applyWorkspaceRoot, get workspaceRoot() { return boundary.root; } };
 }
 
 class WorkspaceBoundary {

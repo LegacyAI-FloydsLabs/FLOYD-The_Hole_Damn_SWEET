@@ -6,8 +6,8 @@
  <meta name="apple-mobile-web-app-capable" content="yes">
  <meta name="mobile-web-app-capable" content="yes">
  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
- <meta name="apple-mobile-web-app-title" content="TerminalOne">
- <title>TerminalOne</title>
+ <meta name="apple-mobile-web-app-title" content="Floyd WS Terminal">
+ <title>Floyd WS Terminal</title>
  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
  <link rel="manifest" href="/manifest.json">
  <link rel="apple-touch-icon" href="/icon-180.png">
@@ -341,7 +341,7 @@
 
  <div class="app-shell">
   <header class="terminal-header">
-   <div class="terminal-title">TerminalOne</div>
+   <div class="terminal-title">Floyd WS Terminal</div>
    <div class="terminal-actions">
     <button id="floydBtn" type="button" title="Launch the Floyd coding partner and continue active context">Floyd</button>
     <button id="settingsBtn" type="button" title="Settings">Settings</button>
@@ -1037,6 +1037,9 @@
    const ro = new ResizeObserver(() => scheduleFit());
    ro.observe($('#terminal'));
    addTerminalResource(() => ro.disconnect());
+   // A freshly built terminal must own the keyboard: xterm does not
+   // autofocus on open, and dead-typing traces back to exactly that.
+   term.focus();
   }
 
   function handleServerMessage(msg) {
@@ -1281,7 +1284,7 @@
    $('#themeSelect').value = currentTheme;
    $('#settingsModal').classList.add('open');
   }
-  function closeSettings() { $('#settingsModal').classList.remove('open'); }
+  function closeSettings() { $('#settingsModal').classList.remove('open'); if (term) term.focus(); }
 
   // ── Wire up ──────────────────────────────────────────────────────────────────
   buildThemeOptions();

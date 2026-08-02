@@ -12,6 +12,9 @@ export interface Message {
   content: string;
   timestamp?: number;
   attachments?: Attachment[];
+  /** Set when the Vault served this reply through its GLM fallback: the
+   *  provider that failed and the model that actually answered. */
+  fallback?: { provider: string; model: string | null } | null;
 }
 
 export interface Session {

@@ -9,6 +9,7 @@ export type UnifiedEvent =
   | { type: 'delta'; text: string }
   | { type: 'usage'; usage: Record<string, number> }
   | { type: 'done'; finishReason: string }
+  | { type: 'fallback'; requestedProvider: string; model: string }
   | { type: 'error'; error: unknown };
 export interface SSEFrame { event: string; data: string }
 export const ANTHROPIC_VERSION: string;
