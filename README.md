@@ -3,11 +3,15 @@
 ![FLOYD — The Hole Damn SWEET](assets/hero.jpg)
 
 FLOYD ecosystem monorepo: Floyd Core daemon, FLOYD Frame shell, managed app
-surfaces, SDK, and the OpenCode engine integration.
+surfaces, SDK, and the OpenCode engine integration. One unified workspace —
+TUI, IDE, desktop/multimedia surface, and web terminals inside a single frame,
+with one session that follows you across all of them and any LLM provider
+routed through the Vault.
 
-- Active shell: `apps/frame` (http://floyd.localhost:13030). Legacy cockpit is
+- Active shell: `apps/frame` (http://127.0.0.1:13030). Legacy cockpit is
   quarantined under `quarantine/cockpit` (tests/debug only).
-- Contract and fixed decisions: `FLOYD.md`.
+- Contract and fixed decisions: `FLOYD.md` (read it first — it describes the
+  current machine reality, including the runtime-root gotcha below).
 
 ## Install
 
@@ -20,15 +24,23 @@ cd FLOYD-The_Hole_Damn_SWEET
 npm install
 npm run typecheck        # builds TS project references
 npm test                 # full suite
+```
+
+The runtime root on the workstation is `/Volumes/Storage/FLOYD_RUNTIME`. Any
+manual run needs it exported or the app boots against an empty `~/.floyd`:
+
+```sh
+export FLOYD_RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
 node apps/frame/server/frame-server.mjs   # frame shell on :13030
 ```
 
-Optional persistent services (the only LaunchAgents this repo installs):
-`./scripts/new-world-bootstrap.sh` (idempotent PASS/FAIL adoption of a fresh
-machine) or `npm run core:install` for Floyd Core alone. Provider keys stay in
-the Vault's macOS Keychain storage. Managed applications receive only persistent
-`fv_...` capabilities and loopback Vault addresses; enter or rotate provider
-keys only in the Frame Keys panel.
+Normal operation is via the two persistent LaunchAgents (`com.floyd.frame`,
+`com.floyd.core`) — surfaces then start on demand through the frame, no
+per-surface agents. Fresh-machine adoption: `./scripts/new-world-bootstrap.sh`
+(idempotent PASS/FAIL) or `npm run core:install` for Floyd Core alone.
+Provider keys stay in the Vault's macOS Keychain storage. Managed applications
+receive only persistent `fv_...` capabilities and loopback Vault addresses;
+enter or rotate provider keys only in the Frame Keys panel.
 
 ## Status
 

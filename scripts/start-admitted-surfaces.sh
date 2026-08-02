@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+# SUPERSEDED — 2026-07-31. Do not run.
+#
+# This script installs one LaunchAgent per surface (com.floyd.surface.*) from
+# ops/launchd/*.plist — a directory that no longer exists in this repo. That
+# boot-time supervision generation was retired: surfaces now start ON DEMAND
+# through the frame (POST http://127.0.0.1:13030/api/launch/<id>), which
+# injects each surface's vault capabilities at spawn. Running this script
+# produced the orphaned-duplicate mess where boot agents and frame-spawned
+# copies fought over the same ports without vault env.
+# Kept for archaeology only. See FLOYD.md "How the machine actually runs it".
+
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}
 STATE_DIR="$RUNTIME_ROOT/surfaces"
