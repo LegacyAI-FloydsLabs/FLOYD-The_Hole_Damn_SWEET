@@ -26,11 +26,9 @@ npm run typecheck        # builds TS project references
 npm test                 # full suite
 ```
 
-The runtime root on the workstation is `/Volumes/Storage/FLOYD_RUNTIME`. Any
-manual run needs it exported or the app boots against an empty `~/.floyd`:
+The runtime root defaults to `~/.floyd`. Any manual run can override it:
 
 ```sh
-export FLOYD_RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME
 node apps/frame/server/frame-server.mjs   # frame shell on :13030
 ```
 

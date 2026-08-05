@@ -25,12 +25,9 @@ should be corrected, not obeyed.
 - Two launchd agents own the always-on processes: `com.floyd.frame` (the
   shell, port 13030, plus the vault proxy on 13031) and `com.floyd.core`
   (the durable authority, port 41414, token-gated).
-- **The runtime root on this machine is `/Volumes/Storage/FLOYD_RUNTIME`.**
-  Both agents run with `FLOYD_RUNTIME_ROOT` set to it. The code's built-in
-  default is `~/.floyd`, which on this machine is an empty decoy: anything
-  launched by hand without the env var boots against a blank runtime and
-  looks broken (empty vault, no sessions, missing directories). Before
-  running anything manually: `export FLOYD_RUNTIME_ROOT=/Volumes/Storage/FLOYD_RUNTIME`.
+- **The runtime root defaults to `~/.floyd`.** Both agents run with
+  `FLOYD_RUNTIME_ROOT` set appropriately. The code's built-in default is
+  `~/.floyd`. Override with `FLOYD_RUNTIME_ROOT=/path/to/runtime`.
 - **Surfaces start on demand, not at boot.** The frame spawns them when you
   open them (or via `POST http://127.0.0.1:13030/api/launch/<id>`), injecting
   their vault capabilities at spawn. Do not install per-surface LaunchAgents;
