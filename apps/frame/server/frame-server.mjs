@@ -40,7 +40,7 @@ const REPO_ROOT = resolve(FRAME_DIR, "..", "..");
 // Runtime home (vault, browser profile, tokens): env override or ~/.floyd.
 const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT || join(homedir(), ".floyd");
 const PUBLIC_DIR = join(FRAME_DIR, "public");
-const BACKGROUNDS_DIR = join(FRAME_DIR, "backgrounds");
+const BACKGROUNDS_DIR = join(RUNTIME_ROOT, "backgrounds");
 const REGISTRY_PATH = join(FRAME_DIR, "registry.json");
 const HOST = process.env.FRAME_HOST || "127.0.0.1";
 const PORT = Number(process.env.FRAME_PORT || 13030);
@@ -56,7 +56,7 @@ const PTY_COPY = join(SURFACES, "pty");
 // when installed, whatever launched us in dev). Never prefer a system node:
 // its ABI may not match the surfaces' native modules.
 const NODE_BIN = process.execPath;
-const WRAPPER_DIR = join(FRAME_DIR, "server", "shells");
+const WRAPPER_DIR = join(RUNTIME_ROOT, "shells");
 mkdirSync(WRAPPER_DIR, { recursive: true });
 mkdirSync(BACKGROUNDS_DIR, { recursive: true });
 
@@ -766,7 +766,7 @@ const server = http.createServer(async (req, res) => {
       let body = ""; for await (const c of req) body += c;
       let apps = [];
       try { apps = JSON.parse(body).apps ?? []; } catch {}
-      writeFileSync(join(ROOT, "heartbeat.json"), JSON.stringify({ ts: Date.now(), apps }));
+      writeFileSync(join(RUNTIME_ROOT, "heartbeat.json"), JSON.stringify({ ts: Date.now(), apps }));
       return json(res, 200, { ok: true });
     }
     if (path.startsWith("/api/launch/") && req.method === "POST") {

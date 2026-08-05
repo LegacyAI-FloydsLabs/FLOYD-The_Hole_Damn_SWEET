@@ -85,7 +85,7 @@ def _runtime_root():
     configured = os.environ.get("FLOYD_RUNTIME_ROOT")
     if configured:
         return configured
-    installed = "/Volumes/Storage/FLOYD_RUNTIME"
+    installed = os.environ.get("FLOYD_RUNTIME_ROOT", os.path.expanduser("~/.floyd"))
     return installed if os.path.isdir(installed) else os.path.join(os.path.expanduser("~"), ".floyd")
 
 

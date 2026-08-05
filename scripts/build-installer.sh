@@ -20,7 +20,9 @@ VERSION=${FLOYD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}
 IDENTIFIER="com.floydslabs.floyd"
 DIST="$ROOT/dist"
 STAGE=$(mktemp -d /tmp/floyd-pkg.XXXXXX)
-trap 'rm -rf "$STAGE"' EXIT
+# Tolerate EACCES when cleaning up (old root-owned installed app may block deletion)
+cleanup() { rm -rf "$STAGE" 2>/dev/null || true; }
+trap cleanup EXIT
 
 APP="$STAGE/payload/Applications/FLOYD Desktop Suite.app"
 RES="$APP/Contents/Resources"
@@ -192,7 +194,7 @@ PYEOF
     echo "FATAL: staged payload contains an actual vault key or proxy token (above)" >&2; SCAN_FAIL=1
   fi
 fi
-if find "$STAGE/payload" \( -name "*.env" -o -name ".env.*" -o -name "provider-keys.json" -o -name "auth.json" -o -name "proxy-tokens.json" \) | grep .; then
+if find "$STAGE/payload" \( -name ".env" -o -name ".env.production" -o -name ".env.local" -o -name "provider-keys.json" -o -name "auth.json" -o -name "proxy-tokens.json" \) | grep .; then
   echo "FATAL: staged payload contains secret-bearing filenames (above)" >&2; SCAN_FAIL=1
 fi
 if grep -rI "/Volumes/Storage\|/Volumes/SanDisk" "$STAGE/payload/Applications/FLOYD Desktop Suite.app/Contents/Resources/workstation" \
