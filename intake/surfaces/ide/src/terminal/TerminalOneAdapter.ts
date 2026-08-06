@@ -26,6 +26,9 @@ import type { TerminalRendererTheme } from '@/theme';
 interface SessionState {
   ws: WebSocket | null;
   term: Terminal | null;
+  /** Headless xterm kept per session (never open()ed) so the in-shell CLI can
+   *  read the rendered screen of ANY session, not just the attached one. */
+  buffer: Terminal | null;
   fit: FitAddon | null;
   search: SearchAddon | null;
   sessionId: string | null;
@@ -139,6 +142,10 @@ export class TerminalOneAdapter {
   /** Apply messages shared by fresh, resumed, and reconnected sessions. */
   private applySessionMessage(state: SessionState, msg: TerminalOneMessage): void {
     if (msg.type === 'output' && typeof msg.data === 'string') {
+      // Feed the per-session headless buffer first so CLI screen reads see
+      // output even for sessions that have no attached renderer. A buffer
+      // failure must never block the live output fan-out.
+      try { state.buffer?.write(msg.data); } catch { /* buffer unavailable */ }
       for (const cb of state.outputCallbacks) {
         try { cb(msg.data); } catch {}
       }
@@ -150,6 +157,13 @@ export class TerminalOneAdapter {
     } else if (msg.type === 'error' || msg.type === 'resume-failed') {
       state.status = 'error';
     }
+  }
+
+  /** Create the per-session headless buffer when missing. Never open()ed —
+   *  it exists purely as a queryable screen model for CLI terminal reads. */
+  private ensureBuffer(state: SessionState, cols: number, rows: number): void {
+    if (state.buffer) return;
+    state.buffer = new Terminal({ cols, rows, scrollback: 2000 });
   }
 
   /** Get authorization from Floyd platform gateway (§6). */
@@ -164,14 +178,18 @@ export class TerminalOneAdapter {
   /**
    * Create a new terminal session (§6: "New terminals open in the active Floyd workspace").
    * Returns a session ID. The actual PTY is owned by TerminalOne.
+   * `env` carries allowlisted hook/CLI variables (CURSEM_API, CURSEM_TOKEN, …)
+   * — TerminalOne merges only its allowlist into the PTY env, never arbitrary
+   * caller env.
    */
-  async createSession(cwd: string, cols: number, rows: number): Promise<TerminalOneSession> {
+  async createSession(cwd: string, cols: number, rows: number, env?: Record<string, string>): Promise<TerminalOneSession> {
     const auth = await this.ensureAuth();
 
     const ws = this.openSocket(auth);
     const state: SessionState = {
       ws,
       term: null,
+      buffer: null,
       fit: null,
       search: null,
       sessionId: null,
@@ -187,6 +205,7 @@ export class TerminalOneAdapter {
       resizeElement: null,
       outputHandler: null,
     };
+    this.ensureBuffer(state, cols, rows);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -195,12 +214,17 @@ export class TerminalOneAdapter {
 
       ws.onopen = () => {
         // TerminalOne creates a PTY when it receives the shell message.
-        ws.send(JSON.stringify({
+        const shellMsg: Record<string, unknown> = {
           type: 'shell',
           cols,
           rows,
           cwd,
-        }));
+        };
+        // CURSEM-correlated terminal id + hook env channel (agent-aware terminals).
+        if (auth.terminalId) shellMsg.sessionId = auth.terminalId;
+        const mergedEnv = { ...(auth.terminalEnv ?? {}), ...(env ?? {}) };
+        if (Object.keys(mergedEnv).length > 0) shellMsg.env = mergedEnv;
+        ws.send(JSON.stringify(shellMsg));
       };
 
       ws.onmessage = (ev) => {
@@ -281,6 +305,7 @@ export class TerminalOneAdapter {
             clearTimeout(timeout);
               const state = this.sessions.get(sessionId);
             if (state) {
+              this.ensureBuffer(state, cols, rows);
               state.ws = ws;
               state.cwd = msg.cwd || state.cwd;
               state.canResume = true;
@@ -347,6 +372,7 @@ export class TerminalOneAdapter {
     // Resize handling
     const resizeObserver = new ResizeObserver(() => {
       fit.fit();
+      state.buffer?.resize(term.cols, term.rows);
       if (state.ws?.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({
           type: 'resize',
@@ -437,6 +463,7 @@ export class TerminalOneAdapter {
   /** Resize terminal. */
   resize(sessionId: string, cols: number, rows: number): void {
     const state = this.sessions.get(sessionId);
+    try { state?.buffer?.resize(cols, rows); } catch { /* buffer unavailable */ }
     if (state?.ws?.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     }
@@ -472,6 +499,8 @@ export class TerminalOneAdapter {
     state.term = null;
     state.fit = null;
     state.search = null;
+    try { state.buffer?.dispose(); } catch { /* buffer unavailable */ }
+    state.buffer = null;
     this.sessions.delete(sessionId);
   }
 
@@ -489,6 +518,30 @@ export class TerminalOneAdapter {
     if (!state) return () => {};
     state.exitCallbacks.add(callback);
     return () => { state.exitCallbacks.delete(callback); };
+  }
+
+  /**
+   * Read the rendered screen of any session (alt buffer when a TUI holds it,
+   * else the full normal buffer including scrollback), trailing blank lines
+   * trimmed. Backs the in-shell CLI's `terminal read`. Returns null when the
+   * session is unknown.
+   */
+  readScreen(sessionId: string): string | null {
+    const state = this.sessions.get(sessionId);
+    if (!state?.buffer) return null;
+    const buffer = state.buffer.buffer.active;
+    // xterm v6 exposes text per buffer line; fold wrapped continuation lines
+    // back into their logical line, then trim trailing blanks.
+    const lines: string[] = [];
+    for (let y = 0; y < buffer.length; y++) {
+      const line = buffer.getLine(y);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (line.isWrapped && lines.length > 0) lines[lines.length - 1] += text;
+      else lines.push(text);
+    }
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+    return lines.join('\n');
   }
 
   /** Search in terminal (§6: "search"). */
@@ -539,6 +592,7 @@ export class TerminalOneAdapter {
               state.canResume = true;
               state.status = 'connected';
               if (msg.replay) {
+                try { state.buffer?.write(msg.replay); } catch { /* buffer unavailable */ }
                 state.term?.write(msg.replay);
             }
             resolve();
@@ -603,9 +657,10 @@ export class TerminalOneAdapter {
   /** Register a session internally. */
   registerSession(sessionId: string, cwd: string, status: SessionState['status'] = 'connecting', canResume = false): void {
     if (!this.sessions.has(sessionId)) {
-      this.sessions.set(sessionId, {
+      const state: SessionState = {
         ws: null,
         term: null,
+        buffer: null,
         fit: null,
         search: null,
         sessionId,
@@ -620,7 +675,9 @@ export class TerminalOneAdapter {
         resizeObserver: null,
         resizeElement: null,
         outputHandler: null,
-      });
+      };
+      this.ensureBuffer(state, 120, 40);
+      this.sessions.set(sessionId, state);
     }
   }
 

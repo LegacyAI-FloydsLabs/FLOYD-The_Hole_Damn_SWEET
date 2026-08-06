@@ -27,9 +27,58 @@ describe('foreground Agent tool loop', () => {
     });
     expect(result).toMatchObject({ toolCalls: 1, text: expect.stringContaining('<cursem-patch>') });
     expect(search).toHaveBeenCalledWith('main', 20);
-    expect(gateway.agentAppendEvent).toHaveBeenCalledWith('run-1', 'tool.completed', expect.objectContaining({ name: 'search' }));
+    expect(gateway.agentAppendEvent).toHaveBeenCalledWith('run-1', 'tool_begin', expect.objectContaining({ id: 'find-1', name: 'search' }));
+    expect(gateway.agentAppendEvent).toHaveBeenCalledWith('run-1', 'tool_end', expect.objectContaining({ name: 'search', result: expect.anything() }));
     expect(JSON.stringify(requests[1])).toContain('tool-result');
-    expect(output.join('')).toContain('✓ search');
+    // Structured events replaced the flattened ✓ text ticks.
+    expect(output.join('')).not.toContain('✓ search');
+  });
+
+  it('mirrors structured tool events to the onToolEvent callback', async () => {
+    const gateway = new MockHostGateway();
+    Object.defineProperty(gateway, 'contextSearch', { value: vi.fn(async () => []) });
+    const turns = [
+      response('<cursem-tool>{"id":"s-1","name":"search","arguments":{"query":"main"}}</cursem-tool>'),
+      response('done'),
+    ];
+    const client = { stream: async function* () { for (const event of turns.shift() || []) yield event; } };
+    const events: unknown[] = [];
+    const result = await new AgentRunner().run({
+      gateway, client: client as never, runId: 'run-events', workspaceRoot: '/test/workspace',
+      routing: { providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'test', dialect: 'openai' },
+      messages: [{ role: 'user', content: 'find main' }], signal: new AbortController().signal,
+      onToolEvent: (event) => events.push(event),
+    });
+    expect(result.toolCalls).toBe(1);
+    expect(events).toEqual([
+      { type: 'tool_begin', id: 's-1', name: 'search', args: { query: 'main' } },
+      { type: 'tool_end', id: 's-1', name: 'search', result: [] },
+    ]);
+  });
+
+  it('pauses the loop on <cursem-ask> until the UI resolves the question', async () => {
+    const gateway = new MockHostGateway();
+    gateway.agentAppendEvent = vi.fn(gateway.agentAppendEvent.bind(gateway));
+    const requests: unknown[] = [];
+    const turns = [
+      response('<cursem-ask>{"id":"q-1","method":"select","question":"Which file?","options":["a.ts","b.ts"]}</cursem-ask>'),
+      response('Using a.ts. <cursem-patch>{"changes":[{"path":"a.ts","content":"next"}]}</cursem-patch>'),
+    ];
+    const client = { stream: async function* (_config: unknown, request: unknown) { requests.push(request); for (const event of turns.shift() || []) yield event; } };
+    const asked: unknown[] = [];
+    const result = await new AgentRunner().run({
+      gateway, client: client as never, runId: 'run-ask', workspaceRoot: '/test/workspace',
+      routing: { providerId: 'deepseek', baseUrl: 'http://127.0.0.1:13031/p/deepseek', model: 'test', dialect: 'openai' },
+      messages: [{ role: 'user', content: 'change a file' }], signal: new AbortController().signal,
+      askUser: async (request) => { asked.push(request); return { value: 'a.ts' }; },
+    });
+    expect(asked).toEqual([{ id: 'q-1', method: 'select', question: 'Which file?', options: ['a.ts', 'b.ts'] }]);
+    expect(gateway.agentAppendEvent).toHaveBeenCalledWith('run-ask', 'ask_begin', expect.objectContaining({ id: 'q-1', method: 'select' }));
+    expect(gateway.agentAppendEvent).toHaveBeenCalledWith('run-ask', 'ask_end', { id: 'q-1', response: { value: 'a.ts' } });
+    expect(JSON.stringify(requests[1])).toContain('<ask-response');
+    expect(JSON.stringify(requests[1])).toContain('q-1');
+    expect(JSON.stringify(requests[1])).toContain('a.ts');
+    expect(result.text).toContain('<cursem-patch>');
   });
 
   it('interrupts an active provider stream and resumes with queued steering', async () => {

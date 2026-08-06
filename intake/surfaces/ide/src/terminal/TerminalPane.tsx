@@ -6,6 +6,8 @@ import { TerminalOneAdapter } from './TerminalOneAdapter';
 import { useUIStore } from '@/store/uiStore';
 import { toTerminalTheme } from '@/theme';
 import { fontStack } from '@/font';
+import { registerTerminalSurfaceProvider } from '@/platform/surfaceRegistry';
+import { getControlEnv } from '@/platform/controlExecutor';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -24,6 +26,54 @@ const terminalPaneRuntime: TerminalPaneRuntime = {
   status: 'connecting',
   workspaceRoot: null,
 };
+
+/** Custom event the control executor uses to reach the mounted pane. The
+ *  runtime object above is mutated synchronously (so CLI results reflect
+ *  reality immediately); the event lets the React layer catch up. */
+const TERMINAL_COMMAND_EVENT = 'cursem:terminal-command';
+
+export type TerminalCommand =
+  | { type: 'focus'; id: string }
+  | { type: 'close'; id: string }
+  | { type: 'rename'; id: string; title: string };
+
+function dispatchTerminalCommand(command: TerminalCommand): void {
+  window.dispatchEvent(new CustomEvent<TerminalCommand>(TERMINAL_COMMAND_EVENT, { detail: command }));
+}
+
+// Register the terminal half of the unified surface registry at module load
+// (not on component mount): the adapter and session list live in the module-
+// level runtime, so CLI surface verbs keep working while the terminal panel
+// is hidden. This indirection also keeps controlExecutor free of a static
+// import of this lazily-loaded module.
+registerTerminalSurfaceProvider({
+  list: () => terminalPaneRuntime.sessions.map((session) => ({ id: session.id, title: session.title })),
+  activeId: () => terminalPaneRuntime.activeId,
+  focus: (sessionId) => {
+    if (!terminalPaneRuntime.sessions.some((session) => session.id === sessionId)) return;
+    terminalPaneRuntime.activeId = sessionId;
+    // Reveal the panel if hidden — the mount effect opens runtime.activeId.
+    const ui = useUIStore.getState();
+    if (!ui.terminalVisible) ui.toggleTerminal();
+    dispatchTerminalCommand({ type: 'focus', id: sessionId });
+  },
+  close: (sessionId) => {
+    terminalPaneRuntime.adapter?.killSession(sessionId);
+    const next = terminalPaneRuntime.sessions.filter((session) => session.id !== sessionId);
+    terminalPaneRuntime.sessions = next;
+    if (terminalPaneRuntime.activeId === sessionId) {
+      terminalPaneRuntime.activeId = next.at(-1)?.id ?? null;
+    }
+    dispatchTerminalCommand({ type: 'close', id: sessionId });
+  },
+  rename: (sessionId, title) => {
+    terminalPaneRuntime.sessions = terminalPaneRuntime.sessions.map((session) =>
+      session.id === sessionId ? { ...session, title } : session);
+    dispatchTerminalCommand({ type: 'rename', id: sessionId, title });
+  },
+  sendInput: (sessionId, data) => terminalPaneRuntime.adapter?.sendInput(sessionId, data),
+  readScreen: (sessionId) => terminalPaneRuntime.adapter?.readScreen(sessionId) ?? null,
+});
 
 export function TerminalPane() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -81,7 +131,10 @@ export function TerminalPane() {
     }
     setStatus('connecting');
     try {
-      const session = await adapter.createSession(workspaceRoot, 80, 24);
+      // Inject the in-shell CLI channel (CURSEM_API/CURSEM_TOKEN) when the
+      // control executor has handshaken; TerminalOne stamps CURSEM_TERMINAL_ID
+      // and the CLI bin PATH itself.
+      const session = await adapter.createSession(workspaceRoot, 80, 24, getControlEnv() ?? undefined);
       const nextSessions = [...terminalPaneRuntime.sessions, { ...session, title: `terminal ${terminalPaneRuntime.sessions.length + 1}` }];
       terminalPaneRuntime.sessions = nextSessions;
       setSessions(nextSessions);
@@ -227,6 +280,35 @@ export function TerminalPane() {
       return next;
     });
   };
+
+  // Catch up with control-executor surface commands (focus/close/rename) —
+  // the provider has already mutated terminalPaneRuntime; sync React state.
+  useEffect(() => {
+    const onCommand = (event: Event) => {
+      const command = (event as CustomEvent<TerminalCommand>).detail;
+      if (!command) return;
+      if (command.type === 'focus') {
+        if (terminalPaneRuntime.sessions.some((session) => session.id === command.id)) {
+          void openSession(command.id);
+        }
+        return;
+      }
+      if (command.type === 'close') {
+        const next = terminalPaneRuntime.sessions;
+        setSessions(next);
+        if (activeIdRef.current === command.id) {
+          const replacement = next.at(-1)?.id ?? null;
+          activeIdRef.current = replacement;
+          setActiveId(replacement);
+          if (replacement) requestAnimationFrame(() => attach(replacement));
+        }
+        return;
+      }
+      setSessions([...terminalPaneRuntime.sessions]);
+    };
+    window.addEventListener(TERMINAL_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(TERMINAL_COMMAND_EVENT, onCommand);
+  }, [attach, openSession]);
 
   const reconnect = async () => {
     if (!activeId || !adapterRef.current) return;

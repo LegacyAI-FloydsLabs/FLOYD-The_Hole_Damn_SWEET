@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "cursem-workspace",
+      "name": "cursem-workspace",
+      "description": "First-party CURSEM skill: teaches agents the CURSEM workspace filesystem, agent state, task runner, Git, context, and MCP APIs. Auto-seeded into .cursem/skills.",
+      "tags": ["cursem", "workspace", "api", "first-party"],
+      "format": "skill-md",
+      "source": { "repo": "local", "ref": "", "path": "seed-skills/cursem-workspace" },
+      "provenance": "bundled",
+      "sourceId": "cursem-seed",
+      "firstParty": true
+    },
+    {
+      "id": "floyd-git-steward",
+      "name": "floyd-git-steward",
+      "description": "Guides and, only with explicit authority, executes pre-edit impact analysis, atomic commits, safe pushes, and remote verification for FLOYD_WORKSTATION.",
+      "tags": ["git", "safety", "floyd"],
+      "format": "skill-md",
+      "source": { "repo": "local", "ref": "", "path": ".agents/skills/floyd-git-steward" },
+      "provenance": "local",
+      "sourceId": "local-repo"
+    },
+    {
+      "id": "anthropic-pdf",
+      "name": "pdf",
+      "description": "Comprehensive PDF manipulation toolkit for extracting text and tables, creating new PDFs, merging/splitting documents, and handling forms.",
+      "tags": ["documents", "pdf"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "document-skills/pdf" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-docx",
+      "name": "docx",
+      "description": "Document creation, editing, and analysis for .docx files with tracked changes, comments, and formatting preservation.",
+      "tags": ["documents", "docx"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "document-skills/docx" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-xlsx",
+      "name": "xlsx",
+      "description": "Spreadsheet creation, editing, and analysis with formulas, formatting, data analysis, and visualization for .xlsx/.csv files.",
+      "tags": ["documents", "spreadsheets"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "document-skills/xlsx" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-pptx",
+      "name": "pptx",
+      "description": "Presentation creation, editing, and analysis for .pptx files including layouts, comments, and speaker notes.",
+      "tags": ["documents", "presentations"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "document-skills/pptx" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-skill-creator",
+      "name": "skill-creator",
+      "description": "Guide for creating effective skills — anatomy, progressive disclosure, and bundled resources.",
+      "tags": ["meta", "skills"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "skill-creator" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-mcp-builder",
+      "name": "mcp-builder",
+      "description": "Guide for building high-quality MCP servers in Python (FastMCP) or Node/TypeScript with the MCP SDK.",
+      "tags": ["mcp", "servers"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "mcp-builder" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-artifacts-builder",
+      "name": "artifacts-builder",
+      "description": "Suite of tools for creating elaborate, multi-component HTML artifacts using modern frontend web technologies.",
+      "tags": ["frontend", "artifacts"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "artifacts-builder" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-canvas-design",
+      "name": "canvas-design",
+      "description": "Create beautiful visual art in .png and .pdf documents using design philosophy.",
+      "tags": ["design", "art"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "canvas-design" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-brand-guidelines",
+      "name": "brand-guidelines",
+      "description": "Applies official brand colors and typography to artifacts that benefit from a consistent look-and-feel.",
+      "tags": ["design", "branding"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "brand-guidelines" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-webapp-testing",
+      "name": "webapp-testing",
+      "description": "Toolkit for interacting with and testing local web applications using Playwright.",
+      "tags": ["testing", "playwright"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "webapp-testing" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-frontend-design",
+      "name": "frontend-design",
+      "description": "Create distinctive, production-grade frontend interfaces with high design quality.",
+      "tags": ["frontend", "design"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "frontend-design" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "anthropic-theme-factory",
+      "name": "theme-factory",
+      "description": "Toolkit for styling artifacts with pre-set themes or a generated on-the-fly theme.",
+      "tags": ["design", "themes"],
+      "format": "skill-md",
+      "source": { "repo": "anthropics/skills", "ref": "main", "path": "theme-factory" },
+      "stars": 20000,
+      "provenance": "curated",
+      "sourceId": "anthropics-skills"
+    },
+    {
+      "id": "superpowers-brainstorming",
+      "name": "brainstorming",
+      "description": "Explores user intent, requirements, and design before any creative work or implementation.",
+      "tags": ["process", "planning"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/brainstorming" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    },
+    {
+      "id": "superpowers-tdd",
+      "name": "test-driven-development",
+      "description": "Enforces test-driven development when implementing any feature or bugfix, before writing implementation code.",
+      "tags": ["testing", "tdd"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/test-driven-development" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    },
+    {
+      "id": "superpowers-systematic-debugging",
+      "name": "systematic-debugging",
+      "description": "Four-phase debugging framework — root cause investigation, pattern analysis, hypothesis testing, implementation.",
+      "tags": ["debugging", "process"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/systematic-debugging" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    },
+    {
+      "id": "superpowers-writing-plans",
+      "name": "writing-plans",
+      "description": "Write detailed implementation plans for multi-step tasks before touching code.",
+      "tags": ["planning", "process"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/writing-plans" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    },
+    {
+      "id": "superpowers-requesting-code-review",
+      "name": "requesting-code-review",
+      "description": "Verify work meets requirements with a structured code review before merging.",
+      "tags": ["review", "process"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/requesting-code-review" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    },
+    {
+      "id": "superpowers-using-git-worktrees",
+      "name": "using-git-worktrees",
+      "description": "Create isolated git worktrees with smart directory selection and safety verification.",
+      "tags": ["git", "isolation"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/using-git-worktrees" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    },
+    {
+      "id": "superpowers-verification-before-completion",
+      "name": "verification-before-completion",
+      "description": "Run verification commands and confirm output before making any success claims — evidence before assertions.",
+      "tags": ["verification", "process"],
+      "format": "skill-md",
+      "source": { "repo": "obra/superpowers", "ref": "main", "path": "skills/verification-before-completion" },
+      "stars": 9000,
+      "provenance": "curated",
+      "sourceId": "obra-superpowers"
+    }
+  ]
+}

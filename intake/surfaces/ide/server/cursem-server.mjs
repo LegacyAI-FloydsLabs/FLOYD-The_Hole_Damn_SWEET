@@ -7,6 +7,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleGateway } from './gateway-relay.mjs';
 import { createStandaloneHost } from './standalone-host.mjs';
+import { createControlPlane } from './cursem-control.mjs';
 import { createLspGateway } from './lsp-gateway.mjs';
 import { createDebugManager } from './debug-manager.mjs';
 import { ensureNodePtySpawnHelperExecutable } from './node-pty-runtime.mjs';
@@ -70,6 +71,7 @@ const frameAncestors = (process.env.CURSEM_FRAME_ANCESTORS || '')
 const frameAncestorsDirective = frameAncestors.length ? frameAncestors.join(' ') : "'none'";
 
 let standalone;
+let control = null;
 const coreExperience = createCoreExperience();
 const server = http.createServer(async (req, res) => {
   if (req.url === '/gateway' || req.url?.startsWith('/gateway?')) return handleGateway(req, res, { resolveCredentialProxy });
@@ -138,6 +140,15 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(result));
   }
+  // In-shell CLI control surface (cursem). Registered before the standalone
+  // fallthrough; cursem-control.mjs owns every route under /api/control/.
+  if (req.url?.startsWith('/api/control/')) {
+    if (!control) {
+      res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ error: { code: 'control-starting', message: 'The control plane is still starting.' } }));
+    }
+    return control.handle(req, res);
+  }
   if (req.url?.startsWith('/api/')) return standalone.handle(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { allow: 'GET, HEAD' }); res.end(); return; }
   const pathname = decodeURIComponent(new URL(req.url || '/', 'http://127.0.0.1').pathname);
@@ -162,6 +173,19 @@ standalone = await createStandaloneHost({
   lspManager,
   debugManager,
   onWorkspaceChanged: (root) => coreExperience.publishWorkspace(root).catch(() => undefined),
+  agentHooksOrigin: () => {
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    return `http://127.0.0.1:${port}`;
+  },
+});
+
+// In-shell CLI control plane: bearer-gated invoke endpoint + renderer executor
+// channel. Reads the live workspace root so editor.openFile confinement tracks
+// workspace switches.
+control = createControlPlane({
+  server,
+  getWorkspaceRoot: () => standalone.workspaceRoot,
 });
 
 server.listen(requestedPort, '127.0.0.1', () => {
@@ -199,6 +223,7 @@ const shutdown = () => {
     .catch(() => undefined)
     .finally(() => {
       standalone.close();
+      control?.close();
       terminalChild?.kill('SIGTERM');
       if (parentWatch) clearInterval(parentWatch);
       server.closeAllConnections?.();

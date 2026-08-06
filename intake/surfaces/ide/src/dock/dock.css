@@ -1,0 +1,152 @@
+/* CURSE'M IDE — dock zone styles.
+ *
+ * Zones sit in the shell's flex row (left | center column | right) with the
+ * bottom zone stacked under center. Tab bars reuse the workbench's tab idiom
+ * at a smaller scale. */
+
+.dock-center-column {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dock-zone {
+  position: relative;
+  display: flex;
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.dock-zone-center {
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-canvas);
+}
+
+.dock-zone-handle {
+  position: absolute;
+  z-index: 6;
+}
+
+.dock-zone-handle-left { right: 0; top: 0; bottom: 0; }
+.dock-zone-handle-right { left: 0; top: 0; bottom: 0; }
+.dock-zone-handle-bottom { top: 0; left: 0; right: 0; }
+
+.dock-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dock-split-horizontal { flex-direction: row; }
+.dock-split-vertical { flex-direction: column; }
+
+.dock-split-child {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dock-stack {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dock-stack-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dock-tab-bar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 30px;
+  padding: 3px 4px 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.dock-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 0 4px 0 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.dock-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.dock-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border-color: var(--border);
+}
+
+.dock-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-tab-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.dock-tab:hover .dock-tab-close,
+.dock-tab.active .dock-tab-close {
+  opacity: 1;
+}
+
+.dock-tab-close:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.dock-drop-highlight {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  border: 2px solid var(--cyan);
+  border-radius: 4px;
+  background: var(--cyan-soft);
+}

@@ -85,6 +85,7 @@ export interface HostGateway {
   agentListThreads(): Promise<AgentThread[]>;
   agentCreateThread(title: string): Promise<AgentThread>;
   agentGetThread(id: string): Promise<AgentThread>;
+  agentDeleteThread(id: string): Promise<void>;
   agentAddMessage(threadId: string, role: AgentMessage['role'], content: string, metadata?: Record<string, unknown>): Promise<AgentMessage>;
   agentCreateRun(threadId: string, provider: string, model: string): Promise<AgentRun>;
   agentGetRun(id: string): Promise<AgentRun>;
@@ -309,6 +310,10 @@ export class HttpHostGateway implements HostGateway {
 
   async agentGetThread(id: string): Promise<AgentThread> {
     return this.api<AgentThread>(`/api/agent/thread?id=${encodeURIComponent(id)}`);
+  }
+
+  async agentDeleteThread(id: string): Promise<void> {
+    await this.api<{ ok: boolean }>(`/api/agent/thread?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   async agentAddMessage(threadId: string, role: AgentMessage['role'], content: string, metadata: Record<string, unknown> = {}): Promise<AgentMessage> {
@@ -815,6 +820,7 @@ export class MockHostGateway implements HostGateway {
   async getTheme() { return null; }
   async agentListThreads() { return []; }
   async agentCreateThread(title: string) { return { id: 'thread-1', title, createdAt: Date.now(), updatedAt: Date.now() }; }
+  async agentDeleteThread(_id: string) { /* mock: nothing to delete */ }
   async agentGetThread(id: string) { return { id, title: 'Test', createdAt: Date.now(), updatedAt: Date.now(), messages: [], runs: [] }; }
   async agentAddMessage(threadId: string, role: AgentMessage['role'], content: string, metadata = {}) { return { id: 'message-1', threadId, role, content, metadata, createdAt: Date.now() }; }
   async agentCreateRun(threadId: string, provider: string, model: string) { return { id: 'run-1', threadId, status: 'running' as const, provider, model, startedAt: Date.now(), updatedAt: Date.now(), summary: {} }; }

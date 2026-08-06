@@ -1,0 +1,158 @@
+/* CURSE'M IDE — canvas surface styles.
+ *
+ * The viewport clips (never scrolls); the world layer is transformed
+ * imperatively by CanvasView. Nodes are plain absolutely-positioned
+ * elements inside the world layer, sized in world coordinates. */
+
+.canvas-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: clip;
+  background: var(--bg-canvas);
+  touch-action: none;
+  user-select: none;
+}
+
+.canvas-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.canvas-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.canvas-viewport.gesturing .canvas-world {
+  will-change: transform;
+}
+
+.canvas-empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.canvas-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.canvas-node.focused {
+  border-color: var(--accent);
+}
+
+.canvas-node.selected {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
+}
+
+.canvas-node-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.canvas-node-titlebar:active {
+  cursor: grabbing;
+}
+
+.canvas-node-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.canvas-node-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.canvas-node-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.canvas-node-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-node-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+.canvas-node-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--border-strong);
+  border-bottom: 2px solid var(--border-strong);
+}
+
+/* PanelHost fills whatever container (dock tab or canvas node) hosts it. */
+.panel-host {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-host > * {
+  flex: 1;
+  min-height: 0;
+}

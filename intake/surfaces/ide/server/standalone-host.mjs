@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import {
   mkdir,
@@ -18,8 +19,10 @@ import { createPatchTransactions } from './patch-transactions.mjs';
 import { createRepositoryContext } from './repository-context.mjs';
 import { createAgentTaskRunner } from './agent-task-runner.mjs';
 import { createMcpManager } from './mcp-manager.mjs';
+import { createSkillsManager } from './skills-manager.mjs';
 import { createMigrationService } from './migration-service.mjs';
 import { createTaskDiscovery } from './task-discovery.mjs';
+import { createAgentHooksCapability, MAX_HOOK_BODY_BYTES } from './agent-hooks.mjs';
 
 const execFileAsync = promisify(execFile);
 const MAX_BODY_BYTES = 512 * 1024 * 1024;
@@ -74,8 +77,45 @@ export async function createStandaloneHost(options = {}) {
   const repositoryContext = options.repositoryContext || createRepositoryContext({ workspaceRoot: boundary.root });
   const agentTaskRunner = options.agentTaskRunner || createAgentTaskRunner({ workspaceRoot: boundary.root });
   const mcpManager = options.mcpManager || createMcpManager({ workspaceRoot: boundary.root });
+  // Skills registry (feature map embedded-agent-skills S12–S15): catalog,
+  // install/uninstall into target directory conventions, the .cursem/skills.json
+  // ledger, and first-party seeding — all writes confined by the boundary.
+  const skillsManager = options.skillsManager || createSkillsManager({ boundary });
+  if (!options.skillsManager) {
+    try { await skillsManager.seed(); }
+    catch (error) { console.warn(`[skills] first-party seed skipped: ${error instanceof Error ? error.message : error}`); }
+  }
   const migrationService = options.migrationService || createMigrationService();
   const taskDiscovery = options.taskDiscovery || createTaskDiscovery({ workspaceRoot: boundary.root });
+
+  // Agent-aware terminals (feature map agent-aware-terminals): hook ingestion,
+  // workspace injection, per-terminal HMAC tokens, hook-anchored presence, and
+  // session stamps. Ingestion rides THIS listener (no new port binds); the
+  // endpoint URL planted in PTY env resolves lazily through originFor because
+  // the cursem-server port is only known after listen().
+  const agentHooksClients = new Set();
+  const pushAgentHooksEvent = (payload) => {
+    const frame = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const client of agentHooksClients) {
+      if (!client.destroyed && !client.writableEnded) client.write(frame);
+    }
+  };
+  const agentHooks = options.agentHooks || createAgentHooksCapability({
+    originFor: options.agentHooksOrigin,
+    hooksDir: options.agentHooksDir,
+    home: options.agentHooksHome,
+    // Stamps persist in the per-workspace SQLite store; delegate through a
+    // closure because resetAgentState() swaps the store on workspace change.
+    stamps: {
+      get: (terminalId) => agentStore.getAgentStamp(terminalId),
+      set: (stamp) => agentStore.setAgentStamp(stamp),
+      delete: (terminalId) => agentStore.deleteAgentStamp(terminalId),
+      list: () => agentStore.listAgentStamps(),
+    },
+    onEvent: (event) => pushAgentHooksEvent({ type: 'hook', event }),
+    onPresence: (terminalId, present, agentName) => pushAgentHooksEvent({ type: 'presence', terminalId, present, agentName }),
+    onStamp: (terminalId, stamp) => pushAgentHooksEvent({ type: 'stamp', terminalId, stamp }),
+  });
 
   // Boot-background handoff (feature map unified-theme-system S9.2): the
   // renderer publishes the resolved first-paint color after every theme
@@ -123,6 +163,7 @@ export async function createStandaloneHost(options = {}) {
     agentTaskRunner.setWorkspaceRoot(boundary.root);
     taskDiscovery.setWorkspaceRoot(boundary.root);
     await mcpManager.setWorkspaceRoot(boundary.root);
+    await skillsManager.setWorkspaceRoot(boundary.root);
     resetAgentState();
     const workspace = await describeWorkspace(boundary.root);
     await options.onWorkspaceChanged?.(boundary.root);
@@ -171,6 +212,11 @@ export async function createStandaloneHost(options = {}) {
         const thread = agentStore.getThread(requiredQuery(url, 'id'));
         if (!thread) throw new HttpError(404, 'Thread not found.');
         return sendJson(res, 200, thread);
+      }
+      if (url.pathname === '/api/agent/thread' && req.method === 'DELETE') {
+        const removed = agentStore.deleteThread(requiredQuery(url, 'id'));
+        if (!removed) throw new HttpError(404, 'Thread not found.');
+        return sendJson(res, 200, { ok: true });
       }
       if (url.pathname === '/api/agent/messages' && req.method === 'POST') {
         const body = await readJson(req);
@@ -258,6 +304,27 @@ export async function createStandaloneHost(options = {}) {
         return sendJson(res, 200, await migrationService.preview(requiredQuery(url, 'source')));
       }
       if (url.pathname === '/api/tasks' && req.method === 'GET') return sendJson(res, 200, { tasks: await taskDiscovery.list() });
+
+      if (url.pathname === '/api/skills/index' && req.method === 'GET') {
+        return sendJson(res, 200, await skillsManager.index({ refresh: url.searchParams.get('refresh') === '1' }));
+      }
+      if (url.pathname === '/api/skills/preview' && req.method === 'GET') {
+        return sendJson(res, 200, await skillsManager.preview(requiredQuery(url, 'id')));
+      }
+      if (url.pathname === '/api/skills/install' && req.method === 'POST') {
+        const body = await readJson(req);
+        return sendJson(res, 200, await skillsManager.install({ entry: body.entry, targetId: body.targetId }));
+      }
+      if (url.pathname === '/api/skills/uninstall' && req.method === 'POST') {
+        const body = await readJson(req);
+        return sendJson(res, 200, await skillsManager.uninstall({ slug: body.slug, target: body.target }));
+      }
+      if (url.pathname === '/api/skills/installed' && req.method === 'GET') {
+        return sendJson(res, 200, await skillsManager.installed());
+      }
+      if (url.pathname === '/api/skills/targets' && req.method === 'GET') {
+        return sendJson(res, 200, { targets: skillsManager.targets() });
+      }
 
       if (url.pathname === '/api/fs/read' && req.method === 'GET') {
         const target = await boundary.existing(requiredQuery(url, 'path'));
@@ -361,7 +428,54 @@ export async function createStandaloneHost(options = {}) {
 
       if (url.pathname === '/api/terminal/auth' && req.method === 'GET') {
         if (!terminalEndpoint || !terminalToken) throw new HttpError(503, 'The local TerminalOne service is not running.');
-        return sendJson(res, 200, { endpoint: terminalEndpoint, token: terminalToken, expiresAt: Date.now() + 300_000 });
+        const terminalId = agentHooks ? randomUUID() : null;
+        const hookEnv = terminalId ? await agentHooks.envForPty(terminalId, boundary.root, {}) : null;
+        return sendJson(res, 200, {
+          endpoint: terminalEndpoint,
+          token: terminalToken,
+          expiresAt: Date.now() + 300_000,
+          ...(terminalId ? { terminalId } : {}),
+          ...(hookEnv?.terminalEnv ? { terminalEnv: hookEnv.terminalEnv } : {}),
+        });
+      }
+
+      if (url.pathname === '/api/agent-hooks/hook' && req.method === 'POST') {
+        if (!agentHooks) throw new HttpError(503, 'Agent hooks are not enabled.');
+        const body = JSON.parse((await readBoundedBody(req, MAX_HOOK_BODY_BYTES)).toString('utf8') || '{}');
+        const result = await agentHooks.handleHookPost(body, req.headers.authorization || '');
+        return sendJson(res, result.status, result.event ? { event: result.event } : {});
+      }
+      if (url.pathname === '/api/agent-hooks/events' && req.method === 'GET') {
+        if (!agentHooks) throw new HttpError(503, 'Agent hooks are not enabled.');
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        });
+        const write = (data) => { if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+        write({ type: 'presence', snapshot: agentHooks.presenceSnapshot() });
+        write({ type: 'stamps', snapshot: agentHooks.listStamps() });
+        agentHooksClients.add(res);
+        const cleanup = () => agentHooksClients.delete(res);
+        req.once('close', cleanup);
+        res.once('close', cleanup);
+        req.once('error', cleanup);
+        return;
+      }
+      if (url.pathname === '/api/agent-hooks/stamps' && req.method === 'GET') {
+        if (!agentHooks) throw new HttpError(503, 'Agent hooks are not enabled.');
+        return sendJson(res, 200, { stamps: agentHooks.listStamps() });
+      }
+      if (url.pathname === '/api/agent-hooks/presence' && req.method === 'GET') {
+        if (!agentHooks) throw new HttpError(503, 'Agent hooks are not enabled.');
+        return sendJson(res, 200, { presence: agentHooks.presenceSnapshot() });
+      }
+      if (url.pathname === '/api/agent-hooks/claim' && req.method === 'POST') {
+        if (!agentHooks) throw new HttpError(503, 'Agent hooks are not enabled.');
+        const body = await readJson(req);
+        const stamp = agentHooks.claimStamp(body.cwd);
+        return sendJson(res, 200, { stamp });
       }
 
       if (url.pathname === '/api/lsp/servers' && req.method === 'GET') {
@@ -411,9 +525,16 @@ export async function createStandaloneHost(options = {}) {
     agentStore.close();
     repositoryContext.close();
     mcpManager.close();
+    agentHooks?.dispose();
   }
 
-  return { handle, close, setWorkspaceRoot: applyWorkspaceRoot, get workspaceRoot() { return boundary.root; } };
+  return {
+    handle,
+    close,
+    setWorkspaceRoot: applyWorkspaceRoot,
+    get workspaceRoot() { return boundary.root; },
+    get agentStore() { return agentStore; },
+  };
 }
 
 class WorkspaceBoundary {
@@ -723,6 +844,18 @@ async function readJson(req) {
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
   catch { throw new HttpError(400, 'Request body must be valid JSON.'); }
+}
+
+async function readBoundedBody(req, limit) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.byteLength;
+    if (total > limit) throw new HttpError(413, `Body exceeds ${limit} bytes.`);
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 function sendJson(res, status, payload) {

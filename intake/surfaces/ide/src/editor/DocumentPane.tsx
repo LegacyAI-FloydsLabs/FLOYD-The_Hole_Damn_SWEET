@@ -3,16 +3,18 @@
 // generic binary) inside the existing editor tab system. Byte sniffing
 // overrides the extension-derived type so misnamed files still render.
 //
-// The image viewer uses a Blob URL (CSP allows img-src blob:). PDF (pdf.js)
-// and DOCX (mammoth) rendering require runtime dependencies that are not
-// installed in this build; those types get a clean unsupported state with a
-// download affordance instead of mojibake in Monaco.
+// The image viewer uses a Blob URL (CSP allows img-src blob:). PDF and DOCX
+// render through PdfViewer (pdf.js) and DocxViewer (mammoth); both libraries
+// are lazy-loaded inside the viewers so they stay in async chunks. Only a
+// generic binary with no viewer gets the unsupported state.
 // =============================================================================
 
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/Icon';
 import { useWorkspace } from '@/workspace';
 import { detectTypeFromBytes, getDocumentType, type DocumentType } from './fileRouting';
+import { PdfViewer } from './PdfViewer';
+import { DocxViewer } from './DocxViewer';
 import type { BinaryFile } from '@/platform';
 
 interface LoadedDocument {
@@ -46,13 +48,11 @@ function ImageViewer({ file, mimeType }: { file: BinaryFile; mimeType: string })
   );
 }
 
-const UNSUPPORTED_COPY: Record<Exclude<DocumentType, 'image'>, { title: string; detail: string }> = {
-  pdf: { title: 'PDF document', detail: 'PDF preview needs the pdf.js renderer, which is not bundled in this build.' },
-  docx: { title: 'Word document', detail: 'DOCX preview needs the mammoth converter, which is not bundled in this build.' },
+const UNSUPPORTED_COPY: Record<'binary', { title: string; detail: string }> = {
   binary: { title: 'Binary file', detail: 'This file is not text and has no viewer.' },
 };
 
-function UnsupportedViewer({ file, documentType }: { file: BinaryFile; documentType: Exclude<DocumentType, 'image'> }) {
+function UnsupportedViewer({ file, documentType }: { file: BinaryFile; documentType: 'binary' }) {
   const url = useObjectUrl(file.data, file.mime);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   const copy = UNSUPPORTED_COPY[documentType];
@@ -125,9 +125,10 @@ export function DocumentPane({ path }: { path: string }) {
   const { file, documentType, mimeType } = state.document;
   return (
     <div className="document-pane">
-      {documentType === 'image'
-        ? <ImageViewer file={file} mimeType={mimeType} />
-        : <UnsupportedViewer file={file} documentType={documentType} />}
+      {documentType === 'image' && <ImageViewer file={file} mimeType={mimeType} />}
+      {documentType === 'pdf' && <PdfViewer file={file} />}
+      {documentType === 'docx' && <DocxViewer file={file} />}
+      {documentType === 'binary' && <UnsupportedViewer file={file} documentType={documentType} />}
     </div>
   );
 }

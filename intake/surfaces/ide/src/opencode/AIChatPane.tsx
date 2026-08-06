@@ -15,16 +15,16 @@ import {
 } from '@/model-routing';
 import { useEditorStore } from '@/store/editorStore';
 import { useUIStore } from '@/store/uiStore';
-import { AgentRunner, parseAgentPatch, parseContextSelectors } from '@/agent';
-import type { AgentCheckpoint, AgentMemory, AgentPatchChange, AgentPatchPreview, AgentThread } from '@/platform';
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  pending?: boolean;
-  fallback?: { requestedProvider: string; model: string };
-}
+import {
+  DRAFT_THREAD_KEY,
+  useChatStore,
+  type ChatMessage,
+  type PlanState,
+  type ThreadChatSlice,
+} from '@/store/chatStore';
+import { AgentRunner, fetchInstalledSkillsPrompt, parseAgentPatch, parseAgentPlan, parseContextSelectors, type AgentAskResponse } from '@/agent';
+import { AskUserCard, ChatMessageRow, PlanCard, SessionSidebar, ToolCard } from '@/components/chat';
+import type { AgentCheckpoint, AgentMemory, AgentPatchChange, AgentPatchPreview } from '@/platform';
 
 interface PendingProposal {
   preview: AgentPatchPreview;
@@ -39,6 +39,8 @@ interface ModelOption {
   id: string;
   name: string;
 }
+
+const EMPTY_SLICE: ThreadChatSlice = { messages: [], running: false, streamingPhase: null, usage: null, toolCalls: [], pendingRequest: null, plan: null };
 
 // Ecosystem policy: GLM (zai) is the default route whenever the user has no
 // persisted provider+model selection of their own.
@@ -57,9 +59,12 @@ You may inspect and verify the workspace by requesting exactly one tool at a tim
 - rules {path?}: applied and available repository instructions
 - run_task {executable,args,cwd?,timeoutMs?}: an approved no-shell task; allowed executables are node/npm/npx/pnpm/yarn/bun/git/rg/tsc/vite/vitest/pytest/python3/cargo/rustc/go/make
 - mcp {server,tool,arguments}: call a connected MCP tool after explicit approval
-Observe every tool result before deciding the next action. Use run_task to verify relevant work. Never claim a command passed unless its result has exitCode 0.`;
+Observe every tool result before deciding the next action. Use run_task to verify relevant work. Never claim a command passed unless its result has exitCode 0.
+If you need a decision or missing information from the user to proceed, emit exactly one <cursem-ask>{"id":"unique-id","method":"select|confirm|input","question":"...","options":["choice A","choice B"]}</cursem-ask> envelope (options only for select) and stop; CURSEM will present the question and return the answer as an <ask-response>.`;
 const AGENT_INSTRUCTIONS = `
 The user selected Agent mode. Work autonomously but visibly until you have enough evidence to answer or propose a change.`;
+const PLAN_INSTRUCTIONS = `
+The user enabled Plan mode. Work READ-ONLY: use tools to inspect and verify, but never emit <cursem-patch> and never modify files. When the investigation is complete, respond with exactly one <cursem-plan>{"summary":"one-paragraph plan summary","steps":["step 1","step 2"]}</cursem-plan> JSON envelope, then stop. The user reviews the plan before any implementation happens.`;
 const MAX_CONTEXT_CHARS = 32 * 1024;
 const MAX_HISTORY_CHARS = 24 * 1024;
 
@@ -69,24 +74,29 @@ export function buildSystemPrompt({
   activeTabPath,
   providerLabel,
   model,
+  planMode = false,
+  skillsPrompt = '',
 }: {
   mode: 'ask' | 'edit' | 'agent';
   workspaceRoot: string;
   activeTabPath: string | null;
   providerLabel: string;
   model: string;
+  planMode?: boolean;
+  skillsPrompt?: string;
 }): string {
   const ideContext = `
 
 <ide_context>
 Workspace root: ${workspaceRoot}
 Active file: ${activeTabPath || 'none'}
-Mode: ${mode}
+Mode: ${planMode ? 'plan' : mode}
 Selected provider/model: ${providerLabel} / ${model}
 </ide_context>`;
-  if (mode === 'agent') return `${SYSTEM_PROMPT}${ideContext}${AGENT_INSTRUCTIONS}${TOOL_INSTRUCTIONS}${EDIT_INSTRUCTIONS}`;
-  if (mode === 'edit') return `${SYSTEM_PROMPT}${ideContext}\nThe user selected Edit mode. Inspect the workspace as needed, then produce the requested change.${TOOL_INSTRUCTIONS}${EDIT_INSTRUCTIONS}`;
-  return `${SYSTEM_PROMPT}${ideContext}`;
+  if (planMode && mode !== 'ask') return `${SYSTEM_PROMPT}${ideContext}${AGENT_INSTRUCTIONS}${TOOL_INSTRUCTIONS}${PLAN_INSTRUCTIONS}${skillsPrompt}`;
+  if (mode === 'agent') return `${SYSTEM_PROMPT}${ideContext}${AGENT_INSTRUCTIONS}${TOOL_INSTRUCTIONS}${EDIT_INSTRUCTIONS}${skillsPrompt}`;
+  if (mode === 'edit') return `${SYSTEM_PROMPT}${ideContext}\nThe user selected Edit mode. Inspect the workspace as needed, then produce the requested change.${TOOL_INSTRUCTIONS}${EDIT_INSTRUCTIONS}${skillsPrompt}`;
+  return `${SYSTEM_PROMPT}${ideContext}${skillsPrompt}`;
 }
 
 export function selectConversationHistory(messages: ChatMessage[], maxChars = MAX_HISTORY_CHARS): ConversationMessage[] {
@@ -123,6 +133,14 @@ export function AIChatPane() {
   const persistedProviderId = useUIStore((state) => state.aiProviderId);
   const persistedModel = useUIStore((state) => state.aiModel);
   const setAIModelSelection = useUIStore((state) => state.setAIModelSelection);
+  const activeKey = useChatStore((state) => state.activeKey);
+  const slice = useChatStore((state) => state.slices[state.activeKey]) || EMPTY_SLICE;
+  const runningKey = useChatStore((state) => state.runningKey);
+  const threads = useChatStore((state) => state.threads);
+  const threadId = activeKey === DRAFT_THREAD_KEY ? null : activeKey;
+  const sending = slice.running;
+  const requestPhase = slice.streamingPhase;
+  const usage = slice.usage;
   const client = useMemo(() => new PolicyModelClient(), []);
   const [vaultProviders, setVaultProviders] = useState<ProviderOption[]>([]);
   const [vaultReady, setVaultReady] = useState(false);
@@ -137,29 +155,25 @@ export function AIChatPane() {
   const [draftSyncReady, setDraftSyncReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [includeContext, setIncludeContext] = useState(true);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [usage, setUsage] = useState<Record<string, number> | null>(null);
   const [mode, setMode] = useState<'ask' | 'edit' | 'agent'>('ask');
+  const [planMode, setPlanMode] = useState(false);
   const [proposal, setProposal] = useState<PendingProposal | null>(null);
   const [checkpoint, setCheckpoint] = useState<AgentCheckpoint | null>(null);
-  const [threads, setThreads] = useState<AgentThread[]>([]);
-  const [threadId, setThreadId] = useState<string | null>(null);
   const [contextDisclosure, setContextDisclosure] = useState<{ items: Array<{ path: string; reason: string; chars: number }>; rules: string[]; totalChars: number } | null>(null);
   const [memories, setMemories] = useState<AgentMemory[]>([]);
   const [memoryDraft, setMemoryDraft] = useState('');
   const [inlineCompletionEnabled, setInlineCompletionEnabled] = useState(true);
   const [routingPolicy, setRoutingPolicy] = useState<RoutingPolicy>('manual');
   const [routingDecision, setRoutingDecision] = useState<string>('Manual provider selection');
-  const [requestPhase, setRequestPhase] = useState<'preparing' | 'connecting' | 'streaming' | null>(null);
   const [requestElapsedMs, setRequestElapsedMs] = useState(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const requestStartedAtRef = useRef(0);
-  const threadIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const runnerRef = useRef<AgentRunner | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const askResolveRef = useRef<((response: AgentAskResponse) => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // True while the visible model is only a seed (first run or a re-seeded
   // provider), so the first live entry replaces the static default.
@@ -328,7 +342,7 @@ export function AIChatPane() {
     let cancelled = false;
     void Promise.all([gateway.agentListThreads(), gateway.agentListCheckpoints(), gateway.agentListMemories()]).then(async ([available, checkpoints, savedMemories]) => {
       if (cancelled) return;
-      setThreads(available);
+      useChatStore.getState().setThreads(available);
       setCheckpoint(checkpoints[0] || null);
       setMemories(savedMemories);
     }).catch((error) => !cancelled && setLastError(formatClientError(error)));
@@ -336,7 +350,7 @@ export function AIChatPane() {
   }, [gateway]);
   useEffect(() => {
     if (typeof messagesEndRef.current?.scrollIntoView === 'function') messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [slice.messages]);
 
   const changeProvider = useCallback((next: ProviderId) => {
     const provider = vaultProviders.find((candidate) => candidate.id === next);
@@ -352,73 +366,116 @@ export function AIChatPane() {
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    // Release a runner paused on <cursem-ask> so the run unwinds as cancelled.
+    askResolveRef.current?.({ cancelled: true });
+    askResolveRef.current = null;
+    const state = useChatStore.getState();
+    if (state.activeKey !== DRAFT_THREAD_KEY || state.slices[state.activeKey]?.pendingRequest) {
+      state.setPendingRequest(state.activeKey, null);
+    }
   }, []);
 
   const steer = useCallback(() => {
     const message = input.trim();
     if (!message || !runnerRef.current || !activeRunIdRef.current) return;
     runnerRef.current.steer(message);
-    setMessages((current) => [...current, { id: newId(), role: 'user', content: `Steer: ${message}` }]);
+    const state = useChatStore.getState();
+    state.appendMessage(state.activeKey, { id: newId(), role: 'user', content: `Steer: ${message}` });
     setInput('');
-    const currentThread = threadIdRef.current;
-    if (currentThread) void gateway.agentAddMessage(currentThread, 'user', message, { steering: true, runId: activeRunIdRef.current }).catch(() => undefined);
+    const currentThread = state.activeKey;
+    if (currentThread !== DRAFT_THREAD_KEY) void gateway.agentAddMessage(currentThread, 'user', message, { steering: true, runId: activeRunIdRef.current }).catch(() => undefined);
     void gateway.agentAppendEvent(activeRunIdRef.current, 'run.steered', { message }).catch(() => undefined);
   }, [gateway, input]);
 
   const ensureThread = useCallback(async (title: string) => {
-    if (threadIdRef.current) return threadIdRef.current;
+    const state = useChatStore.getState();
+    if (state.activeKey !== DRAFT_THREAD_KEY) return state.activeKey;
     const thread = await gateway.agentCreateThread(title.slice(0, 80));
-    threadIdRef.current = thread.id;
-    setThreadId(thread.id);
-    setThreads((current) => [thread, ...current]);
+    state.upsertThread(thread);
+    state.migrateKey(DRAFT_THREAD_KEY, thread.id);
     return thread.id;
   }, [gateway]);
 
   const openThread = useCallback(async (id: string) => {
-    if (sending || !id) return;
+    if (useChatStore.getState().runningKey || !id) return;
     const thread = await gateway.agentGetThread(id);
-    threadIdRef.current = id;
-    setThreadId(id);
-    setMessages((thread.messages || []).filter((message) => message.role === 'user' || message.role === 'assistant').map((message) => ({ id: message.id, role: message.role as 'user' | 'assistant', content: message.content })));
+    const messages: ChatMessage[] = (thread.messages || [])
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({ id: message.id, role: message.role as 'user' | 'assistant', content: message.content }));
+    // Historical plan cards render read-only: the plan was consumed (or
+    // abandoned) in a past session and can never be acted on twice.
+    let plan: PlanState | null = null;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role !== 'assistant') continue;
+      try {
+        const parsed = parseAgentPlan(messages[index].content);
+        if (parsed) { plan = { ...parsed, locked: true }; break; }
+      } catch { /* malformed historical envelopes are display-only */ }
+    }
+    const state = useChatStore.getState();
+    state.loadThread(id, messages, plan);
+    state.setActiveKey(id);
     setProposal(null);
     setLastError(null);
-  }, [gateway, sending]);
+  }, [gateway]);
 
   const newThread = useCallback(async () => {
     stop();
-    threadIdRef.current = null;
-    setThreadId(null);
-    setMessages([]);
+    const state = useChatStore.getState();
+    state.loadThread(DRAFT_THREAD_KEY, []);
+    state.setActiveKey(DRAFT_THREAD_KEY);
     setProposal(null);
     setLastError(null);
   }, [stop]);
 
-  const send = useCallback(async () => {
-    const prompt = input.trim();
+  const deleteThread = useCallback((id: string) => {
+    const state = useChatStore.getState();
+    const wasActive = state.activeKey === id;
+    void gateway.agentDeleteThread(id).then(() => {
+      state.hideThread(id);
+      if (wasActive) void newThread();
+      addToast('Conversation deleted.', 'info');
+    }).catch(() => {
+      addToast('Could not delete the conversation on the server.', 'error');
+    });
+  }, [addToast, gateway, newThread]);
+
+  const send = useCallback(async (overridePrompt?: string) => {
+    const prompt = (overridePrompt ?? input).trim();
     if (!prompt || sending || !vaultReady) return;
+    const state = useChatStore.getState();
+    const draftKey = state.activeKey;
+    const historySource = [...(state.slices[draftKey]?.messages || [])];
     const controller = new AbortController();
     abortRef.current = controller;
     requestStartedAtRef.current = performance.now();
     setRequestElapsedMs(0);
-    setRequestPhase('preparing');
-    setSending(true);
+    state.setPhase(draftKey, 'preparing');
+    state.setRunning(draftKey, true);
     setLastError(null);
-    setUsage(null);
+    state.setUsage(draftKey, null);
     setContextDisclosure(null);
     setProposal(null);
     const userMessage: ChatMessage = { id: newId(), role: 'user', content: prompt };
     const assistantId = newId();
     let activeRunId: string | null = null;
-    setMessages((current) => [...current, userMessage, { id: assistantId, role: 'assistant', content: '', pending: true }]);
+    let sliceKey = draftKey;
+    state.appendMessage(draftKey, userMessage);
+    state.appendMessage(draftKey, { id: assistantId, role: 'assistant', content: '', pending: true });
     setInput('');
+
+    // Plan mode forces the autonomous tool loop even from Ask mode, but with
+    // read-only plan instructions instead of the patch protocol.
+    const effectiveMode: 'ask' | 'edit' | 'agent' = planMode && mode === 'ask' ? 'agent' : mode;
 
     try {
       const activeThreadId = await ensureThread(prompt);
-      await gateway.agentAddMessage(activeThreadId, 'user', prompt, { mode, activeTabPath });
+      sliceKey = activeThreadId;
+      await gateway.agentAddMessage(activeThreadId, 'user', prompt, { mode: planMode ? 'plan' : mode, activeTabPath });
       const run = await gateway.agentCreateRun(activeThreadId, providerId, model);
       activeRunId = run.id;
       activeRunIdRef.current = run.id;
-      await gateway.agentAppendEvent(run.id, 'model.requested', { providerId, model, mode, activeTabPath, dialect: resolvedDialect });
+      await gateway.agentAppendEvent(run.id, 'model.requested', { providerId, model, mode: planMode ? 'plan' : mode, activeTabPath, dialect: resolvedDialect });
       let contextBlock = '';
       let activeContextChars = 0;
       if (includeContext && activeTabPath) {
@@ -470,15 +527,22 @@ export function AIChatPane() {
         });
       }
 
+      // Skills installed into the workspace's .cursem/skills target are
+      // appended to the system prompt; any failure yields no injection.
+      const skillsPrompt = await fetchInstalledSkillsPrompt();
+
+      const store = useChatStore.getState();
       const conversation: ConversationMessage[] = [
         { role: 'system', content: buildSystemPrompt({
-          mode,
+          mode: effectiveMode,
           workspaceRoot: config.workspaceRoot,
           activeTabPath,
           providerLabel: selectedProvider.label,
           model,
+          planMode,
+          skillsPrompt,
         }) },
-        ...selectConversationHistory(messages),
+        ...selectConversationHistory(historySource),
         { role: 'user', content: `${prompt}${contextBlock}` },
       ];
       let assistantText = '';
@@ -489,39 +553,56 @@ export function AIChatPane() {
         if (text && !firstTokenRecorded) {
           firstTokenRecorded = true;
           const elapsedMs = Math.round(performance.now() - requestStartedAtRef.current);
-          setRequestPhase('streaming');
+          store.setPhase(sliceKey, 'streaming');
           void gateway.agentAppendEvent(run.id, 'model.first_token', { elapsedMs }).catch(() => undefined);
         }
-        setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, content: message.content + text } : message));
+        store.appendMessageText(sliceKey, assistantId, text);
       };
       const noteFallback = (requestedProvider: string, servedModel: string) => {
-        setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, fallback: { requestedProvider, model: servedModel } } : message));
+        store.updateMessage(sliceKey, assistantId, { fallback: { requestedProvider, model: servedModel } });
         void gateway.agentAppendEvent(run.id, 'model.fallback', { requestedProviderId: requestedProvider, servedModel }).catch(() => undefined);
       };
       let toolCalls = 0;
-      setRequestPhase('connecting');
-      if (mode !== 'ask') {
+      store.setPhase(sliceKey, 'connecting');
+      if (effectiveMode !== 'ask') {
         const runner = new AgentRunner(); runnerRef.current = runner;
         const result = await runner.run({
           gateway, client, runId: run.id, workspaceRoot: config.workspaceRoot,
           routing: { providerId, baseUrl, model, dialect, routingPolicy }, messages: conversation,
           request: { maxTokens: 4096, temperature: 0.2 }, signal: controller.signal,
           onDelta: appendDelta,
-          onUsage: (nextUsage) => { finalUsage = nextUsage; setUsage(nextUsage); },
+          onUsage: (nextUsage) => { finalUsage = nextUsage; store.setUsage(sliceKey, nextUsage); },
           onFallback: noteFallback,
-          validateFinal: mode === 'edit' ? (text) => validateEditResponse(text, activeTabPath) : undefined,
+          onToolEvent: (event) => useChatStore.getState().applyToolEvent(sliceKey, event),
+          askUser: (request) => new Promise<AgentAskResponse>((resolve) => {
+            askResolveRef.current = resolve;
+            useChatStore.getState().setPendingRequest(sliceKey, request);
+          }),
+          validateFinal: planMode
+            ? (text) => validatePlanResponse(text)
+            : effectiveMode === 'edit' ? (text) => validateEditResponse(text, activeTabPath) : undefined,
         });
         assistantText = result.text; toolCalls = result.toolCalls; finalUsage = result.usage;
       } else {
         for await (const event of client.stream({ providerId, baseUrl, model, dialect, routingPolicy }, { messages: conversation, maxTokens: 4096, temperature: 0.2 }, controller.signal)) {
           if (event.type === 'delta') { assistantText += event.text; appendDelta(event.text); }
-          else if (event.type === 'usage') { finalUsage = event.usage; setUsage(event.usage); }
+          else if (event.type === 'usage') { finalUsage = event.usage; store.setUsage(sliceKey, event.usage); }
           else if (event.type === 'fallback') noteFallback(event.requestedProvider, event.model);
           else if (event.type === 'error') throw new Error(formatUnknownError(event.error));
         }
         if (!assistantText.trim()) throw new Error('The selected model completed without returning visible text. Choose a model that returns assistant content for this task.');
       }
-      if (mode !== 'ask') {
+      if (planMode && effectiveMode !== 'ask') {
+        try {
+          const plan = parseAgentPlan(assistantText);
+          if (plan) {
+            store.setPlan(sliceKey, { ...plan, locked: false });
+            await gateway.agentAppendEvent(run.id, 'plan.proposed', { summary: plan.summary, steps: plan.steps.length });
+          } else setLastError('Plan mode completed without a <cursem-plan> proposal.');
+        } catch (error) {
+          setLastError(error instanceof Error ? error.message : 'Plan mode returned an invalid plan proposal.');
+        }
+      } else if (effectiveMode !== 'ask') {
         const parsed = parseAgentPatch(assistantText, activeTabPath);
         if (parsed) {
           proposedFiles = parsed.changes.length;
@@ -533,11 +614,12 @@ export function AIChatPane() {
             selectedHunks: Object.fromEntries(preview.files.map((file) => [file.path, file.hunks.map((hunk) => hunk.id)])),
           });
           await gateway.agentAppendEvent(run.id, 'patch.proposed', { proposalId: preview.proposalId, files: preview.files.map((file) => ({ path: file.path, operation: file.operation, hunks: file.hunks.length })) });
-        } else setLastError('Edit mode completed without a <cursem-patch> proposal. No file was changed.');
+        } else if (effectiveMode === 'edit') setLastError('Edit mode completed without a <cursem-patch> proposal. No file was changed.');
       }
       await gateway.agentAddMessage(activeThreadId, 'assistant', assistantText, { runId: run.id, usage: finalUsage });
       await gateway.agentUpdateRun(run.id, 'completed', { usage: finalUsage, proposedFiles, toolCalls });
-      setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, pending: false, content: message.content || assistantText } : message));
+      store.updateMessage(sliceKey, assistantId, { pending: false, content: assistantText });
+      store.attachTools(sliceKey, assistantId);
     } catch (error) {
       const aborted = controller.signal.aborted;
       const message = aborted ? 'Generation stopped.' : formatClientError(error);
@@ -546,19 +628,61 @@ export function AIChatPane() {
         void gateway.agentUpdateRun(activeRunId, aborted ? 'cancelled' : 'failed', { message }).catch(() => undefined);
       }
       setLastError(aborted ? null : message);
-      setMessages((current) => current.map((entry) => entry.id === assistantId
-        ? { ...entry, pending: false, content: entry.content || message }
-        : entry));
+      const store = useChatStore.getState();
+      const current = store.slices[sliceKey]?.messages.find((entry) => entry.id === assistantId);
+      store.updateMessage(sliceKey, assistantId, { pending: false, content: current?.content || message });
+      store.attachTools(sliceKey, assistantId);
+      store.setPendingRequest(sliceKey, null);
+      askResolveRef.current = null;
       if (!aborted) addToast(message, 'error');
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       runnerRef.current = null;
       activeRunIdRef.current = null;
-      setSending(false);
-      setRequestPhase(null);
+      const store = useChatStore.getState();
+      store.setRunning(sliceKey, false);
+      store.setPhase(sliceKey, null);
       setRequestElapsedMs(0);
     }
-  }, [activeTabPath, addToast, baseUrl, client, config.workspaceRoot, cursor.column, cursor.line, dialect, ensureThread, gateway, includeContext, input, memories, messages, mode, model, providerId, resolvedDialect, routingPolicy, selectedProvider.label, sending, vaultReady]);
+  }, [activeTabPath, addToast, baseUrl, client, config.workspaceRoot, cursor.column, cursor.line, dialect, ensureThread, gateway, includeContext, input, memories, mode, model, planMode, providerId, resolvedDialect, routingPolicy, selectedProvider.label, sending, vaultReady]);
+
+  const answerAsk = useCallback((response: AgentAskResponse) => {
+    const state = useChatStore.getState();
+    state.setPendingRequest(state.activeKey, null);
+    askResolveRef.current?.(response);
+    askResolveRef.current = null;
+  }, []);
+
+  const implementPlan = useCallback(() => {
+    const state = useChatStore.getState();
+    const current = state.slices[state.activeKey]?.plan;
+    if (!current || current.locked) return;
+    state.lockPlan(state.activeKey, 'implement');
+    setPlanMode(false);
+    setMode('agent');
+    void send(`Implement the approved plan. Follow these steps exactly, verify your work with tools, and finish with the typed patch proposal.\n\nPlan summary: ${current.summary}\n${current.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}`);
+  }, [send]);
+
+  const refinePlan = useCallback((note: string) => {
+    const state = useChatStore.getState();
+    const current = state.slices[state.activeKey]?.plan;
+    if (!current || current.locked) return;
+    state.lockPlan(state.activeKey, 'refine');
+    void send(`Refine the plan you proposed. Keep what works, change only what this note requires, and respond with the revised <cursem-plan>.\n\nRefinement note: ${note}`);
+  }, [send]);
+
+  const freshPlan = useCallback(() => {
+    const state = useChatStore.getState();
+    const current = state.slices[state.activeKey]?.plan;
+    if (!current || current.locked) return;
+    state.lockPlan(state.activeKey, 'fresh');
+    const directive = `Implement this plan in a fresh context. Follow the steps exactly, verify your work with tools, and finish with the typed patch proposal.\n\nPlan summary: ${current.summary}\n${current.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}`;
+    void newThread().then(() => {
+      setPlanMode(false);
+      setMode('agent');
+      void send(directive);
+    });
+  }, [newThread, send]);
 
   const saveMemory = useCallback(async () => {
     const content = memoryDraft.trim(); if (!content) return;
@@ -637,51 +761,74 @@ export function AIChatPane() {
         </div>
       </header>
 
-      {settingsOpen && (
-        <section className="model-routing-settings" aria-label="Model routing settings">
-          <div className="routing-grid">
-            <label><span>Provider</span><select aria-label="Provider" value={providerId} disabled={!vaultReady} onChange={(event) => changeProvider(event.target.value as ProviderId)}>{vaultProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
-            <label><span>Mode</span><select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value as 'ask' | 'edit' | 'agent')}><option value="ask">Ask</option><option value="edit" disabled={!activeTabPath}>Edit active file</option><option value="agent">Agent</option></select></label>
-            <label><span>Routing</span><select aria-label="Routing" value={routingPolicy} onChange={(event) => setRoutingPolicy(event.target.value as RoutingPolicy)}><option value="manual">Manual</option><option value="cost-first">Low-cost first</option><option value="latency-first">Fastest measured</option><option value="resilient">Resilient fallback</option></select></label>
+      <div className="ai-chat-body">
+        <SessionSidebar
+          threads={threads}
+          activeKey={activeKey}
+          runningKey={runningKey}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          onSelect={(id) => void openThread(id)}
+          onNew={() => void newThread()}
+          onDelete={deleteThread}
+        />
+
+        <div className="ai-chat-main">
+          {settingsOpen && (
+            <section className="model-routing-settings" aria-label="Model routing settings">
+              <div className="routing-grid">
+                <label><span>Provider</span><select aria-label="Provider" value={providerId} disabled={!vaultReady} onChange={(event) => changeProvider(event.target.value as ProviderId)}>{vaultProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
+                <label><span>Mode</span><select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value as 'ask' | 'edit' | 'agent')}><option value="ask">Ask</option><option value="edit" disabled={!activeTabPath}>Edit active file</option><option value="agent">Agent</option></select></label>
+                <label><span>Routing</span><select aria-label="Routing" value={routingPolicy} onChange={(event) => setRoutingPolicy(event.target.value as RoutingPolicy)}><option value="manual">Manual</option><option value="cost-first">Low-cost first</option><option value="latency-first">Fastest measured</option><option value="resilient">Resilient fallback</option></select></label>
+              </div>
+              <label><span>Model</span><select aria-label="Model" value={model} disabled={modelsLoading || !modelOptions.length} onChange={(event) => setModel(event.target.value)}>{modelsLoading ? <option value={model}>loading models…</option> : modelOptions.length ? modelOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>) : <option value={model}>{model || 'no models available'}</option>}</select></label>
+              <div className="vault-routing-note">Provider credentials, addresses, and protocol are supplied by the local Vault.</div>
+              <label className="host-credential-toggle"><input aria-label="Enable provider-routed CURSEM Tab ghost text" type="checkbox" checked={inlineCompletionEnabled} onChange={(event) => setInlineCompletionEnabled(event.target.checked)} /><span>Enable provider-routed CURSEM Tab ghost text</span></label>
+              <details className="memory-manager"><summary>Approved project memory ({memories.length})</summary><div className="memory-entry"><input aria-label="New approved project memory" value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} maxLength={4000} placeholder="A rule or decision to reuse in future threads" /><button className="button ghost" onClick={() => void saveMemory()} disabled={!memoryDraft.trim()}>Save</button></div>{memories.map((memory) => <div className="saved-memory" key={memory.id}><span>{memory.content}</span><button className="text-button" onClick={() => void deleteMemory(memory.id)}>Delete</button></div>)}</details>
+              <footer><span className={`dialect-chip ${resolvedDialect}`}>{resolvedDialect} protocol</span><small>{routingDecision}. Every request uses the Vault-owned local relay.</small></footer>
+            </section>
+          )}
+
+          <div className="context-strip">
+            <Icon name="files" size={14} />
+            <span>{activeTabPath ? activeTabPath.split('/').pop() : 'No active file'}</span>
+            <label><input type="checkbox" checked={includeContext} onChange={(event) => setIncludeContext(event.target.checked)} /> include context</label>
+            {contextDisclosure && <details className="context-inspector"><summary>{contextDisclosure.items.length} files · {contextDisclosure.rules.length} rules · {contextDisclosure.totalChars.toLocaleString()} chars</summary><div>{contextDisclosure.items.map((item) => <span key={`${item.path}:${item.reason}`}><strong>{item.path}</strong> — {item.reason} ({item.chars.toLocaleString()} chars)</span>)}{contextDisclosure.rules.map((rule) => <span key={rule}><strong>{rule}</strong> — applied instruction</span>)}</div></details>}
           </div>
-          <label><span>Model</span><select aria-label="Model" value={model} disabled={modelsLoading || !modelOptions.length} onChange={(event) => setModel(event.target.value)}>{modelsLoading ? <option value={model}>loading models…</option> : modelOptions.length ? modelOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>) : <option value={model}>{model || 'no models available'}</option>}</select></label>
-          <div className="vault-routing-note">Provider credentials, addresses, and protocol are supplied by the local Vault.</div>
-          <label className="host-credential-toggle"><input aria-label="Enable provider-routed CURSEM Tab ghost text" type="checkbox" checked={inlineCompletionEnabled} onChange={(event) => setInlineCompletionEnabled(event.target.checked)} /><span>Enable provider-routed CURSEM Tab ghost text</span></label>
-          <details className="memory-manager"><summary>Approved project memory ({memories.length})</summary><div className="memory-entry"><input aria-label="New approved project memory" value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} maxLength={4000} placeholder="A rule or decision to reuse in future threads" /><button className="button ghost" onClick={() => void saveMemory()} disabled={!memoryDraft.trim()}>Save</button></div>{memories.map((memory) => <div className="saved-memory" key={memory.id}><span>{memory.content}</span><button className="text-button" onClick={() => void deleteMemory(memory.id)}>Delete</button></div>)}</details>
-          <footer><span className={`dialect-chip ${resolvedDialect}`}>{resolvedDialect} protocol</span><small>{routingDecision}. Every request uses the Vault-owned local relay.</small></footer>
-        </section>
-      )}
 
-      <div className="context-strip">
-        <Icon name="files" size={14} />
-        <span>{activeTabPath ? activeTabPath.split('/').pop() : 'No active file'}</span>
-        <label><input type="checkbox" checked={includeContext} onChange={(event) => setIncludeContext(event.target.checked)} /> include context</label>
-        {contextDisclosure && <details className="context-inspector"><summary>{contextDisclosure.items.length} files · {contextDisclosure.rules.length} rules · {contextDisclosure.totalChars.toLocaleString()} chars</summary><div>{contextDisclosure.items.map((item) => <span key={`${item.path}:${item.reason}`}><strong>{item.path}</strong> — {item.reason} ({item.chars.toLocaleString()} chars)</span>)}{contextDisclosure.rules.map((rule) => <span key={rule}><strong>{rule}</strong> — applied instruction</span>)}</div></details>}
-      </div>
+          <div className="ai-chat-messages" aria-live="polite">
+            {slice.messages.length === 0 && <div className="ai-empty"><div className="ai-orb"><Icon name="spark" size={28} /></div><strong>Build with CURSEM</strong><p>Ask for analysis or switch to Edit mode for a review-gated active-file change. Provider failures are shown without rewriting them.</p><div className="ai-capabilities"><span>Active-file context</span><span>Review-gated edits</span><span>Unified streaming</span><span>Stop propagation</span></div></div>}
+            {slice.messages.map((message) => <ChatMessageRow key={message.id} message={message} />)}
+            {slice.toolCalls.length > 0 && (
+              <div className="chat-tool-stack live">
+                {slice.toolCalls.map((tool) => <ToolCard key={tool.id} tool={tool} />)}
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
 
-      <div className="ai-chat-messages" aria-live="polite">
-        {messages.length === 0 && <div className="ai-empty"><div className="ai-orb"><Icon name="spark" size={28} /></div><strong>Build with CURSEM</strong><p>Ask for analysis or switch to Edit mode for a review-gated active-file change. Provider failures are shown without rewriting them.</p><div className="ai-capabilities"><span>Active-file context</span><span>Review-gated edits</span><span>Unified streaming</span><span>Stop propagation</span></div></div>}
-        {messages.map((message) => message.pending && !message.content && !message.fallback ? null : <article key={message.id} className={`chat-message ${message.role} ${message.pending ? 'pending' : ''}`}><header>{message.role === 'user' ? 'You' : 'CURSEM'}{message.pending && <span>streaming</span>}</header>{message.fallback && <div className="fallback-notice">{providerLabelFor(message.fallback.requestedProvider)} failed — answered by GLM ({message.fallback.model})</div>}<div>{displayMessage(message.content)}</div></article>)}
-        <div ref={messagesEndRef} />
-      </div>
+          {slice.pendingRequest && <AskUserCard request={slice.pendingRequest} onAnswer={answerAsk} />}
+          {slice.plan && <PlanCard plan={slice.plan} onImplement={implementPlan} onRefine={refinePlan} onFresh={freshPlan} />}
 
-      {proposal && <section className="edit-proposal multi-file-review" role="status" aria-label="Review proposed changes">
-        <header><div><strong>Review proposed changes</strong><span>{proposal.preview.files.length} file{proposal.preview.files.length === 1 ? '' : 's'} · durable checkpoint on apply</span></div><div><button className="button ghost" onClick={() => setProposal(null)}>Dismiss</button><button className="button primary" onClick={() => void applyProposal()}>Apply selected</button></div></header>
-        <div className="proposal-files">{proposal.preview.files.map((file) => <article key={file.path} className="proposal-file">
-          <div className="proposal-file-title"><strong>{file.path}</strong><span>{file.operation} · {file.stats.delta >= 0 ? '+' : ''}{file.stats.delta} lines</span></div>
-          {file.hunks.map((hunk) => <label className="proposal-hunk" key={hunk.id}>
-            <input type="checkbox" checked={(proposal.selectedHunks[file.path] || []).includes(hunk.id)} onChange={() => toggleHunk(file.path, hunk.id)} />
-            <details><summary>{hunk.id} · -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines}</summary><pre>{[...hunk.beforeLines.map((line) => `- ${line}`), ...hunk.afterLines.map((line) => `+ ${line}`)].join('\n')}</pre></details>
-          </label>)}
-        </article>)}</div>
-      </section>}
-      {checkpoint && !proposal && <div className="checkpoint-strip"><span>Durable checkpoint: {checkpoint.label}</span><button className="text-button" onClick={() => void undoCheckpoint()}>Restore checkpoint</button></div>}
-      {lastError && <div className="provider-error" role="alert"><Icon name="warning" size={15} /><div><strong>Provider error</strong><span>{lastError}</span></div></div>}
-      {usage && <div className="usage-strip">{Object.entries(usage).map(([name, value]) => <span key={name}>{name.replaceAll('_', ' ')}: {value}</span>)}</div>}
+          {proposal && <section className="edit-proposal multi-file-review" role="status" aria-label="Review proposed changes">
+            <header><div><strong>Review proposed changes</strong><span>{proposal.preview.files.length} file{proposal.preview.files.length === 1 ? '' : 's'} · durable checkpoint on apply</span></div><div><button className="button ghost" onClick={() => setProposal(null)}>Dismiss</button><button className="button primary" onClick={() => void applyProposal()}>Apply selected</button></div></header>
+            <div className="proposal-files">{proposal.preview.files.map((file) => <article key={file.path} className="proposal-file">
+              <div className="proposal-file-title"><strong>{file.path}</strong><span>{file.operation} · {file.stats.delta >= 0 ? '+' : ''}{file.stats.delta} lines</span></div>
+              {file.hunks.map((hunk) => <label className="proposal-hunk" key={hunk.id}>
+                <input type="checkbox" checked={(proposal.selectedHunks[file.path] || []).includes(hunk.id)} onChange={() => toggleHunk(file.path, hunk.id)} />
+                <details><summary>{hunk.id} · -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines}</summary><pre>{[...hunk.beforeLines.map((line) => `- ${line}`), ...hunk.afterLines.map((line) => `+ ${line}`)].join('\n')}</pre></details>
+              </label>)}
+            </article>)}</div>
+          </section>}
+          {checkpoint && !proposal && <div className="checkpoint-strip"><span>Durable checkpoint: {checkpoint.label}</span><button className="text-button" onClick={() => void undoCheckpoint()}>Restore checkpoint</button></div>}
+          {lastError && <div className="provider-error" role="alert"><Icon name="warning" size={15} /><div><strong>Provider error</strong><span>{lastError}</span></div></div>}
+          {usage && <div className="usage-strip">{Object.entries(usage).map(([name, value]) => <span key={name}>{name.replaceAll('_', ' ')}: {value}</span>)}</div>}
 
-      <div className="ai-chat-input">
-        <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (sending && mode === 'agent') steer(); else void send(); } }} placeholder={sending && mode === 'agent' ? 'Steer the active Agent run…' : activeTabPath ? `${mode === 'edit' ? 'Edit' : mode === 'agent' ? 'Agent task for' : 'Ask about'} ${activeTabPath.split('/').pop()} · @file:path @folder:path @symbol:name` : 'Ask CURSEM about the codebase · @file:path @folder:path @symbol:name'} aria-label="Message CURSEM" />
-        <div className="composer-footer"><span>{sending && mode === 'agent' ? 'Enter interrupts and steers; Stop cancels the run' : 'Enter sends; Shift+Enter adds a line'}</span><div>{messages.length > 0 && <button className="button ghost" onClick={() => void newThread()} disabled={sending}>New thread</button>}{sending ? <>{mode === 'agent' && <button className="button primary" onClick={steer} disabled={!input.trim()}>Steer now</button>}<button className="button danger" onClick={stop}><Icon name="stop" size={13} /> Stop</button></> : <button className="button primary send-button" onClick={() => void send()} disabled={!input.trim() || !vaultReady}><Icon name="upload" size={13} /> Send</button>}</div></div>
+          <div className="ai-chat-input">
+            <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (sending && mode === 'agent' && !planMode) steer(); else void send(); } }} placeholder={sending && mode === 'agent' && !planMode ? 'Steer the active Agent run…' : planMode ? 'Describe the goal — CURSEM will investigate read-only and propose a plan' : activeTabPath ? `${mode === 'edit' ? 'Edit' : mode === 'agent' ? 'Agent task for' : 'Ask about'} ${activeTabPath.split('/').pop()} · @file:path @folder:path @symbol:name` : 'Ask CURSEM about the codebase · @file:path @folder:path @symbol:name'} aria-label="Message CURSEM" />
+            <div className="composer-footer"><span>{sending && mode === 'agent' && !planMode ? 'Enter interrupts and steers; Stop cancels the run' : 'Enter sends; Shift+Enter adds a line'}</span><div><button className={`button ghost plan-toggle ${planMode ? 'active' : ''}`} onClick={() => setPlanMode((current) => !current)} aria-label="Plan mode" aria-pressed={planMode} disabled={sending}>Plan</button>{slice.messages.length > 0 && <button className="button ghost" onClick={() => void newThread()} disabled={sending}>New thread</button>}{sending ? <>{mode === 'agent' && !planMode && <button className="button primary" onClick={steer} disabled={!input.trim()}>Steer now</button>}<button className="button danger" onClick={stop}><Icon name="stop" size={13} /> Stop</button></> : <button className="button primary send-button" onClick={() => void send()} disabled={!input.trim() || !vaultReady}><Icon name="upload" size={13} /> Send</button>}</div></div>
+          </div>
+        </div>
       </div>
     </aside>
   );
@@ -691,20 +838,6 @@ function formatUnknownError(error: unknown): string {
   if (typeof error === 'string') return error;
   if (error && typeof error === 'object' && typeof (error as Record<string, unknown>).message === 'string') return String((error as Record<string, unknown>).message);
   try { return JSON.stringify(error); } catch { return 'Unknown provider stream error.'; }
-}
-
-function providerLabelFor(providerId: string): string {
-  return providerId in PROVIDERS ? PROVIDERS[providerId as ProviderId].label : providerId;
-}
-
-function displayMessage(content: string): string {
-  return content
-    .replace(/<cursem-patch>[\s\S]*?<\/cursem-patch>/gi, '\n[Typed patch ready for review]\n')
-    .replace(/<cursem-tool>([\s\S]*?)<\/cursem-tool>/gi, (_match, raw: string) => {
-      try { const tool = JSON.parse(raw) as { name?: string }; return `\n[Tool requested: ${tool.name || 'unknown'}]\n`; }
-      catch { return '\n[Tool request]\n'; }
-    })
-    .trim();
 }
 
 function formatClientError(error: unknown): string {
@@ -719,5 +852,15 @@ function validateEditResponse(text: string, activePath: string | null): string |
       : 'Edit mode requires exactly one valid <cursem-patch> proposal before completion.';
   } catch (error) {
     return error instanceof Error ? error.message : 'Edit mode returned an invalid patch proposal.';
+  }
+}
+
+function validatePlanResponse(text: string): string | null {
+  try {
+    return parseAgentPlan(text)
+      ? null
+      : 'Plan mode requires exactly one valid <cursem-plan> proposal before completion.';
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Plan mode returned an invalid plan proposal.';
   }
 }

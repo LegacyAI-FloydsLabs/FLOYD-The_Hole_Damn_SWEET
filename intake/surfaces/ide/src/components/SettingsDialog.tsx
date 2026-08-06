@@ -1,8 +1,10 @@
-import { useEffect, useRef, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { DEFAULT_PREFERENCES, useUIStore, type ThemeMode } from '@/store/uiStore';
 import { definitionToUnified, parseThemeImport, resolveTheme, THEMES, unifiedToDefinition, validateTheme } from '@/theme';
 import { FONT_OPTIONS, fontStack, type FontId } from '@/font';
+import { CLI_PERMISSION_MATRIX, type CliSettings } from '@/platform/cliPermissions';
+import { getControlToken } from '@/platform/controlExecutor';
 import type { ThemeDefinition } from '@/theme';
 
 const themeGroups = [...new Set(THEMES.map((theme) => theme.group))];
@@ -17,6 +19,78 @@ function customDefinitions(customThemes: Record<string, unknown>): ThemeDefiniti
     if (result.ok) definitions.push(unifiedToDefinition(result.theme));
   }
   return definitions;
+}
+
+/** CLI permission matrix — renders straight from the shared module and saves
+ *  through the bearer-checked server routes, so UI and server-side gate read
+ *  the same declarative matrix and cannot drift. */
+function CliSettingsSection() {
+  const addToast = useUIStore((state) => state.addToast);
+  const [settings, setSettings] = useState<CliSettings | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    const token = getControlToken();
+    if (!token) { setUnavailable(true); return; }
+    let cancelled = false;
+    fetch(`${window.location.origin}/api/control/settings`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+      .then((body) => { if (!cancelled) setSettings(body.settings as CliSettings); })
+      .catch(() => { if (!cancelled) setUnavailable(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const update = (key: keyof CliSettings, value: boolean) => {
+    const token = getControlToken();
+    if (!settings || !token) return;
+    const previous = settings;
+    setSettings({ ...settings, [key]: value });
+    fetch(`${window.location.origin}/api/control/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ settings: { [key]: value } }),
+    })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+      .then((body) => setSettings(body.settings as CliSettings))
+      .catch(() => {
+        setSettings(previous);
+        addToast('Could not save the CLI setting.', 'error');
+      });
+  };
+
+  return (
+    <section className="theme-setting" aria-labelledby="cli-setting-title">
+      <div className="theme-setting-heading">
+        <span>
+          <strong id="cli-setting-title">In-shell CLI (cursem)</strong>
+          <small>Terminals spawned here carry the `cursem` command, which can read and drive this IDE. Every capability is gated below; denied calls name the exact toggle to flip.</small>
+        </span>
+      </div>
+      {!settings && (
+        <p className="panel-caption">{unavailable ? 'CLI settings become available once the IDE connects to its local backend.' : 'Loading CLI settings…'}</p>
+      )}
+      {settings && (
+        <>
+          <label className="setting-row toggle-row">
+            <span><strong>Enable cursem</strong><small>Master switch. Off rejects every cursem call from any shell.</small></span>
+            <input type="checkbox" checked={settings.cliEnabled} onChange={(event) => update('cliEnabled', event.target.checked)} />
+          </label>
+          {CLI_PERMISSION_MATRIX.flatMap((surface) =>
+            [surface.read, surface.control]
+              .filter((cell) => cell !== null)
+              .map((cell) => (
+                <label className="setting-row toggle-row" key={cell.key}>
+                  <span><strong>{surface.label} — {cell.label}</strong><small>{cell.description}</small></span>
+                  <input type="checkbox" checked={settings[cell.key]} onChange={(event) => update(cell.key, event.target.checked)} />
+                </label>
+              )),
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 export function SettingsDialog() {
@@ -192,6 +266,7 @@ export function SettingsDialog() {
               <input type="checkbox" checked={preferences[key]} onChange={(event) => updatePreferences({ [key]: event.target.checked })} />
             </label>
           ))}
+          <CliSettingsSection />
         </div>
         <footer className="dialog-footer">
           <button className="button secondary" onClick={() => resetPreferences()}>Restore defaults</button>

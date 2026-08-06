@@ -28,6 +28,7 @@ export function createAgentStore({ workspaceRoot, databasePath } = {}) {
       FROM threads ORDER BY updated_at DESC LIMIT ?`),
     getThread: database.prepare(`SELECT id, title, created_at AS createdAt, updated_at AS updatedAt
       FROM threads WHERE id = ?`),
+    deleteThread: database.prepare('DELETE FROM threads WHERE id = ?'),
     addMessage: database.prepare(`INSERT INTO messages
       (id, thread_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`),
     messages: database.prepare(`SELECT id, thread_id AS threadId, role, content, metadata_json AS metadataJson,
@@ -60,6 +61,15 @@ export function createAgentStore({ workspaceRoot, databasePath } = {}) {
     saveMemory: database.prepare(`INSERT INTO memories (id, content, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`),
     memories: database.prepare(`SELECT id, content, source, created_at AS createdAt, updated_at AS updatedAt FROM memories ORDER BY updated_at DESC`),
     deleteMemory: database.prepare('DELETE FROM memories WHERE id = ?'),
+    setAgentStamp: database.prepare(`INSERT INTO agent_session_stamps (terminal_id, agent_id, session_id, cwd, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(terminal_id) DO UPDATE SET agent_id = excluded.agent_id, session_id = excluded.session_id,
+        cwd = excluded.cwd, updated_at = excluded.updated_at`),
+    getAgentStamp: database.prepare(`SELECT terminal_id AS terminalId, agent_id AS agentId, session_id AS sessionId, cwd
+      FROM agent_session_stamps WHERE terminal_id = ?`),
+    deleteAgentStamp: database.prepare('DELETE FROM agent_session_stamps WHERE terminal_id = ?'),
+    listAgentStamps: database.prepare(`SELECT terminal_id AS terminalId, agent_id AS agentId, session_id AS sessionId, cwd
+      FROM agent_session_stamps ORDER BY updated_at DESC`),
   };
 
   const inTransaction = database.prepare('BEGIN IMMEDIATE');
@@ -79,6 +89,9 @@ export function createAgentStore({ workspaceRoot, databasePath } = {}) {
       return { id, title: cleanTitle(title), createdAt: now, updatedAt: now };
     },
     listThreads(limit = 100) { return statements.listThreads.all(clampLimit(limit)); },
+    // Cascades remove the thread's messages/runs/run_events; proposals and
+    // checkpoints tied to those runs go SET NULL per the schema.
+    deleteThread(id) { return statements.deleteThread.run(id).changes > 0; },
     getThread(id) {
       const thread = statements.getThread.get(id);
       if (!thread) return null;
@@ -158,6 +171,15 @@ export function createAgentStore({ workspaceRoot, databasePath } = {}) {
     },
     listMemories() { return statements.memories.all(); },
     deleteMemory(id) { return statements.deleteMemory.run(id).changes > 0; },
+    // Agent-session stamps (agent-aware terminals): the resume identity a
+    // terminal's agent CLI reported through its hooks. Terminal-keyed so a
+    // fresh terminal can claim the newest stamp after an app restart.
+    setAgentStamp({ terminalId, agentId, sessionId, cwd }) {
+      statements.setAgentStamp.run(String(terminalId), String(agentId), String(sessionId), String(cwd || ''), Date.now());
+    },
+    getAgentStamp(terminalId) { return statements.getAgentStamp.get(terminalId) ?? null; },
+    deleteAgentStamp(terminalId) { statements.deleteAgentStamp.run(terminalId); },
+    listAgentStamps() { return statements.listAgentStamps.all(); },
     close() { database.close(); },
   };
 }
@@ -194,6 +216,10 @@ function migrate(database) {
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY, content TEXT NOT NULL, source TEXT NOT NULL,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS agent_session_stamps (
+      terminal_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
+      cwd TEXT NOT NULL, updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id, created_at);
     CREATE INDEX IF NOT EXISTS runs_thread ON runs(thread_id, started_at);

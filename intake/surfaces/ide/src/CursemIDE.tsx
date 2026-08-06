@@ -6,10 +6,12 @@
 // This is the single export point. Floyd Desktop imports this component,
 // provides a PlatformConfig and HostGateway, and mounts it.
 
+import { useEffect } from 'react';
 import { HostProvider } from './platform/HostProvider';
 import { WorkspaceProvider } from './workspace/WorkspaceProvider';
 import type { PlatformConfig } from '@/platform';
 import { type HostGateway } from '@/platform/host';
+import { mountControlExecutor } from '@/platform/controlExecutor';
 import { AppShell } from './components/AppShell';
 
 export interface CursemIDEProps {
@@ -20,6 +22,10 @@ export interface CursemIDEProps {
 }
 
 export function CursemIDE({ config, gateway }: CursemIDEProps) {
+  // In-shell CLI control executor: mounted once per IDE instance, answers
+  // backend-forwarded `cursem` control methods against the real stores.
+  useEffect(() => mountControlExecutor(), []);
+
   return (
     <HostProvider config={config} gateway={gateway}>
       <WorkspaceProvider>

@@ -32,7 +32,7 @@ import type {
   FindResult,
   ReplaceOptions,
 } from './types';
-import { detectLanguage } from './types';
+import { detectLanguage, registerEditorAdapter } from './types';
 import type { Diagnostic, Theme } from '@/platform';
 import type { LspService } from '@/lsp/LspService';
 import { SUPPORTED_LANGUAGES } from '@/platform/types';
@@ -89,6 +89,7 @@ export class MonacoAdapter implements EditorAdapter {
 
   init(container: HTMLElement): void {
     this.container = container;
+    registerEditorAdapter(this);
     this.defineDefaultThemes();
     this.editor = monaco.editor.create(container, {
       theme: 'cursem-dark',
@@ -211,6 +212,7 @@ export class MonacoAdapter implements EditorAdapter {
   }
 
   dispose(): void {
+    registerEditorAdapter(null);
     for (const model of this.models.values()) model.dispose();
     this.models.clear();
     this.editor?.dispose();
@@ -326,6 +328,13 @@ export class MonacoAdapter implements EditorAdapter {
 
   getActiveFile(): string | null {
     return this.activePath;
+  }
+
+  revealPosition(path: string, line: number, column: number): void {
+    if (!this.editor || this.activePath !== path) return;
+    this.editor.revealLineInCenter(line);
+    this.editor.setPosition({ lineNumber: line, column });
+    this.editor.focus();
   }
 
   getContent(path: string): string | null {

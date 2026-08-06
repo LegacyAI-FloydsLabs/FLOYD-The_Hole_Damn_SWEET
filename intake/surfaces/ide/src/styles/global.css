@@ -1,5 +1,7 @@
 @import './tokens.css';
 @import './workbench.css';
+@import '../canvas/canvas.css';
+@import '../dock/dock.css';
 
 @font-face {
   font-family: 'Phantasy Mono PTY';

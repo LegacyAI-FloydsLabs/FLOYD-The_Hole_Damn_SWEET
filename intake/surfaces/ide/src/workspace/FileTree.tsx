@@ -4,6 +4,7 @@ import { useWorkspace } from './WorkspaceProvider';
 import { useEditorStore } from '@/store/editorStore';
 import { useUIStore } from '@/store/uiStore';
 import { usePlatform } from '@/platform';
+import { FILE_DRAG_MIME } from '@/panels/dragTypes';
 import type { DirEntry } from '@/platform';
 
 interface TreeNode {
@@ -116,6 +117,12 @@ export function FileTree() {
           className={`file-tree-item ${node.entry.type} ${activeTabPath === node.entry.path ? 'active' : ''}`}
           style={{ paddingLeft: `${depth * 14 + 9}px` }}
           onClick={() => node.entry.type === 'dir' ? void toggleDirectory(node) : openTab(node.entry.path)}
+          draggable={node.entry.type === 'file'}
+          onDragStart={node.entry.type === 'file' ? (event) => {
+            // Canvas/dock drop payload — same path semantics openTab uses.
+            event.dataTransfer.setData(FILE_DRAG_MIME, node.entry.path);
+            event.dataTransfer.effectAllowed = 'copy';
+          } : undefined}
           aria-expanded={node.entry.type === 'dir' ? expanded : undefined}
           title={node.entry.path}
         >

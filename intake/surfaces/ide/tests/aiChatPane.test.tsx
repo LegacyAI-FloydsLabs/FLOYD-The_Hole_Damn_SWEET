@@ -4,6 +4,7 @@ import { AIChatPane, buildSystemPrompt, selectConversationHistory } from '@/open
 import { HostProvider } from '@/platform/HostProvider';
 import { MockHostGateway } from '@/platform/host';
 import { useUIStore } from '@/store/uiStore';
+import { useChatStore } from '@/store/chatStore';
 
 const VAULT_CATALOG = {
   proxyUrl: 'http://127.0.0.1:13031',
@@ -30,6 +31,7 @@ describe('CURSEM coding partner pane', () => {
 
   afterEach(() => {
     useUIStore.setState({ aiProviderId: null, aiModel: null });
+    useChatStore.getState().reset();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

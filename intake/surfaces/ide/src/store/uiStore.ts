@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { DEFAULT_THEME_ID, isThemeId, syncCustomThemes, type ThemeId, type UnifiedTheme } from '@/theme';
 import { DEFAULT_FONT_ID, isFontId, type FontId } from '@/font';
 
-export type SidePanel = 'explorer' | 'search' | 'git' | 'debug' | 'extensions';
+export type SidePanel = 'explorer' | 'search' | 'git' | 'debug' | 'extensions' | 'skills';
 export type ThemeMode = ThemeId;
 export type PaletteMode = 'commands' | 'files';
 export type DialogName = 'settings' | 'help' | null;
@@ -144,7 +144,10 @@ export const useUIStore = create<UIState>()(persist((set) => ({
   })),
 }), {
   name: 'cursem:ui:v2',
-  version: 5,
+  // v6: sidePanelWidth/terminalHeight/aiPanelWidth are now consumed as dock
+  // zone sizes (left/bottom/right) by src/dock. Shape is unchanged — the
+  // migration only guarantees the numbers survived older shapes intact.
+  version: 6,
   migrate: (persistedState) => {
     const state = persistedState as Partial<UIState>;
     const preferences = state.preferences as Partial<EditorPreferences> | undefined;
@@ -156,6 +159,9 @@ export const useUIStore = create<UIState>()(persist((set) => ({
     const theme = preferences?.theme;
     return {
       ...state,
+      sidePanelWidth: typeof state.sidePanelWidth === 'number' ? state.sidePanelWidth : 272,
+      terminalHeight: typeof state.terminalHeight === 'number' ? state.terminalHeight : 240,
+      aiPanelWidth: typeof state.aiPanelWidth === 'number' ? state.aiPanelWidth : 470,
       customThemes:
         state.customThemes && typeof state.customThemes === 'object' && !Array.isArray(state.customThemes)
           ? state.customThemes

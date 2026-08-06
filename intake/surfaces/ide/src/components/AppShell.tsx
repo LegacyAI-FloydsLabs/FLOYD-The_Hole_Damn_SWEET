@@ -1,27 +1,35 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+// CURSE'M IDE — application shell.
+//
+// The shell layout is a dock + canvas substrate (feature-map canvas-docking,
+// Phase 3 S2): the three fixed panels of the old shell are now dock zones —
+// left hosts the side panels (explorer/search/git/debug/extensions) as tabs,
+// bottom hosts the terminal, right hosts the AI coding partner, and center
+// hosts the primary infinite canvas whose nodes hold editor/terminal
+// panels. Activity bar items toggle zone/panel visibility exactly as before
+// (uiStore's activePanel/terminalVisible/aiChatVisible stay the persisted
+// authority; the dock mirrors them).
+//
+// Zone sizes are the legacy uiStore numbers (sidePanelWidth/terminalHeight/
+// aiPanelWidth), dragged via each zone's resize handle — same clamps, same
+// persistence, now interpreted as dock zone sizes.
+
+import { useEffect, useLayoutEffect } from 'react';
 import { useUIStore, type SidePanel } from '@/store/uiStore';
 import { useEditorStore } from '@/store/editorStore';
-import { FileTree, SearchPanel } from '@/workspace';
-import { EditorPane } from '@/editor/EditorPane';
-import { InlineEditOverlay } from '@/editor/InlineEditOverlay';
+import { DockZone } from '@/dock/DockZone';
+import { handleCanvasKeydown } from '@/canvas/canvasShortcuts';
+import { ensureEditorVisible, seedEditorWhenReady } from '@/panels/panelOps';
 import { CommandPalette } from './CommandPalette';
-import { TabBar } from './TabBar';
 import { StatusBar } from './StatusBar';
 import { TitleBar } from './TitleBar';
 import { Icon, type IconName } from './Icon';
 import { SettingsDialog } from './SettingsDialog';
 import { HelpDialog } from './HelpDialog';
 import { ToastRegion } from './ToastRegion';
-import { EditorToolbar } from './EditorToolbar';
+import { InlineEditOverlay } from '@/editor/InlineEditOverlay';
 import { useWorkspace } from '@/workspace';
 import { applyThemeToElement, publishBootSnapshot } from '@/theme';
 import { fontStack } from '@/font';
-
-const TerminalPane = lazy(() => import('@/terminal/TerminalPane').then((module) => ({ default: module.TerminalPane })));
-const AIChatPane = lazy(() => import('@/opencode/AIChatPane').then((module) => ({ default: module.AIChatPane })));
-const GitPanel = lazy(() => import('@/git/GitPanel').then((module) => ({ default: module.GitPanel })));
-const DebugPanel = lazy(() => import('@/debug/DebugPanel').then((module) => ({ default: module.DebugPanel })));
-const ExtensionsPanel = lazy(() => import('./ExtensionsPanel').then((module) => ({ default: module.ExtensionsPanel })));
 
 const activityItems: Array<{ panel: SidePanel; label: string; icon: IconName; shortcut?: string }> = [
   { panel: 'explorer', label: 'Explorer', icon: 'files', shortcut: '⌘B' },
@@ -29,6 +37,7 @@ const activityItems: Array<{ panel: SidePanel; label: string; icon: IconName; sh
   { panel: 'git', label: 'Source Control', icon: 'source' },
   { panel: 'debug', label: 'Run and Debug', icon: 'debug' },
   { panel: 'extensions', label: 'Integrations', icon: 'extensions' },
+  { panel: 'skills', label: 'Skills', icon: 'spark' },
 ];
 
 export function AppShell() {
@@ -44,8 +53,24 @@ export function AppShell() {
     root.dataset.motion = ui.preferences.reducedMotion ? 'reduced' : 'full';
   }, [ui.preferences.fontFamily, ui.preferences.reducedMotion, ui.preferences.theme]);
 
+  // If a file is active but the editor panel was closed off the canvas,
+  // respawn its node — opening a file must always land somewhere visible.
+  useEffect(() => {
+    ensureEditorVisible();
+  }, [activeTabPath]);
+
+  // Shell mount: seed the editor node once the canvas has a real size, even
+  // with no file open, so the WelcomeScreen keeps its home on the canvas
+  // (the old shell always mounted the editor area).
+  useEffect(() => {
+    seedEditorWhenReady();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      // Canvas spatial nav first: Cmd+Arrow (navigate) / Shift+Arrow (pan).
+      if (handleCanvasKeydown(event)) return;
       const command = event.metaKey || event.ctrlKey;
       if (command && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); ui.openPalette('commands'); return; }
       if (command && event.key.toLowerCase() === 'p') { event.preventDefault(); ui.openPalette('files'); return; }
@@ -75,46 +100,8 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', handler);
   }, [activeTabPath, closeTab, openWorkspace, reopenClosedTab, tabs, ui]);
 
-  const renderSidePanel = () => {
-    switch (ui.activePanel) {
-      case 'explorer': return <FileTree />;
-      case 'search': return <SearchPanel />;
-      case 'git': return <GitPanel />;
-      case 'debug': return <DebugPanel />;
-      case 'extensions': return <ExtensionsPanel />;
-      default: return null;
-    }
-  };
-
-  const beginResize = (
-    event: ReactPointerEvent,
-    current: number,
-    axis: 'x' | 'y',
-    direction: 1 | -1,
-    update: (value: number) => void,
-  ) => {
-    event.preventDefault();
-    const start = axis === 'x' ? event.clientX : event.clientY;
-    const move = (moveEvent: PointerEvent) => {
-      const position = axis === 'x' ? moveEvent.clientX : moveEvent.clientY;
-      update(current + (position - start) * direction);
-    };
-    const stop = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', stop);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', stop);
-  };
-
-  const style = {
-    '--side-panel-width': `${ui.sidePanelWidth}px`,
-    '--terminal-height': `${ui.terminalHeight}px`,
-    '--ai-panel-width': `${ui.aiPanelWidth}px`,
-  } as CSSProperties;
-
   return (
-    <div className="app-shell" style={style}>
+    <div className="app-shell">
       <TitleBar />
       <div className="app-main">
         <nav className="activity-bar" aria-label="Primary workbench views">
@@ -128,18 +115,14 @@ export function AppShell() {
           <button className="activity-bar-item" onClick={() => ui.openDialog('settings')} title="Settings" aria-label="Settings"><Icon name="settings" size={21} /></button>
         </nav>
 
-        {ui.activePanel && <><aside className="side-panel"><Suspense fallback={<p className="panel-caption">Loading workbench view…</p>}>{renderSidePanel()}</Suspense></aside><div className="resize-handle vertical" onPointerDown={(event) => beginResize(event, ui.sidePanelWidth, 'x', 1, ui.setSidePanelWidth)} aria-hidden="true" /></>}
+        <DockZone zoneId="left" />
 
-        <main className="app-content">
-          <section className="editor-area" aria-label="Editor">
-            <TabBar />
-            <EditorToolbar />
-            <EditorPane />
-          </section>
-          {ui.terminalVisible && <><div className="resize-handle horizontal" onPointerDown={(event) => beginResize(event, ui.terminalHeight, 'y', -1, ui.setTerminalHeight)} aria-hidden="true" /><Suspense fallback={<p className="panel-caption">Loading terminal…</p>}><TerminalPane /></Suspense></>}
-        </main>
+        <div className="dock-center-column">
+          <DockZone zoneId="center" />
+          <DockZone zoneId="bottom" />
+        </div>
 
-        {ui.aiChatVisible && <><div className="resize-handle vertical" onPointerDown={(event) => beginResize(event, ui.aiPanelWidth, 'x', -1, ui.setAIPanelWidth)} aria-hidden="true" /><Suspense fallback={<p className="panel-caption">Loading coding partner…</p>}><AIChatPane /></Suspense></>}
+        <DockZone zoneId="right" />
       </div>
       <StatusBar />
       {ui.paletteMode && <CommandPalette mode={ui.paletteMode} onClose={ui.closePalette} />}

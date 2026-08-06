@@ -4,6 +4,13 @@ import { useEditorStore } from '@/store/editorStore';
 import { useUIStore, type PaletteMode } from '@/store/uiStore';
 import { useWorkspace } from '@/workspace';
 import { dispatchEditorCommand } from '@/editor/commands';
+import {
+  canvasAutoLayout,
+  canvasNewEditorAtCenter,
+  canvasNewTerminalAtCenter,
+  canvasUndoLayout,
+  canvasZoomToFit,
+} from '@/panels/panelOps';
 import { nextThemeId, resolveTheme } from '@/theme';
 
 interface CommandPaletteProps {
@@ -70,6 +77,11 @@ export function CommandPalette({ mode, onClose }: CommandPaletteProps) {
     { id: 'theme', label: 'Preferences: Cycle Color Theme', detail: `Current: ${resolveTheme(preferences.theme).definition.name}`, action: () => updatePreferences({ theme: nextThemeId(preferences.theme) }) },
     { id: 'close-all', label: 'View: Close All Editors', detail: 'Close every open editor', action: closeAllTabs },
     { id: 'reopen', label: 'View: Reopen Closed Editor', detail: recentlyClosed[0] ?? 'No recently closed editor', keybinding: '⌘⇧T', action: reopenClosedTab },
+    { id: 'canvas-auto-layout', label: 'Canvas: Auto Layout', detail: 'Reflow every canvas node into a viewport grid (undoable)', action: canvasAutoLayout },
+    { id: 'canvas-zoom-fit', label: 'Canvas: Zoom to Fit', detail: 'Frame all canvas nodes in the viewport', action: canvasZoomToFit },
+    { id: 'canvas-new-editor', label: 'Canvas: New Editor at Center', detail: 'Place the editor panel on the canvas', action: canvasNewEditorAtCenter },
+    { id: 'canvas-new-terminal', label: 'Canvas: New Terminal at Center', detail: 'Place the terminal panel on the canvas', action: canvasNewTerminalAtCenter },
+    { id: 'canvas-undo-layout', label: 'Canvas: Undo Layout Change', detail: 'Restore the layout before the last auto-layout', action: canvasUndoLayout },
   ], [addToast, closeAllTabs, openDialog, openWorkspace, preferences.theme, recentlyClosed, reopenClosedTab, setPanel, toggleAIChat, togglePanel, toggleTerminal, updatePreferences]);
 
   const fileItems = useMemo<PaletteItem[]>(() => {

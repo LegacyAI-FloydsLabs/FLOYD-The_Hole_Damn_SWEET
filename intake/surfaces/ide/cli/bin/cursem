@@ -1,0 +1,6 @@
+#!/bin/sh
+# cursem — CURSEM IDE in-shell control CLI (bin shim).
+# Runs the zero-dependency cursem.mjs under the system Node. TerminalOne
+# prepends this directory to PATH in every CURSEM-spawned shell.
+CURSEM_CLI_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec node "$CURSEM_CLI_DIR/../cursem.mjs" "$@"

@@ -72,8 +72,7 @@ export interface EditorOptions {
 }
 
 /** The editor adapter — decouples editor engine from the IDE. */
-export interface EditorAdapter {
-  // Lifecycle
+export interface EditorAdapter {  // Lifecycle
   init(container: HTMLElement): void;
   dispose(): void;
 
@@ -84,6 +83,10 @@ export interface EditorAdapter {
   getActiveFile(): string | null;
   getContent(path: string): string | null;
   setContent(path: string, content: string): void;
+
+  /** Scroll a position into view and place the cursor (used by the in-shell
+   *  CLI's `editor open path:line:col`). No-op when the path is not active. */
+  revealPosition(path: string, line: number, column: number): void;
 
   // Diagnostics (§3)
   setDiagnostics(path: string, diagnostics: Diagnostic[]): void;
@@ -139,4 +142,19 @@ export function detectLanguage(filePath: string): string {
     dockerfile: 'dockerfile',
   };
   return map[ext] || 'plaintext';
+}
+
+// ─── Active adapter registry ────────────────────────────────────────────
+// The Monaco adapter registers itself on init/dispose so non-React consumers
+// (the in-shell CLI control executor) can reach the live editor without
+// importing Monaco statically. Only one adapter exists at a time.
+
+let activeEditorAdapter: EditorAdapter | null = null;
+
+export function registerEditorAdapter(adapter: EditorAdapter | null): void {
+  activeEditorAdapter = adapter;
+}
+
+export function getEditorAdapter(): EditorAdapter | null {
+  return activeEditorAdapter;
 }

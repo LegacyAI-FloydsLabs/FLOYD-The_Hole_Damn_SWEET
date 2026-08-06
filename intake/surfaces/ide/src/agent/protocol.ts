@@ -12,6 +12,92 @@ export interface AgentToolCall { id: string; name: AgentToolName; arguments: Rec
 
 const TOOL_NAMES = new Set<AgentToolName>(['search', 'read_file', 'list_dir', 'git_diff', 'run_task', 'rules', 'mcp']);
 
+// ─── Structured agent event vocabulary (Phase 4 S1) ────────────────────
+//
+// The runner emits these typed events through gateway.agentAppendEvent so
+// they persist in the SQLite run_events table, and mirrors them through its
+// onToolEvent callback so the chat store can render tool-call cards without
+// flattening evidence into text ticks.
+
+export interface AgentToolBeginEvent { type: 'tool_begin'; id: string; name: AgentToolName; args: Record<string, unknown> }
+export interface AgentToolProgressEvent { type: 'tool_progress'; id: string; name: AgentToolName; note: string }
+export interface AgentToolEndEvent { type: 'tool_end'; id: string; name: AgentToolName; result?: unknown; error?: string }
+export type AgentToolEvent = AgentToolBeginEvent | AgentToolProgressEvent | AgentToolEndEvent;
+
+export type AgentAskMethod = 'select' | 'confirm' | 'input';
+
+/** A blocking agent→user question emitted as <cursem-ask>{...}</cursem-ask>. */
+export interface AgentAskRequest {
+  id: string;
+  method: AgentAskMethod;
+  question: string;
+  /** Choices for method 'select'. */
+  options?: string[];
+  /** Optional supporting detail shown under the question. */
+  detail?: string;
+}
+
+export interface AgentAskResponse {
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+}
+
+/** A plan-mode proposal emitted as <cursem-plan>{summary, steps[]}</cursem-plan>. */
+export interface AgentPlan {
+  summary: string;
+  steps: string[];
+}
+
+const ASK_METHODS = new Set<AgentAskMethod>(['select', 'confirm', 'input']);
+const MAX_PLAN_STEPS = 64;
+const MAX_ASK_OPTIONS = 32;
+
+function parseEnvelope<T>(text: string, tag: string, validate: (payload: Record<string, unknown>) => T): T | null {
+  const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  if (!match) return null;
+  let payload: unknown;
+  try { payload = JSON.parse(match[1].trim()); }
+  catch { throw new Error(`The provider returned invalid JSON inside <${tag}>.`); }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error(`The <${tag}> envelope must contain an object.`);
+  return validate(payload as Record<string, unknown>);
+}
+
+/** Parse a blocking <cursem-ask> question. Returns null when the text holds none. */
+export function parseAgentAsk(text: string): AgentAskRequest | null {
+  return parseEnvelope(text, 'cursem-ask', (value) => {
+    if (typeof value.id !== 'string' || !value.id.trim()) throw new Error('The ask request requires an id.');
+    if (!ASK_METHODS.has(value.method as AgentAskMethod)) throw new Error(`Unsupported ask method: ${String(value.method)}`);
+    if (typeof value.question !== 'string' || !value.question.trim()) throw new Error('The ask request requires a question.');
+    const options = value.options === undefined ? undefined : value.options;
+    if (options !== undefined && (!Array.isArray(options) || options.length > MAX_ASK_OPTIONS || options.some((option) => typeof option !== 'string'))) {
+      throw new Error('Ask options must be a string array.');
+    }
+    if ((value.method as AgentAskMethod) === 'select' && (!options || options.length === 0)) throw new Error('A select ask request requires options.');
+    return {
+      id: value.id,
+      method: value.method as AgentAskMethod,
+      question: value.question.trim(),
+      ...(options ? { options: options as string[] } : {}),
+      ...(typeof value.detail === 'string' && value.detail.trim() ? { detail: value.detail.trim() } : {}),
+    };
+  });
+}
+
+/** Parse a plan-mode <cursem-plan> proposal. Returns null when the text holds none. */
+export function parseAgentPlan(text: string): AgentPlan | null {
+  return parseEnvelope(text, 'cursem-plan', (value) => {
+    if (typeof value.summary !== 'string' || !value.summary.trim()) throw new Error('The plan requires a summary.');
+    if (!Array.isArray(value.steps) || value.steps.length === 0) throw new Error('The plan requires a steps array.');
+    if (value.steps.length > MAX_PLAN_STEPS) throw new Error(`The plan exceeds ${MAX_PLAN_STEPS} steps.`);
+    const steps = value.steps.map((step) => {
+      if (typeof step !== 'string' || !step.trim()) throw new Error('Every plan step must be a non-empty string.');
+      return step.trim();
+    });
+    return { summary: value.summary.trim(), steps };
+  });
+}
+
 export function parseAgentToolCall(text: string): AgentToolCall | null {
   const match = text.match(/<cursem-tool>([\s\S]*?)<\/cursem-tool>/i);
   if (!match) return parseLegacyToolCall(text);

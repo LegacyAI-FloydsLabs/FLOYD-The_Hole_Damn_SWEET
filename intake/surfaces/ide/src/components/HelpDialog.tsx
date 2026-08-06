@@ -7,6 +7,7 @@ const shortcuts = [
   ['Undo / Redo', '⌘Z / ⌘⇧Z'], ['Global search', '⌘⇧F'], ['Toggle sidebar', '⌘B'],
   ['Toggle terminal', '⌘J'], ['Toggle AI chat', '⌘⇧A'], ['Settings', '⌘,'],
   ['CURSEM Inline Edit', '⌘K'],
+  ['Canvas: navigate nodes', '⌘←→↑↓'], ['Canvas: pan viewport', '⇧←→↑↓'],
   ['Close editor', '⌘W'], ['Reopen editor', '⌘⇧T'], ['Help', 'F1'],
 ];
 

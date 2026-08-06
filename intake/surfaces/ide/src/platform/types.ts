@@ -441,6 +441,10 @@ export interface TerminalAuth {
   /** TerminalOne bridge endpoint (WebSocket URL or IPC path). */
   endpoint: string;
   expiresAt: number;
+  /** CURSEM-correlated terminal id the frontend should propose to TerminalOne. */
+  terminalId?: string;
+  /** Hook env vars (endpoint/token/id) injected into the PTY shell. */
+  terminalEnv?: Record<string, string>;
 }
 
 // ─── Debug types (§10) ────────────────────────────────────────────────
