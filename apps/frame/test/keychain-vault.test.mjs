@@ -131,7 +131,7 @@ test("a crash between delete and create is recoverable via the staged backup", (
     const line = args[0] === "-i" ? String(options.input || "") : args.join(" ");
     if (line.includes("add-generic-password")
       && line.includes(FLOYD_KEYCHAIN_ACCOUNTS.providers)
-      && !line.includes(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups)) {
+      && !line.includes(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch)) {
       throw new Error("simulated crash mid-swap");
     }
     return fake.exec(command, args, options);
@@ -143,14 +143,14 @@ test("a crash between delete and create is recoverable via the staged backup", (
   );
   // The target item is gone; only the staged envelope survives.
   assert.equal(fake.values.has(FLOYD_KEYCHAIN_ACCOUNTS.providers), false);
-  const envelope = JSON.parse(fake.values.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups));
+  const envelope = JSON.parse(fake.values.get(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch));
   assert.equal(envelope.account, FLOYD_KEYCHAIN_ACCOUNTS.providers);
   assert.equal(envelope.value, "irreplaceable-provider-keys");
   assert.ok(envelope.staged_at);
   // A fresh vault (next startup) restores the old value and clears the stage.
   const recovered = new MacOSKeychainVault({ exec: fake.exec, platform: "darwin" });
   assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), "irreplaceable-provider-keys");
-  assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+  assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch), null);
   // Explicit helper call is idempotent once the stage is spent.
   assert.equal(MacOSKeychainVault.recoverStagedWrite(recovered), null);
 });
@@ -163,20 +163,20 @@ test("successful overwrites stage the old value and then clear the backup", () =
   vault.set(FLOYD_KEYCHAIN_ACCOUNTS.providers, "new-value");
   // The overwrite staged the old value into the backup account mid-flight...
   const flight = fake.calls.slice(callsBefore).map((call) => call.join(" "));
-  assert.ok(flight.some((line) => line.includes(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups)));
+  assert.ok(flight.some((line) => line.includes(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch)));
   // ...and cleared it after the verified write, leaving only the new value.
   assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), "new-value");
-  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch), null);
   assert.equal(fake.values.size, 1);
   // Recovery does nothing when the completed write is already in place: a
   // stale envelope must never roll back a newer verified value.
   fake.values.set(
-    FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups,
+    FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch,
     JSON.stringify({ account: FLOYD_KEYCHAIN_ACCOUNTS.providers, value: "old-value", staged_at: "x" }),
   );
   assert.equal(MacOSKeychainVault.recoverStagedWrite(vault), null);
   assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), "new-value");
-  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+  assert.equal(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch), null);
 });
 
 test("chunked values above 7KB round-trip and never appear in argv", () => {
@@ -262,14 +262,14 @@ test("staged backup captures the full logical value for chunked accounts", () =>
   );
   // The envelope holds the FULL previous logical value, not the manifest
   // marker string (the envelope itself is chunked transparently).
-  const envelope = JSON.parse(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups));
+  const envelope = JSON.parse(vault.get(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch));
   assert.equal(envelope.account, FLOYD_KEYCHAIN_ACCOUNTS.providers);
   assert.equal(envelope.value, oldValue);
   assert.ok(!envelope.value.startsWith("fvchunks:"));
   // Startup recovery restores the full chunked value and spends the stage.
   const recovered = new MacOSKeychainVault({ exec: fake.exec, platform: "darwin" });
   assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.providers), oldValue);
-  assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.migrationBackups), null);
+  assert.equal(recovered.get(FLOYD_KEYCHAIN_ACCOUNTS.stagedWriteScratch), null);
 });
 
 test("no recorded security call ever carries a secret in argv", () => {
