@@ -2,12 +2,13 @@
  * Chat Message Component
  */
 
+import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { Message } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { User, Bot, AlertTriangle } from 'lucide-react';
+import { User, Bot, AlertTriangle, Copy, Check } from 'lucide-react';
 
 interface ChatMessageProps {
   message: Message;
@@ -16,7 +17,15 @@ interface ChatMessageProps {
 
 export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
   const isUser = message.role === 'user';
-  
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  };
+
   return (
     <div className={cn(
       'flex gap-3',
@@ -27,13 +36,23 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
           <Bot className="w-5 h-5" />
         </div>
       )}
-      
+
       <div className={cn(
-        'max-w-[70%] min-w-0 rounded-lg px-4 py-3 break-words',
-        isUser 
-          ? 'bg-sky-600 text-white' 
+        'group relative max-w-[70%] min-w-0 rounded-lg px-4 py-3 break-words',
+        isUser
+          ? 'bg-sky-600 text-white'
           : 'bg-slate-800 text-slate-100',
       )}>
+        {!isUser && !isStreaming && (
+          <button
+            onClick={handleCopy}
+            aria-label={copied ? 'Copied' : 'Copy message'}
+            title={copied ? 'Copied' : 'Copy'}
+            className="absolute top-1.5 right-1.5 p-1 rounded bg-slate-700/80 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+        )}
         {!isUser && message.fallback && (
           <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1 mb-2">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />

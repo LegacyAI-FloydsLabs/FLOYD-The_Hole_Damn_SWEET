@@ -32,7 +32,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const [providerModels, setProviderModels] = useState<Record<string, ModelOption[]>>({});
   const [systemPrompt, setSystemPrompt] = useState('');
   const [effectivePrompt, setEffectivePrompt] = useState('');
-  const [maxTokens, setMaxTokens] = useState(16384);
+  const [maxTokens, setMaxTokens] = useState(32768);
   const [showToolCalls, setShowToolCalls] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -58,7 +58,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         );
         setSystemPrompt(settings.systemPrompt || '');
         setEffectivePrompt(settings.effectiveSystemPrompt || '');
-        setMaxTokens(settings.maxTokens || 16384);
+        setMaxTokens(settings.maxTokens || 32768);
         setShowToolCalls(settings.showToolCalls ?? false);
       });
     }

@@ -48,6 +48,8 @@ export interface TurnResult {
   outputItems: ResponseInputItem[];
   /** Set when the Vault served this turn through its GLM fallback. */
   fallback?: VaultFallbackNotice | null;
+  /** Set when the backend ended the turn early at the output-token limit. */
+  truncated?: boolean;
 }
 
 export class ChatGPTSubscriptionClient {
@@ -179,6 +181,13 @@ export class ChatGPTSubscriptionClient {
             const msg = ev.response?.error?.message || ev.error?.message || ev.message || 'ChatGPT backend error';
             callbacks?.onError?.(msg);
             throw new Error(msg);
+          }
+          case 'response.incomplete': {
+            // Responses API: the turn ended early, e.g. at max_output_tokens.
+            if (ev.response?.incomplete_details?.reason === 'max_output_tokens') {
+              result.truncated = true;
+            }
+            break;
           }
         }
       }

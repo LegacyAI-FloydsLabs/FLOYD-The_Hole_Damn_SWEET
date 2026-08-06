@@ -45,6 +45,7 @@ import {
   type DesktopExperienceState,
 } from './floyd-core-experience.js';
 import { buildDefaultSystemPrompt } from './prompts/default-system-prompt.js';
+import { buildNeverSilentCompletion, TRUNCATION_NOTE } from './completion-guard.js';
 import {
   isDesktopProviderReady,
   listVaultModelConnectors,
@@ -213,7 +214,7 @@ async function desktopVaultReadiness(signal?: AbortSignal): Promise<{
 let settings: Settings = {
   provider: 'chatgpt-subscription',
   model: 'gpt-5.6-terra',
-  maxTokens: 16384,
+  maxTokens: 32768,
 };
 
 // ChatGPT subscription client (single instance; owns token refresh)
@@ -1681,6 +1682,24 @@ app.post('/api/chat/stream', async (req, res) => {
   // record it on the saved assistant message.
   const notifyFallback = makeFallbackNotifier(res);
   let fallbackNotice: VaultFallbackNotice | null = null;
+
+  // Never-silent completion + truncation tracking (see completion-guard.ts).
+  const executedTools: string[] = [];
+  let truncated = false;
+
+  // Client abort: when the connection dies (Stop button, tab closed), stop
+  // the provider loop between turns and never write to the dead response.
+  let clientDisconnected = false;
+  res.on('close', () => {
+    if (!res.writableEnded) clientDisconnected = true;
+  });
+  const sendEvent = (payload: Record<string, unknown>) => {
+    if (clientDisconnected) return;
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+  const activity = (turn: number, tool?: string) => {
+    sendEvent({ type: 'activity', turn, ...(tool ? { tool } : {}) });
+  };
   
   // Build system prompt with skills and project context
   let systemPrompt = settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() });
@@ -1711,8 +1730,9 @@ app.post('/api/chat/stream', async (req, res) => {
         }
       }
 
-      while (turnCount < maxTurns) {
+      while (turnCount < maxTurns && !clientDisconnected) {
         turnCount++;
+        activity(turnCount);
         const turn = await chatgptClient.runTurn({
           model: settings.model,
           instructions: systemPrompt,
@@ -1721,7 +1741,7 @@ app.post('/api/chat/stream', async (req, res) => {
           callbacks: {
             onText: (delta) => {
               fullResponse += delta;
-              res.write(`data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`);
+              sendEvent({ type: 'text', content: delta });
             },
             onFallback: (notice) => {
               fallbackNotice = notice;
@@ -1729,15 +1749,19 @@ app.post('/api/chat/stream', async (req, res) => {
             },
           },
         });
+        if (turn.truncated) truncated = true;
 
         input.push(...turn.outputItems);
 
         if (turn.toolCalls.length === 0) break;
 
         for (const call of turn.toolCalls) {
-          res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: call.name, args: call.args, id: call.callId })}\n\n`);
+          if (clientDisconnected) break;
+          activity(turnCount, call.name);
+          executedTools.push(call.name);
+          sendEvent({ type: 'tool_call', tool: call.name, args: call.args, id: call.callId });
           const result = await executeAgentTool(call.name, call.args);
-          res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: call.name, id: call.callId, result: result.success ? result.result : { error: result.error }, success: result.success })}\n\n`);
+          sendEvent({ type: 'tool_result', tool: call.name, id: call.callId, result: result.success ? result.result : { error: result.error }, success: result.success });
           input.push(chatgptToolResult(call.callId, result.success ? result.result : { error: result.error }));
         }
       }
@@ -1751,12 +1775,13 @@ app.post('/api/chat/stream', async (req, res) => {
       });
       const openaiTools = enableTools ? getOpenAITools() : undefined;
       
-      while (turnCount < maxTurns) {
+      while (turnCount < maxTurns && !clientDisconnected) {
         turnCount++;
-        
+        activity(turnCount);
+
         const response = await client.chat.completions.create({
           model: settings.model,
-          max_tokens: settings.maxTokens || 16384,
+          max_tokens: settings.maxTokens || 32768,
           messages: [
             { role: 'system', content: systemPrompt },
             ...apiMessages,
@@ -1765,46 +1790,51 @@ app.post('/api/chat/stream', async (req, res) => {
         });
         notifyFallback(fallbackCap.notice());
         fallbackNotice = fallbackCap.notice() ?? fallbackNotice;
-        
+
         const choice = response.choices[0];
         const assistantMessage = choice.message;
-        
+        // Provider cut the answer off at the Max Tokens limit.
+        if (choice.finish_reason === 'length') truncated = true;
+
         // Handle text content
         if (assistantMessage.content) {
           fullResponse += assistantMessage.content;
-          res.write(`data: ${JSON.stringify({ type: 'text', content: assistantMessage.content })}\n\n`);
+          sendEvent({ type: 'text', content: assistantMessage.content });
         }
-        
+
         // Handle tool calls
         if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
           apiMessages.push(assistantMessage);
-          
+
           for (const toolCall of assistantMessage.tool_calls) {
+            if (clientDisconnected) break;
             // Type narrowing: only function-type calls have the .function property
             if (toolCall.type !== 'function') continue;
             const toolName = toolCall.function.name;
             const toolArgs = JSON.parse(toolCall.function.arguments);
-            
+            activity(turnCount, toolName);
+            executedTools.push(toolName);
+
             // Send tool call info to client
-            res.write(`data: ${JSON.stringify({ 
-              type: 'tool_call', 
-              tool: toolName, 
+            sendEvent({
+              type: 'tool_call',
+              tool: toolName,
               args: toolArgs,
-              id: toolCall.id 
-            })}\n\n`);
-            
+              id: toolCall.id
+            });
+
             // Execute tool
             const result = await executeAgentTool(toolName, toolArgs);
-            
+
             // Send tool result to client
-            res.write(`data: ${JSON.stringify({ 
-              type: 'tool_result', 
+            sendEvent({
+              type: 'tool_result',
               tool: toolName,
               id: toolCall.id,
               result: result.success ? result.result : { error: result.error },
               success: result.success
-            })}\n\n`);
-            
+            });
+
             // Add tool result to messages
             apiMessages.push({
               role: 'tool',
@@ -1816,7 +1846,7 @@ app.post('/api/chat/stream', async (req, res) => {
           // No tool calls, we're done
           break;
         }
-        
+
         if (choice.finish_reason === 'stop') {
           break;
         }
@@ -1831,50 +1861,56 @@ app.post('/api/chat/stream', async (req, res) => {
       });
       const anthropicTools = enableTools ? getAnthropicTools() : undefined;
       
-      while (turnCount < maxTurns) {
+      while (turnCount < maxTurns && !clientDisconnected) {
         turnCount++;
-        
+        activity(turnCount);
+
         const response = await client.messages.create({
           model: settings.model,
-          max_tokens: settings.maxTokens || 16384,
+          max_tokens: settings.maxTokens || 32768,
           system: systemPrompt,
           messages: apiMessages,
           tools: anthropicTools,
         });
         notifyFallback(fallbackCap.notice());
         fallbackNotice = fallbackCap.notice() ?? fallbackNotice;
-        
+        // Provider cut the answer off at the Max Tokens limit.
+        if (response.stop_reason === 'max_tokens') truncated = true;
+
         // Process response content
         let hasToolUse = false;
         const toolResults: any[] = [];
-        
+
         for (const block of response.content) {
           if (block.type === 'text') {
             fullResponse += block.text;
-            res.write(`data: ${JSON.stringify({ type: 'text', content: block.text })}\n\n`);
+            sendEvent({ type: 'text', content: block.text });
           } else if (block.type === 'tool_use') {
+            if (clientDisconnected) break;
             hasToolUse = true;
-            
+            activity(turnCount, block.name);
+            executedTools.push(block.name);
+
             // Send tool call info to client
-            res.write(`data: ${JSON.stringify({ 
-              type: 'tool_call', 
-              tool: block.name, 
+            sendEvent({
+              type: 'tool_call',
+              tool: block.name,
               args: block.input,
-              id: block.id 
-            })}\n\n`);
-            
+              id: block.id
+            });
+
             // Execute tool
             const result = await executeAgentTool(block.name, block.input as Record<string, unknown>);
-            
+
             // Send tool result to client
-            res.write(`data: ${JSON.stringify({ 
-              type: 'tool_result', 
+            sendEvent({
+              type: 'tool_result',
               tool: block.name,
               id: block.id,
               result: result.success ? result.result : { error: result.error },
               success: result.success
-            })}\n\n`);
-            
+            });
+
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
@@ -1899,6 +1935,17 @@ app.post('/api/chat/stream', async (req, res) => {
       }
     }
     
+    // Never-silent completion: a run whose tokens all went to tool calls (or
+    // that exhausted maxTurns mid-work) must still say something — streamed
+    // live as a text event and saved to the session below.
+    if (fullResponse.trim() === '') {
+      fullResponse = buildNeverSilentCompletion(executedTools);
+      sendEvent({ type: 'text', content: fullResponse });
+    } else if (truncated) {
+      fullResponse += TRUNCATION_NOTE;
+      sendEvent({ type: 'text', content: TRUNCATION_NOTE });
+    }
+
     // Save final response to session
     if (fullResponse) {
       session.messages.push({
@@ -1910,12 +1957,13 @@ app.post('/api/chat/stream', async (req, res) => {
     }
     session.updated = Date.now();
     await saveSession(session);
-    
-    res.write(`data: ${JSON.stringify({ 
-      type: 'done', 
+
+    sendEvent({
+      type: 'done',
       sessionId: session.id,
-      turns: turnCount
-    })}\n\n`);
+      turns: turnCount,
+      truncated,
+    });
     res.end();
     
   } catch (error: any) {

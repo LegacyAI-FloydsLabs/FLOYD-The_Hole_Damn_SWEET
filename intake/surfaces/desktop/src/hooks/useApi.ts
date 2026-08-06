@@ -2,7 +2,7 @@
  * API hooks for Floyd Web
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { Session, Settings } from '@/types';
 
 const API_BASE = '/api';
@@ -10,6 +10,8 @@ const API_BASE = '/api';
 export function useApi() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Aborts the in-flight /chat/stream fetch (Stop button in the composer).
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   const fetchJson = useCallback(async <T>(url: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(`${API_BASE}${url}`, {
@@ -136,10 +138,10 @@ export function useApi() {
 
   // Chat (streaming with tool support)
   const sendMessageStream = useCallback(async (
-    sessionId: string, 
+    sessionId: string,
     message: string,
     onText: (text: string) => void,
-    onDone: (usage: any, sessionId: string) => void,
+    onDone: (usage: any, sessionId: string, truncated?: boolean) => void,
     onError: (error: string) => void,
     onToolCall?: (tool: string, args: any, id: string) => void,
     onToolResult?: (tool: string, id: string, result: any, success: boolean) => void,
@@ -151,48 +153,55 @@ export function useApi() {
       mimeType: string;
       data: string;
     }>,
-    onFallback?: (provider: string, model: string | null) => void
+    onFallback?: (provider: string, model: string | null) => void,
+    onActivity?: (turn: number, tool?: string) => void
   ) => {
     setLoading(true);
     setError(null);
-    
+
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+
     try {
       const response = await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, message, enableTools: true, attachments: attachments || [] }),
+        signal: controller.signal,
       });
-      
+
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${response.status}`);
       }
-      
+
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body');
-      
+
       const decoder = new TextDecoder();
-      
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
+
         const chunk = decoder.decode(value);
         const lines = chunk.split('\n');
-        
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              
+
               if (data.type === 'text') {
                 onText(data.content);
               } else if (data.type === 'tool_call') {
                 onToolCall?.(data.tool, data.args, data.id);
               } else if (data.type === 'tool_result') {
                 onToolResult?.(data.tool, data.id, data.result, data.success);
+              } else if (data.type === 'activity') {
+                onActivity?.(data.turn, data.tool);
               } else if (data.type === 'done') {
-                onDone(data.usage, data.sessionId);
+                onDone(data.usage, data.sessionId, data.truncated === true);
               } else if (data.type === 'fallback') {
                 onFallback?.(data.provider, data.model ?? null);
               } else if (data.type === 'error') {
@@ -205,11 +214,22 @@ export function useApi() {
         }
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        // Stopped by the user: keep whatever streamed in as the answer.
+        onDone(null, sessionId, false);
+        return;
+      }
       setError(err.message);
       onError(err.message);
     } finally {
+      streamAbortRef.current = null;
       setLoading(false);
     }
+  }, []);
+
+  // Stop the in-flight streaming request (composer Stop button).
+  const stopStream = useCallback(() => {
+    streamAbortRef.current?.abort();
   }, []);
 
   // Get available tools
@@ -272,6 +292,7 @@ export function useApi() {
     deleteSession,
     sendMessage,
     sendMessageStream,
+    stopStream,
     getTools,
     executeTool,
     uploadFiles,

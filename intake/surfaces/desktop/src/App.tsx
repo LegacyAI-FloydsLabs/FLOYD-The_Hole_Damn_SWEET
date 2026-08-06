@@ -23,7 +23,12 @@ import {
   Wrench,
   Sparkles,
   FolderKanban,
-  Users
+  Users,
+  Square,
+  Play,
+  Globe,
+  Image as ImageIcon,
+  X
 } from 'lucide-react';
 
 export default function App() {
@@ -39,6 +44,18 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingFallback, setStreamingFallback] = useState<{ provider: string; model: string | null } | null>(null);
+  // Always-on working status driven by server activity events (independent of
+  // the showToolCalls toggle).
+  const [activity, setActivity] = useState<{ turn: number; tool?: string } | null>(null);
+  // Server flagged the last answer as cut off at the Max Tokens limit.
+  const [truncatedResponse, setTruncatedResponse] = useState(false);
+  const [quickActionsDismissed, setQuickActionsDismissed] = useState(() => {
+    try {
+      return window.localStorage?.getItem('floyd.quickActions.dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [_settings, setSettings] = useState<Settings | null>(null);
   const [showToolCalls, setShowToolCalls] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -178,9 +195,11 @@ export default function App() {
     init();
   }, []);
 
-  // Handle send message
-  const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
+  // Handle send message. `overrideMessage` lets UI affordances (e.g. the
+  // Continue button after truncation) send without typing into the composer.
+  const handleSend = async (overrideMessage?: string) => {
+    const rawInput = overrideMessage ?? input;
+    if ((!rawInput.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
     restoreConnectionNotice();
 
     // Upload attachments first so the server holds base64 payloads
@@ -200,11 +219,11 @@ export default function App() {
 
     const userMessage: Message = {
       role: 'user',
-      content: input.trim(),
+      content: rawInput.trim(),
       timestamp: Date.now(),
       attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
     };
-    
+
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsStreaming(true);
@@ -213,6 +232,8 @@ export default function App() {
     setStreamingFallback(null);
     streamingFallbackRef.current = null;
     setActiveToolCalls([]);
+    setActivity(null);
+    setTruncatedResponse(false);
     
     try {
       await api.sendMessageStream(
@@ -224,7 +245,7 @@ export default function App() {
           setStreamingContent(streamingContentRef.current);
         },
         // onDone
-        async (_usage, _sessionId) => {
+        async (_usage, _sessionId, truncated) => {
           const fullContent = streamingContentRef.current;
           if (fullContent) {
             setMessages(prev => [...prev, {
@@ -240,8 +261,10 @@ export default function App() {
           streamingFallbackRef.current = null;
           setIsStreaming(false);
           setActiveToolCalls([]);
+          setActivity(null);
+          setTruncatedResponse(truncated === true);
           restoreConnectionNotice();
-          
+
           // Refresh sessions list
           const sessionList = await api.getSessions();
           setSessions(sessionList);
@@ -255,6 +278,7 @@ export default function App() {
           setStreamingFallback(null);
           streamingFallbackRef.current = null;
           setActiveToolCalls([]);
+          setActivity(null);
         },
         // onToolCall
         (tool, args, id) => {
@@ -280,12 +304,35 @@ export default function App() {
           const notice = { provider, model };
           streamingFallbackRef.current = notice;
           setStreamingFallback(notice);
+        },
+        // onActivity — always-on working status, independent of showToolCalls.
+        (turn, tool) => {
+          setActivity({ turn, tool });
         }
       );
     } catch (err: any) {
       showOperationError(`Error: ${err.message}`);
       setIsStreaming(false);
     }
+  };
+
+  // Stop the in-flight stream; the partial answer is kept via onDone.
+  const handleStop = () => {
+    api.stopStream();
+  };
+
+  const dismissQuickActions = () => {
+    setQuickActionsDismissed(true);
+    try {
+      window.localStorage?.setItem('floyd.quickActions.dismissed', '1');
+    } catch {
+      // Storage unavailable: the row simply reappears next launch.
+    }
+  };
+
+  const prefillComposer = (text: string) => {
+    setInput(text);
+    inputRef.current?.focus();
   };
 
   // Handle key press
@@ -550,6 +597,17 @@ export default function App() {
             <ChatMessage key={index} message={message} />
           ))}
           
+          {/* Always-on working status (independent of Show tool calls) */}
+          {isStreaming && activity && (
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>
+                Working… turn {activity.turn}
+                {activity.tool ? ` · ${activity.tool}` : ''}
+              </span>
+            </div>
+          )}
+
           {/* Tool calls (opt-in via Settings → Show tool calls) */}
           {showToolCalls && activeToolCalls.length > 0 && (
             <div className="space-y-2">
@@ -592,6 +650,75 @@ export default function App() {
         {/* Input */}
         <div className="border-t border-slate-700 p-4">
           <div className="flex flex-col gap-2">
+            {/* Capability quick actions (dismissible, hidden while streaming) */}
+            {!isStreaming && !quickActionsDismissed && (
+              <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto px-1">
+                <button
+                  onClick={() => setShowBrowork(true)}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  <Users className="w-3.5 h-3.5 text-cyan-400" />
+                  Sub-agent
+                </button>
+                <button
+                  onClick={() => prefillComposer('Run this code: ')}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  <Play className="w-3.5 h-3.5 text-green-400" />
+                  Run code
+                </button>
+                <button
+                  onClick={() => prefillComposer('Browse the web: ')}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  <Globe className="w-3.5 h-3.5 text-blue-400" />
+                  Browse
+                </button>
+                <button
+                  onClick={() => prefillComposer('Generate media (check connected MCP servers for a media tool): ')}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
+                  Generate media
+                </button>
+                <button
+                  onClick={() => setShowSkills(true)}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  Skills
+                </button>
+                <button
+                  onClick={() => setShowProjects(true)}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  <FolderKanban className="w-3.5 h-3.5 text-blue-400" />
+                  Projects
+                </button>
+                <button
+                  onClick={dismissQuickActions}
+                  aria-label="Dismiss quick actions"
+                  title="Dismiss"
+                  className="ml-auto p-1 text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            {/* Truncated at Max Tokens: one-click continue */}
+            {truncatedResponse && !isStreaming && (
+              <div className="flex justify-end px-1">
+                <button
+                  onClick={() => handleSend('continue')}
+                  className="flex items-center gap-1.5 px-3 py-1 text-xs bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-full text-amber-300 transition-colors"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Response hit Max Tokens — Continue
+                </button>
+              </div>
+            )}
+
             {/* Attachment preview strip */}
             {attachments.length > 0 && (
               <div className="px-2">
@@ -628,20 +755,30 @@ export default function App() {
                 )}
                 rows={1}
               />
-              <button
-                onClick={handleSend}
-                disabled={(!input.trim() && attachments.length === 0) || status !== 'ready' || isStreaming}
-                className={cn(
-                  'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
-                  'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
-                )}
-              >
-                {isStreaming ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
+              {isStreaming ? (
+                <button
+                  onClick={handleStop}
+                  title="Stop"
+                  aria-label="Stop"
+                  className={cn(
+                    'px-4 py-2 bg-red-600 rounded-lg transition-colors',
+                    'hover:bg-red-700',
+                  )}
+                >
+                  <Square className="w-5 h-5" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSend()}
+                  disabled={(!input.trim() && attachments.length === 0) || status !== 'ready'}
+                  className={cn(
+                    'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
+                    'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
+                  )}
+                >
                   <Send className="w-5 h-5" />
-                )}
-              </button>
+                </button>
+              )}
             </div>
           </div>
         </div>
