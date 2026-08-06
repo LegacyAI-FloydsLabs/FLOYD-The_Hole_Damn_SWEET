@@ -47,6 +47,29 @@ test("managed environment always replaces inherited vendor credentials", () => {
   assert.equal(env.DATABASE_PASSWORD, undefined);
 });
 
+test("frame-internal loopback tokens survive the credential scrub", () => {
+  // The frame mints one shared TERMINAL_APP_TOKEN and hands it to both
+  // TerminalOne (TERMINALONE_AUTH_TOKEN) and CURSEM-IDE (CURSEM_TERMINAL_TOKEN).
+  // Scrubbing the IDE's half left it with the URL but no credential — every
+  // framed /api/terminal/auth answered 503. These are internal config, not
+  // vendor credentials, and must pass through untouched.
+  const env = applyVaultEnvironment(
+    {
+      CURSEM_TERMINAL_TOKEN: "frame-minted-loopback-token",
+      CURSEM_TERMINAL_URL: "ws://127.0.0.1:13013",
+      TERMINALONE_AUTH_TOKEN: "frame-minted-loopback-token",
+      XYZ_TOKEN: "real-parent-token",
+    },
+    "cursem-ide",
+    TOKEN,
+    PROXY,
+  );
+  assert.equal(env.CURSEM_TERMINAL_TOKEN, "frame-minted-loopback-token");
+  assert.equal(env.CURSEM_TERMINAL_URL, "ws://127.0.0.1:13013");
+  assert.equal(env.TERMINALONE_AUTH_TOKEN, "frame-minted-loopback-token");
+  assert.equal(env.XYZ_TOKEN, undefined);
+});
+
 test("every managed provider route is loopback and carries only an fv token", () => {
   for (const provider of [
     "openai", "anthropic", "google", "deepseek", "mistral", "huggingface",
