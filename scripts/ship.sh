@@ -60,6 +60,18 @@ local)
   rsync -a --delete --files-from="$LIST" --exclude 'node_modules/' "$ROOT/" "$WS/"
   # node_modules: content-addressed enough for rsync -a to skip when unchanged.
   rsync -a "$ROOT/node_modules/" "$WS/node_modules/"
+  # Build outputs are gitignored, so the tracked-file list above skips them —
+  # sync explicitly or the installed app keeps running stale bundles.
+  # macOS blocks rsync's unlinkat on pkg-installed (provenanced) files while
+  # allowing rm, so replace whole dirs instead of using rsync --delete.
+  find "$ROOT/intake/surfaces" -maxdepth 2 -type d \( -name dist -o -name dist-server \) | while read -r d; do
+    rel=${d#"$ROOT"/}
+    if [ -d "$WS/$rel" ]; then
+      chmod -R u+w "$WS/$rel" 2>/dev/null || true
+      rm -rf "$WS/$rel"
+    fi
+    rsync -a "$d/" "$WS/$rel/"
+  done
   # Payload files are mode 444: write via temp+rename (directory op), never
   # shell truncation, which fails EACCES even for the owner.
   printf '%s\n' "$(tr -d '[:space:]' < "$ROOT/VERSION")" > "$WS/.VERSION.ship" && mv -f "$WS/.VERSION.ship" "$WS/VERSION"
