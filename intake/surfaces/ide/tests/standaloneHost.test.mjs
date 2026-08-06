@@ -59,6 +59,18 @@ describe('standalone trusted host', () => {
     expect(escaped.status).toBe(403);
   });
 
+  it('lists a directory containing a broken symlink and reports symlinked dirs as browsable', async () => {
+    const { root, base } = await fixture();
+    await mkdir(join(root, 'real-dir'));
+    await symlink(join(root, 'missing-target'), join(root, 'broken-link'));
+    await symlink(join(root, 'real-dir'), join(root, 'dir-link'));
+    const response = await fetch(`${base}/api/fs/list?path=${encodeURIComponent(root)}`);
+    expect(response.status).toBe(200);
+    const listing = await response.json();
+    expect(listing.items).toContainEqual(expect.objectContaining({ name: 'broken-link', type: 'symlink', size: 0, mtimeMs: 0 }));
+    expect(listing.items).toContainEqual(expect.objectContaining({ name: 'dir-link', type: 'dir' }));
+  });
+
   it('uses fixed Git operations against the real system repository', async () => {
     const { root, base } = await fixture();
     await execFileAsync('git', ['init'], { cwd: root });

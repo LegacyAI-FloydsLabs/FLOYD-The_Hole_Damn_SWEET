@@ -68,6 +68,61 @@ function clampDims(cols, rows) {
   };
 }
 
+// ─── Shell env channel + client-proposed session ids ─────────────────────────
+// The `shell` message may additionally carry (a) an `env` map merged into the
+// PTY env after an allowlist check — hook/CLI correlation variables only, never
+// arbitrary caller env — and (b) a client-proposed `sessionId` so the caller
+// can mint a correlation id BEFORE spawn. Both are optional; clients that send
+// neither behave exactly as before.
+const SHELL_ENV_ALLOWED_PREFIXES = ['CURSEM_', 'CATE_HOOK_'];
+const SHELL_ENV_ALLOWED_NAMES = new Set(['TERMINALONE_SESSION_ID']);
+const SHELL_ENV_MAX_ENTRIES = 32;
+const SHELL_ENV_MAX_KEY = 128;
+const SHELL_ENV_MAX_VALUE = 4096;
+const CLIENT_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** @returns {Record<string, string>} allowlisted entries only; invalid input → {} */
+function sanitizeShellEnv(env) {
+  const out = {};
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return out;
+  for (const [key, value] of Object.entries(env)) {
+    if (Object.keys(out).length >= SHELL_ENV_MAX_ENTRIES) break;
+    if (!key || key.length > SHELL_ENV_MAX_KEY || typeof value !== 'string') continue;
+    if (value.length > SHELL_ENV_MAX_VALUE || value.includes('\0')) continue;
+    const allowed = SHELL_ENV_ALLOWED_NAMES.has(key) || SHELL_ENV_ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix));
+    if (allowed) out[key] = value;
+  }
+  return out;
+}
+
+/** @returns {string|null} the proposed id when path-safe, else null */
+function sanitizeClientSessionId(value) {
+  if (typeof value !== 'string') return null;
+  return CLIENT_SESSION_ID.test(value) ? value : null;
+}
+
+/**
+ * Re-key a session onto a client-proposed id. Heartbeat/grace state is keyed by
+ * (and closed over) the old id, so heartbeat restarts under the new one.
+ * No-op when the proposal is invalid, unchanged, or already taken.
+ */
+function adoptClientSessionId(session, proposedId) {
+  const id = sanitizeClientSessionId(proposedId);
+  if (!id || id === session.id) return;
+  if (activeSessions.has(id)) {
+    warn(session.id, 'Client-proposed session id already in use — keeping server id', { proposedId: id });
+    return;
+  }
+  const previousId = session.id;
+  stopHeartbeat(session);
+  clearGraceTimer(session);
+  activeSessions.delete(previousId);
+  session.id = id;
+  activeSessions.set(id, session);
+  startHeartbeat(session);
+  info(id, 'Adopted client-proposed session id', { previousId });
+}
+
 /** Count sessions running a live shell, optionally excluding one id. */
 function countRealShells(excludeId) {
   let n = 0;
@@ -239,7 +294,7 @@ function spawnShell(session, cwd) {
   let workingDir = cwd || process.env.HOME || os.homedir();
   if (!fs.existsSync(workingDir)) workingDir = os.homedir();
 
-  const ptyEnv = { ...process.env, TERM: 'xterm-256color' };
+  const ptyEnv = { ...process.env, TERM: 'xterm-256color', ...(session.shellEnv || {}) };
   const shell = process.env.SHELL || '/bin/zsh';
 
   session.shellCwd = workingDir;
@@ -439,6 +494,12 @@ function handleMessage(session, ws, data) {
       const { cols, rows } = clampDims(data.cols, data.rows);
       session.lastCols = cols;
       session.lastRows = rows;
+      // Optional correlation channel: a client-proposed session id and an
+      // allowlisted env map. Both are ignored when absent/invalid, so older
+      // clients are unaffected. `shellEnv` persists on the session so the
+      // shell-reset respawn keeps the same env.
+      if (data.sessionId !== undefined) adoptClientSessionId(session, data.sessionId);
+      if (data.env !== undefined) session.shellEnv = sanitizeShellEnv(data.env);
       // Enforce the concurrent-shell cap. Fresh spawns only — resume reuses an
       // existing session and is exempt. The current (placeholder) session has no
       // PTY yet and is excluded from the count.

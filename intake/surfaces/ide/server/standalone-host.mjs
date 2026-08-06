@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { watch } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { createAgentStore } from './agent-store.mjs';
 import { createPatchTransactions } from './patch-transactions.mjs';
@@ -23,6 +23,9 @@ import { createTaskDiscovery } from './task-discovery.mjs';
 const execFileAsync = promisify(execFile);
 const MAX_BODY_BYTES = 512 * 1024 * 1024;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
+// Binary reads feed document/image viewers; base64 inflates ~33% and the
+// payload crosses the JSON channel, so cap well below MAX_FILE_BYTES.
+const MAX_BINARY_FILE_BYTES = 64 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
 
 // Admitted-surface identity for Floyd Core discovery: reports the git commit
@@ -227,6 +230,14 @@ export async function createStandaloneHost(options = {}) {
         if (metadata.size > MAX_FILE_BYTES) throw new HttpError(413, `File exceeds ${MAX_FILE_BYTES} bytes.`);
         return sendJson(res, 200, { content: await readFile(target, 'utf8') });
       }
+      if (url.pathname === '/api/fs/read-binary' && req.method === 'GET') {
+        const target = await boundary.existing(requiredQuery(url, 'path'));
+        const metadata = await stat(target);
+        if (!metadata.isFile()) throw new HttpError(400, 'Path is not a file.');
+        if (metadata.size > MAX_BINARY_FILE_BYTES) throw new HttpError(413, `File exceeds ${MAX_BINARY_FILE_BYTES} bytes.`);
+        const data = await readFile(target);
+        return sendJson(res, 200, { name: basename(target), size: metadata.size, mime: binaryMimeFor(target), data: data.toString('base64') });
+      }
       if (url.pathname === '/api/fs/write' && req.method === 'POST') {
         const body = await readJson(req);
         if (typeof body.content !== 'string') throw new HttpError(400, 'content must be a string.');
@@ -240,13 +251,21 @@ export async function createStandaloneHost(options = {}) {
         const entries = await import('node:fs/promises').then(({ readdir }) => readdir(directory, { withFileTypes: true }));
         const items = await Promise.all(entries.map(async (entry) => {
           const path = resolve(directory, entry.name);
-          const metadata = await stat(path);
+          // One unstat-able entry (broken symlink, EACCES) must not sink the
+          // whole listing — fall back to the dirent-derived shape. A symlink
+          // that resolves to a directory reports 'dir' so symlinked folders
+          // stay browsable; realpath confinement still applies downstream.
+          let metadata = null;
+          try { metadata = await stat(path); } catch { /* keep listing the rest */ }
+          const type = entry.isSymbolicLink()
+            ? (metadata?.isDirectory() ? 'dir' : 'symlink')
+            : entry.isDirectory() ? 'dir' : 'file';
           return {
             name: entry.name,
             path,
-            type: entry.isSymbolicLink() ? 'symlink' : entry.isDirectory() ? 'dir' : 'file',
-            size: metadata.size,
-            mtimeMs: metadata.mtimeMs,
+            type,
+            size: metadata ? metadata.size : 0,
+            mtimeMs: metadata ? metadata.mtimeMs : 0,
           };
         }));
         return sendJson(res, 200, { items });
@@ -572,6 +591,20 @@ async function describeWorkspace(root) {
 
 function workspaceId(root) {
   return `local-${Buffer.from(root).toString('base64url').slice(0, 32)}`;
+}
+
+const BINARY_MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.avif': 'image/avif', '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+  '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
+  '.zip': 'application/zip', '.gz': 'application/gzip',
+};
+
+function binaryMimeFor(path) {
+  return BINARY_MIME_BY_EXT[extname(path).toLowerCase()] || 'application/octet-stream';
 }
 
 async function isDirectoryOrFile(value) {

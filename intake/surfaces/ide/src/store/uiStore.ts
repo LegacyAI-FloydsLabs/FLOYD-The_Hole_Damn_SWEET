@@ -79,6 +79,19 @@ export const DEFAULT_PREFERENCES: EditorPreferences = {
 
 let toastSequence = 0;
 
+// Imported user themes carry ids outside the static preset list. Any id that
+// is at least a well-formed token must survive persistence migration — the
+// theme registry falls back to the default until the custom theme registers.
+// Legacy builds persisted theme *modes* instead of preset ids; those still
+// reset to the default rather than being mistaken for imported themes.
+const OBSOLETE_THEME_MODES = new Set(['system', 'light', 'dark']);
+
+function isWellFormedThemeId(value: unknown): value is string {
+  return typeof value === 'string'
+    && !OBSOLETE_THEME_MODES.has(value)
+    && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
+}
+
 export const useUIStore = create<UIState>()(persist((set) => ({
   activePanel: 'explorer',
   terminalVisible: false,
@@ -125,12 +138,16 @@ export const useUIStore = create<UIState>()(persist((set) => ({
   migrate: (persistedState) => {
     const state = persistedState as Partial<UIState>;
     const preferences = state.preferences as Partial<EditorPreferences> | undefined;
+    // `...state` already carries any customThemes map forward; the theme id
+    // guard below keeps unknown-but-well-formed ids (imported user themes)
+    // instead of deleting them, and only resets genuinely malformed values.
+    const theme = preferences?.theme;
     return {
       ...state,
       preferences: {
         ...DEFAULT_PREFERENCES,
         ...preferences,
-        theme: isThemeId(preferences?.theme) ? preferences.theme : DEFAULT_THEME_ID,
+        theme: isThemeId(theme) || isWellFormedThemeId(theme) ? (theme as ThemeId) : DEFAULT_THEME_ID,
         fontFamily: isFontId(preferences?.fontFamily) ? preferences.fontFamily : DEFAULT_FONT_ID,
       },
     } as UIState;

@@ -148,7 +148,7 @@ const server = http.createServer(async (req, res) => {
     'cache-control': file.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
-    'content-security-policy': `default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; connect-src 'self' ws://127.0.0.1:*; object-src 'none'; frame-ancestors ${frameAncestorsDirective}; base-uri 'self'`,
+    'content-security-policy': `default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; connect-src 'self' ws://127.0.0.1:*; frame-src 'self'; object-src 'none'; frame-ancestors ${frameAncestorsDirective}; base-uri 'self'`,
   });
   if (req.method === 'HEAD') res.end(); else createReadStream(file).pipe(res);
 });

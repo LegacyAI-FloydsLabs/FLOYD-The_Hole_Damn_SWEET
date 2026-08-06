@@ -35,4 +35,27 @@ describe('first autonomous feature batch', () => {
     useUIStore.getState().removeToast(id);
     expect(useUIStore.getState().toasts).toHaveLength(0);
   });
+
+  it('preserves imported custom theme ids and customThemes through persistence migration', async () => {
+    localStorage.setItem('cursem:ui:v2', JSON.stringify({
+      state: {
+        preferences: { ...DEFAULT_PREFERENCES, theme: 'olive-custom' },
+        customThemes: { 'olive-custom': { name: 'Olive Custom' } },
+      },
+      version: 3,
+    }));
+    await useUIStore.persist.rehydrate();
+    const state = useUIStore.getState() as ReturnType<typeof useUIStore.getState> & { customThemes?: Record<string, unknown> };
+    expect(state.preferences.theme).toBe('olive-custom');
+    expect(state.customThemes).toMatchObject({ 'olive-custom': { name: 'Olive Custom' } });
+  });
+
+  it('still resets genuinely malformed persisted theme ids to the default', async () => {
+    localStorage.setItem('cursem:ui:v2', JSON.stringify({
+      state: { preferences: { ...DEFAULT_PREFERENCES, theme: 42 } },
+      version: 3,
+    }));
+    await useUIStore.persist.rehydrate();
+    expect(useUIStore.getState().preferences.theme).toBe(DEFAULT_PREFERENCES.theme);
+  });
 });
