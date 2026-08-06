@@ -60,6 +60,17 @@ const WRAPPER_DIR = join(RUNTIME_ROOT, "shells");
 mkdirSync(WRAPPER_DIR, { recursive: true });
 mkdirSync(BACKGROUNDS_DIR, { recursive: true });
 
+// 0.2.1 moved the served background dir out of the root-owned app bundle into
+// the runtime root, but never seeded the stock art — a fresh install restarted
+// to a black stage. Sync any missing bundle backgrounds at startup; leave
+// user-uploaded runtime files untouched.
+for (const file of readdirSync(join(FRAME_DIR, "backgrounds"))) {
+  if (!/\.(png|jpe?g|webp|tiff?)$/i.test(file) || file.startsWith(".")) continue;
+  const target = join(BACKGROUNDS_DIR, file);
+  if (existsSync(target)) continue;
+  writeFileSync(target, readFileSync(join(FRAME_DIR, "backgrounds", file)));
+}
+
 function wrapperFor(id, execLine) {
   const path = join(WRAPPER_DIR, `${id}.sh`);
   writeFileSync(path, `#!/bin/zsh\n# frame-managed shell for ${id} — TerminalOne spawns this as SHELL\nexec ${execLine}\n`, { mode: 0o755 });
