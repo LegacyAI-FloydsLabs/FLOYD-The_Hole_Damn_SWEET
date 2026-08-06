@@ -3,7 +3,51 @@
 // Directional navigation scoring (Cate's findNodeInDirection) and the
 // keyboard pan step. Pure functions — unit-tested directly.
 
-import type { CanvasNodeState, NavDirection, Point } from './types';
+import { snapToGrid, type CanvasNodeState, type NavDirection, type Point } from './types';
+
+/** Smallest canvas node footprint (world px). Exported for CanvasNode + tests. */
+export const MIN_NODE_WIDTH = 240;
+export const MIN_NODE_HEIGHT = 160;
+
+/** Edges/corners a node can be resized from. */
+export type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+export interface NodeRect {
+  origin: Point;
+  size: { width: number; height: number };
+}
+
+/**
+ * Pure edge/corner resize math for canvas nodes. `dx`/`dy` are world-space
+ * drag deltas (caller divides screen delta by zoom). West/north handles move
+ * the origin with the pointer so the opposite edge stays anchored; clamps
+ * keep the anchor fixed instead of letting the node drift. Every output
+ * coordinate is grid-snapped.
+ */
+export function resizeNodeRect(start: NodeRect, edge: ResizeEdge, dx: number, dy: number): NodeRect {
+  const left = start.origin.x;
+  const top = start.origin.y;
+  const right = left + start.size.width;
+  const bottom = top + start.size.height;
+
+  let newLeft = left;
+  let newTop = top;
+  let newRight = right;
+  let newBottom = bottom;
+
+  if (edge.includes('w')) newLeft = Math.min(left + dx, right - MIN_NODE_WIDTH);
+  if (edge.includes('e')) newRight = Math.max(right + dx, left + MIN_NODE_WIDTH);
+  if (edge.includes('n')) newTop = Math.min(top + dy, bottom - MIN_NODE_HEIGHT);
+  if (edge.includes('s')) newBottom = Math.max(bottom + dy, top + MIN_NODE_HEIGHT);
+
+  return {
+    origin: { x: snapToGrid(newLeft), y: snapToGrid(newTop) },
+    size: {
+      width: Math.max(MIN_NODE_WIDTH, snapToGrid(newRight - newLeft)),
+      height: Math.max(MIN_NODE_HEIGHT, snapToGrid(newBottom - newTop)),
+    },
+  };
+}
 
 /** Screen pixels the viewport pans per Shift+Arrow press. */
 export const PAN_STEP = 240;

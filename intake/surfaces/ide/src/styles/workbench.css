@@ -31,9 +31,9 @@
 .resize-handle { position: relative; z-index: 5; flex: none; background: var(--border); transition: background .12s; }
 .resize-handle:hover { background: var(--accent); }
 .resize-handle.vertical { width: 1px; cursor: col-resize; }
-.resize-handle.vertical::after { content: ''; position: absolute; inset: 0 -3px; }
+.resize-handle.vertical::after { content: ''; position: absolute; inset: 0 -5px; }
 .resize-handle.horizontal { height: 1px; cursor: row-resize; }
-.resize-handle.horizontal::after { content: ''; position: absolute; inset: -3px 0; }
+.resize-handle.horizontal::after { content: ''; position: absolute; inset: -5px 0; }
 
 .icon-button { width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .icon-button:hover { color: var(--text-primary); background: var(--bg-hover); }
@@ -114,9 +114,17 @@ kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .editor-pane { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .monaco-container { position: absolute; inset: 0; }
 
-.welcome-screen { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 34px; background: var(--bg-editor); overflow: auto; }
+.welcome-screen { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; padding: 34px; background: var(--bg-editor); overflow: auto; }
+/* Centering via auto margins, NOT justify-content/align-items: center — a
+   centered flex item larger than its container is clipped symmetrically and
+   the clipped start is unreachable by scrolling (the cropped-logo bug). Auto
+   margins center when the content fits and let it scroll fully when it does
+   not. */
+.welcome-screen > * { flex: none; margin-left: auto; margin-right: auto; max-width: 100%; }
+.welcome-screen > :first-child { margin-top: auto; }
+.welcome-screen > :last-child { margin-bottom: auto; }
 .welcome-mark { width: 92px; height: 92px; margin-bottom: 16px; border-radius: 18px; object-fit: cover; box-shadow: 0 0 0 1px var(--border-strong), 0 14px 38px rgba(0,0,0,.34); }
-.welcome-screen h1 { margin: 0; font-size: clamp(26px, 4vw, 44px); line-height: 1; letter-spacing: -.04em; }
+.welcome-screen h1 { margin: 0; font-size: clamp(24px, 4vw, 44px); line-height: 1.05; letter-spacing: -.04em; overflow-wrap: break-word; }
 .welcome-preflight { width: min(700px, 100%); margin-bottom: 20px; text-align: center; }
 .welcome-preflight-summary { margin: 9px 0 16px; color: var(--text-muted); }
 .welcome-preflight-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface); text-align: left; }

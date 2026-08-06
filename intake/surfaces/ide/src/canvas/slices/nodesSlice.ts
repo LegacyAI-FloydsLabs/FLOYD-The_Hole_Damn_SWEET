@@ -8,7 +8,9 @@ import type { StateCreator } from 'zustand';
 import type { CanvasStoreState } from '../state';
 import { snapToGrid, type CanvasNodeState } from '../types';
 
-const DEFAULT_NODE_SIZE = { width: 720, height: 520 };
+// Sized so the seeded editor node fits the WelcomeScreen (mark + preflight
+// grid + action rows ≈ 600px tall) without clipping at default zoom.
+const DEFAULT_NODE_SIZE = { width: 760, height: 640 };
 
 export const createNodesSlice: StateCreator<CanvasStoreState, [], [], Partial<CanvasStoreState>> = (set, get) => ({
   addNode: (panel, origin, size) => {

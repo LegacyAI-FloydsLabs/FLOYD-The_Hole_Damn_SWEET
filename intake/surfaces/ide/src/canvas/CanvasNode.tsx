@@ -1,7 +1,8 @@
 // CURSE'M IDE — canvas node.
 //
 // One spatial node = title bar + a PanelHost. Title-bar drag moves the node
-// (grid-snapped), the corner handle resizes it, the close button removes it
+// (grid-snapped), any edge or corner resizes it (grid-snapped, opposite edge
+// anchored), the close button removes it
 // (the panel becomes unplaced and can be re-docked from the activity bar or
 // command palette). Pointer-down anywhere on the node focuses/raises it —
 // before Monaco or xterm see the event, but without preventing default, so
@@ -14,17 +15,17 @@ import { getPanelTitle } from '@/panels/registry';
 import { Icon } from '@/components/Icon';
 import type { CanvasStore } from './canvasStore';
 import { setCanvasInteracting } from './CanvasView';
+import { resizeNodeRect, type NodeRect, type ResizeEdge } from './helpers';
 import { snapToGrid } from './types';
 
-const MIN_NODE_WIDTH = 240;
-const MIN_NODE_HEIGHT = 160;
+const RESIZE_EDGES: ResizeEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
 export function CanvasNode({ nodeId, store }: { nodeId: string; store: CanvasStore }) {
   const node = useStore(store, (state) => state.nodes[nodeId]);
   const focused = useStore(store, (state) => state.focusedNodeId === nodeId);
   const selected = useStore(store, (state) => state.selectedNodeId === nodeId);
   const moveRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
-  const resizeRef = useRef<{ pointerId: number; startX: number; startY: number; width: number; height: number } | null>(null);
+  const resizeRef = useRef<{ pointerId: number; edge: ResizeEdge; startX: number; startY: number; rect: NodeRect } | null>(null);
 
   if (!node) return null;
 
@@ -62,13 +63,15 @@ export function CanvasNode({ nodeId, store }: { nodeId: string; store: CanvasSto
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    const edge = event.currentTarget.dataset.edge as ResizeEdge | undefined;
+    if (!edge) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     resizeRef.current = {
       pointerId: event.pointerId,
+      edge,
       startX: event.clientX,
       startY: event.clientY,
-      width: node.size.width,
-      height: node.size.height,
+      rect: { origin: { ...node.origin }, size: { ...node.size } },
     };
     setCanvasInteracting(true);
   };
@@ -77,10 +80,18 @@ export function CanvasNode({ nodeId, store }: { nodeId: string; store: CanvasSto
     const drag = resizeRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const { zoomLevel } = store.getState();
-    store.getState().setNodeSize(nodeId, {
-      width: Math.max(MIN_NODE_WIDTH, snapToGrid(drag.width + (event.clientX - drag.startX) / zoomLevel)),
-      height: Math.max(MIN_NODE_HEIGHT, snapToGrid(drag.height + (event.clientY - drag.startY) / zoomLevel)),
-    });
+    const next = resizeNodeRect(
+      drag.rect,
+      drag.edge,
+      (event.clientX - drag.startX) / zoomLevel,
+      (event.clientY - drag.startY) / zoomLevel,
+    );
+    if (next.origin.x !== node.origin.x || next.origin.y !== node.origin.y) {
+      store.getState().setNodeOrigin(nodeId, next.origin);
+    }
+    if (next.size.width !== node.size.width || next.size.height !== node.size.height) {
+      store.getState().setNodeSize(nodeId, next.size);
+    }
   };
 
   const onResizePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -122,14 +133,18 @@ export function CanvasNode({ nodeId, store }: { nodeId: string; store: CanvasSto
       <div className="canvas-node-body">
         <PanelHost panel={node.panel} />
       </div>
-      <div
-        className="canvas-node-resize"
-        aria-hidden="true"
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-        onPointerCancel={onResizePointerUp}
-      />
+      {RESIZE_EDGES.map((edge) => (
+        <div
+          key={edge}
+          className={`canvas-node-resize canvas-node-resize-${edge}`}
+          data-edge={edge}
+          aria-hidden="true"
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          onPointerCancel={onResizePointerUp}
+        />
+      ))}
     </div>
   );
 }

@@ -123,24 +123,38 @@
   flex-direction: column;
 }
 
+/* Edge and corner resize affordances. The node has overflow:hidden, so the
+   hit strips live just inside the border; corners win over edges (later in
+   paint order). Only the SE corner draws a visible grip — the rest are
+   cursor-cued hit areas, the way every window manager behaves. */
 .canvas-node-resize {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 16px;
-  height: 16px;
-  cursor: nwse-resize;
+  z-index: 6;
 }
 
-.canvas-node-resize::after {
+.canvas-node-resize-e  { top: 10px; right: 0; bottom: 10px; width: 7px; cursor: ew-resize; }
+.canvas-node-resize-w  { top: 10px; left: 0; bottom: 10px; width: 7px; cursor: ew-resize; }
+.canvas-node-resize-n  { top: 0; left: 10px; right: 10px; height: 4px; cursor: ns-resize; }
+.canvas-node-resize-s  { bottom: 0; left: 10px; right: 10px; height: 7px; cursor: ns-resize; }
+
+.canvas-node-resize-ne { top: 0; right: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+.canvas-node-resize-nw { top: 0; left: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.canvas-node-resize-sw { bottom: 0; left: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+.canvas-node-resize-se { bottom: 0; right: 0; width: 18px; height: 18px; cursor: nwse-resize; }
+
+.canvas-node-resize-se::after {
   content: '';
   position: absolute;
   right: 3px;
   bottom: 3px;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-right: 2px solid var(--border-strong);
   border-bottom: 2px solid var(--border-strong);
+}
+
+.canvas-node-resize-se:hover::after {
+  border-color: var(--accent);
 }
 
 /* PanelHost fills whatever container (dock tab or canvas node) hosts it. */
