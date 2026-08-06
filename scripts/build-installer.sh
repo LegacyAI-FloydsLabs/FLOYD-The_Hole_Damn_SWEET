@@ -32,6 +32,7 @@ mkdir -p "$APP/Contents/MacOS" "$WS" "$DIST"
 echo "==> staging repo (tracked files only)"
 (cd "$ROOT" && git archive HEAD) | tar -x -C "$WS"
 rm -rf "$WS/scripts"   # build tooling never ships
+rm -rf "$WS/plans" "$WS/.agents"   # repo planning docs + agent harness tooling never ship
 # ...except the three runtime entrypoints the harness TUIs exec (floyd-agent
 # → vault environment + provider handoff) and their scripts/lib dependency.
 mkdir -p "$WS/scripts/lib"
