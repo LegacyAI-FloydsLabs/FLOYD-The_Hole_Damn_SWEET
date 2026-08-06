@@ -60,7 +60,9 @@ local)
   rsync -a --delete --files-from="$LIST" --exclude 'node_modules/' "$ROOT/" "$WS/"
   # node_modules: content-addressed enough for rsync -a to skip when unchanged.
   rsync -a "$ROOT/node_modules/" "$WS/node_modules/"
-  printf '%s\n' "$(tr -d '[:space:]' < "$ROOT/VERSION")" > "$WS/VERSION"
+  # Payload files are mode 444: write via temp+rename (directory op), never
+  # shell truncation, which fails EACCES even for the owner.
+  printf '%s\n' "$(tr -d '[:space:]' < "$ROOT/VERSION")" > "$WS/.VERSION.ship" && mv -f "$WS/.VERSION.ship" "$WS/VERSION"
   echo "==> restarting agents"
   restart_agents
   echo "==> local sync live"
