@@ -32,6 +32,16 @@ mkdir -p "$APP/Contents/MacOS" "$WS" "$DIST"
 echo "==> staging repo (tracked files only)"
 (cd "$ROOT" && git archive HEAD) | tar -x -C "$WS"
 rm -rf "$WS/scripts"   # build tooling never ships
+# ...except the three runtime entrypoints the harness TUIs exec (floyd-agent
+# → vault environment + provider handoff) and their scripts/lib dependency.
+mkdir -p "$WS/scripts/lib"
+for f in \
+  scripts/run-with-vault-environment.mjs \
+  scripts/vault-provider-handoff.mjs \
+  scripts/update-floyd-providers-with-vault.mjs \
+  scripts/lib/floyd-provider-update.mjs; do
+  rsync -a "$ROOT/$f" "$WS/$f"
+done
 printf '%s\n' "$VERSION" > "$WS/VERSION"   # updater reads installed version here
 # Workspace deps (small; @floyd/* are relative symlinks that survive rsync -a).
 rsync -a "$ROOT/node_modules/" "$WS/node_modules/"

@@ -58,6 +58,19 @@ local)
   (cd "$ROOT" && git ls-files -co --exclude-standard) \
     | grep -v -E '^(scripts/|dist/|quarantine/|dogfood-output/|\.planning/)' > "$LIST"
   rsync -a --delete --files-from="$LIST" --exclude 'node_modules/' "$ROOT/" "$WS/"
+  # scripts/ stays excluded as build tooling, but the harness TUIs exec three
+  # runtime entrypoints (floyd-agent → vault environment + provider handoff).
+  # Whitelist exactly those + their scripts/lib dependency or every TUI exits
+  # with "Cannot find module .../scripts/run-with-vault-environment.mjs".
+  chmod -R u+w "$WS/scripts" 2>/dev/null || true
+  for f in \
+    scripts/run-with-vault-environment.mjs \
+    scripts/vault-provider-handoff.mjs \
+    scripts/update-floyd-providers-with-vault.mjs \
+    scripts/lib/floyd-provider-update.mjs; do
+    mkdir -p "$WS/$(dirname "$f")"
+    rsync -a "$ROOT/$f" "$WS/$f"
+  done
   # node_modules: content-addressed enough for rsync -a to skip when unchanged.
   rsync -a "$ROOT/node_modules/" "$WS/node_modules/"
   # Build outputs are gitignored, so the tracked-file list above skips them —
