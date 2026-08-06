@@ -41,5 +41,8 @@ export interface Settings {
   systemPrompt?: string;
   effectiveSystemPrompt?: string;
   maxTokens?: number;
+  /** Show tool execution cards in chat. Off by default: the user sees the
+   *  agent's prose summary, not its plumbing. */
+  showToolCalls?: boolean;
   baseURL?: string;
 }

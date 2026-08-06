@@ -169,6 +169,7 @@ interface Settings {
   connectorId?: string;
   systemPrompt?: string;
   maxTokens?: number;
+  showToolCalls?: boolean;
 }
 
 const VAULT_URL = String(process.env.FLOYD_VAULT_PROXY_URL || '').replace(/\/+$/, '');
@@ -243,6 +244,7 @@ async function initDataDir() {
         ...(typeof saved.connectorId === 'string' ? { connectorId: saved.connectorId } : {}),
         ...(typeof saved.systemPrompt === 'string' ? { systemPrompt: saved.systemPrompt } : {}),
         ...(typeof saved.maxTokens === 'number' ? { maxTokens: saved.maxTokens } : {}),
+        ...(typeof saved.showToolCalls === 'boolean' ? { showToolCalls: saved.showToolCalls } : {}),
       };
       hasSavedSettings = true;
       console.log('[Server] Loaded settings from disk');
@@ -450,12 +452,13 @@ app.get('/api/settings', async (_req, res) => {
     // the operator always sees what the agent knows about its capabilities.
     effectiveSystemPrompt: settings.systemPrompt || buildDefaultSystemPrompt({ gatewayAvailable: gatewayAvailable(), chronoAvailable: chronoToolsAvailable() }),
     maxTokens: settings.maxTokens,
+    showToolCalls: settings.showToolCalls ?? false,
   });
 });
 
 // Update settings
 app.post('/api/settings', async (req, res) => {
-  const { provider, model, connectorId, systemPrompt, maxTokens } = req.body;
+  const { provider, model, connectorId, systemPrompt, maxTokens, showToolCalls } = req.body;
   if ('apiKey' in req.body || 'baseURL' in req.body) {
     return res.status(400).json({ error: 'Provider credentials and addresses are managed by Vault.' });
   }
@@ -480,6 +483,7 @@ app.post('/api/settings', async (req, res) => {
     ...(connectorId !== undefined ? { connectorId } : {}),
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(showToolCalls !== undefined ? { showToolCalls: !!showToolCalls } : {}),
   };
 
   broworkManager.setModel(settings.model);

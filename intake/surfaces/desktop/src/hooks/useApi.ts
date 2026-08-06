@@ -80,6 +80,7 @@ export function useApi() {
     model: string;
     systemPrompt: string;
     maxTokens: number;
+    showToolCalls: boolean;
   }>) => {
     return fetchJson<{ success: boolean }>('/settings', {
       method: 'POST',

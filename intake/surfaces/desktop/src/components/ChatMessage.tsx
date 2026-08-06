@@ -29,7 +29,7 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
       )}
       
       <div className={cn(
-        'max-w-[70%] rounded-lg px-4 py-3',
+        'max-w-[70%] min-w-0 rounded-lg px-4 py-3 break-words',
         isUser 
           ? 'bg-sky-600 text-white' 
           : 'bg-slate-800 text-slate-100',
@@ -69,9 +69,9 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
           </div>
         )}
         {isUser ? (
-          <p className="whitespace-pre-wrap">{message.content}</p>
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
         ) : (
-          <div className="prose prose-invert prose-sm max-w-none">
+          <div className="prose prose-invert prose-sm max-w-none break-words">
             <ReactMarkdown
               components={{
                 code({ node, className, children, ...props }) {
@@ -80,7 +80,7 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
                   
                   if (isInline) {
                     return (
-                      <code className="bg-slate-700 px-1 py-0.5 rounded text-sm" {...props}>
+                      <code className="bg-slate-700 px-1 py-0.5 rounded text-sm break-all" {...props}>
                         {children}
                       </code>
                     );
@@ -91,7 +91,7 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
                       style={oneDark as any}
                       language={match[1]}
                       PreTag="div"
-                      className="rounded-lg !bg-slate-900 !mt-2 !mb-2"
+                      className="rounded-lg !bg-slate-900 !mt-2 !mb-2 !max-w-full overflow-x-auto"
                     >
                       {String(children).replace(/\n$/, '')}
                     </SyntaxHighlighter>
@@ -105,6 +105,11 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
                 },
                 ol({ children }) {
                   return <ol className="list-decimal list-inside mb-2">{children}</ol>;
+                },
+                table({ children }) {
+                  // Wide tables scroll inside the bubble instead of
+                  // stretching the chat column past the frame.
+                  return <div className="overflow-x-auto mb-2"><table>{children}</table></div>;
                 },
               }}
             >

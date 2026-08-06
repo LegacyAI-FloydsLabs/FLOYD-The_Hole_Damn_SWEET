@@ -40,6 +40,7 @@ export default function App() {
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingFallback, setStreamingFallback] = useState<{ provider: string; model: string | null } | null>(null);
   const [_settings, setSettings] = useState<Settings | null>(null);
+  const [showToolCalls, setShowToolCalls] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('loading');
   const [statusTone, setStatusTone] = useState<ConnectionStatus>('loading');
@@ -128,6 +129,7 @@ export default function App() {
         const health = await api.checkHealth();
         const settingsData = await api.getSettings();
         setSettings(settingsData);
+        setShowToolCalls(settingsData.showToolCalls ?? false);
 
         // Restore the portable composer draft from Floyd Core (P5), if any.
         try {
@@ -359,6 +361,7 @@ export default function App() {
   const handleSettingsSave = async () => {
     const settingsData = await api.getSettings();
     setSettings(settingsData);
+    setShowToolCalls(settingsData.showToolCalls ?? false);
     
     const health = await api.checkHealth();
     if (health.hasApiKey) {
@@ -385,7 +388,7 @@ export default function App() {
       />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="h-14 border-b border-slate-700 flex items-center justify-between px-4">
           <div className="flex items-center gap-3">
@@ -547,8 +550,8 @@ export default function App() {
             <ChatMessage key={index} message={message} />
           ))}
           
-          {/* Tool calls */}
-          {activeToolCalls.length > 0 && (
+          {/* Tool calls (opt-in via Settings → Show tool calls) */}
+          {showToolCalls && activeToolCalls.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 <Wrench className="w-4 h-4" />

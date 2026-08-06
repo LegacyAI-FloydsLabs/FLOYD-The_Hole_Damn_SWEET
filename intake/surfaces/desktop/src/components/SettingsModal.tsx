@@ -33,6 +33,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [effectivePrompt, setEffectivePrompt] = useState('');
   const [maxTokens, setMaxTokens] = useState(16384);
+  const [showToolCalls, setShowToolCalls] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Load settings and the server-provided model catalogs (live via Vault,
@@ -58,6 +59,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         setSystemPrompt(settings.systemPrompt || '');
         setEffectivePrompt(settings.effectiveSystemPrompt || '');
         setMaxTokens(settings.maxTokens || 16384);
+        setShowToolCalls(settings.showToolCalls ?? false);
       });
     }
   }, [isOpen]);
@@ -83,6 +85,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         model,
         systemPrompt,
         maxTokens,
+        showToolCalls,
       });
       onSave();
       onClose();
@@ -251,6 +254,27 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
             <p className="text-xs text-slate-500 mt-1">
               Maximum response length. Higher = longer responses but more cost.
             </p>
+          </div>
+
+          {/* Chat display */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Chat
+            </label>
+            <label className="flex items-start gap-3 bg-slate-700/50 border border-slate-600 rounded px-3 py-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showToolCalls}
+                onChange={(e) => setShowToolCalls(e.target.checked)}
+                className="mt-0.5 accent-sky-500"
+              />
+              <span>
+                <span className="block text-sm text-slate-200">Show tool calls</span>
+                <span className="block text-xs text-slate-400">
+                  Display the agent's tool execution cards in chat. Off by default — you see its answers, not its plumbing.
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* System Prompt */}
