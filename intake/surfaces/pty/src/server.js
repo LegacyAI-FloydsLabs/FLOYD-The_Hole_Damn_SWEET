@@ -318,6 +318,15 @@ function spawnShell(session, cwd) {
   if (!fs.existsSync(workingDir)) workingDir = os.homedir();
 
   const ptyEnv = { ...process.env, TERM: 'xterm-256color', ...(session.shellEnv || {}) };
+  // CURSEM in-shell CLI: stamp the terminal's own id AFTER the caller env
+  // merge so a client cannot spoof it, and prepend the cursem CLI bin dir to
+  // PATH unconditionally — `cursem` then prints its enable hint instead of
+  // "command not found" when the control surface is gated off. (This is the
+  // canonical TerminalOne; the identical patch lives in the IDE's vendored
+  // copy. CURSEM_CLI_BIN overrides the default IDE-relative bin path.)
+  ptyEnv.CURSEM_TERMINAL_ID = id;
+  const cursemBinDir = process.env.CURSEM_CLI_BIN || path.join(__dirname, '..', '..', 'ide', 'cli', 'bin');
+  ptyEnv.PATH = `${cursemBinDir}${path.delimiter}${ptyEnv.PATH || ''}`;
   const shell = process.env.SHELL || '/bin/zsh';
 
   session.shellCwd = workingDir;
