@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,7 +9,8 @@ const cleanups = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map((cleanup) => cleanup())); });
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'cursem-task-'));
+  // Canonicalize like the runner does (macOS /var → /private/var).
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'cursem-task-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   return { root, runner: createAgentTaskRunner({ workspaceRoot: root }) };
 }

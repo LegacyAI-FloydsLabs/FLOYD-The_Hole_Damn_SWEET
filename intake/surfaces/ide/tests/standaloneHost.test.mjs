@@ -1,7 +1,7 @@
 // @vitest-environment node
 import http from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -16,7 +16,9 @@ afterEach(async () => {
 });
 
 async function fixture(options = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'cursem-host-'));
+  // Canonicalize like the host does (macOS /var → /private/var) so path
+  // assertions compare canonical-to-canonical.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'cursem-host-')));
   await mkdir(join(root, 'src'));
   await writeFile(join(root, 'src/main.ts'), 'export const value = 1;\n');
   const host = await createStandaloneHost({ initialWorkspaceRoot: root, terminalEndpoint: 'ws://127.0.0.1:41000', terminalToken: 'local-token', ...options });

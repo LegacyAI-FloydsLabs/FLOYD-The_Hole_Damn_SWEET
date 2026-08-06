@@ -85,9 +85,13 @@ async function normalizeChanges(changes, boundary) {
       if (!metadata.isFile()) throw httpError(400, `${path} is not a regular file.`);
       before = await readFile(target, 'utf8'); mode = metadata.mode;
     } catch (error) {
-      if (error?.status) throw error;
-      if (error?.code !== 'ENOENT') throw error;
-      await boundary.writableTree(path);
+      // boundary.existing() reports a missing target as HttpError(404); a raw
+      // ENOENT can still race in from stat/readFile. Both mean "create".
+      if (error?.status === 404 || error?.code === 'ENOENT') {
+        await boundary.writableTree(path);
+      } else {
+        throw error;
+      }
     }
     if (before === null && raw.content === null) throw httpError(400, `Cannot delete missing file: ${path}`);
     bytes += Buffer.byteLength(before || '') + Buffer.byteLength(raw.content || '');
@@ -110,7 +114,7 @@ async function assertUnchanged(changes, boundary) {
   for (const change of changes) {
     let current = null;
     try { current = await readFile(await boundary.existing(change.path), 'utf8'); }
-    catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    catch (error) { if (error?.code !== 'ENOENT' && error?.status !== 404) throw error; }
     if (hash(current) !== change.beforeHash) throw httpError(409, `${change.path} changed after the proposal was created.`);
   }
 }
