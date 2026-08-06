@@ -33,14 +33,21 @@ echo "==> staging repo (tracked files only)"
 (cd "$ROOT" && git archive HEAD) | tar -x -C "$WS"
 rm -rf "$WS/scripts"   # build tooling never ships
 rm -rf "$WS/plans" "$WS/.agents"   # repo planning docs + agent harness tooling never ship
-# ...except the three runtime entrypoints the harness TUIs exec (floyd-agent
-# → vault environment + provider handoff) and their scripts/lib dependency.
+# ...except the runtime entrypoints the surfaces exec (floyd-agent → vault
+# environment + provider handoff; omf/ff launch.sh → Vault verify/lock/
+# materialize + OMF vault runner) and their scripts/lib dependencies.
 mkdir -p "$WS/scripts/lib"
 for f in \
   scripts/run-with-vault-environment.mjs \
   scripts/vault-provider-handoff.mjs \
   scripts/update-floyd-providers-with-vault.mjs \
-  scripts/lib/floyd-provider-update.mjs; do
+  scripts/lib/floyd-provider-update.mjs \
+  scripts/apply-omf-vault-routing-patch.sh \
+  scripts/verify-omf-vault-tools.mjs \
+  scripts/lock-omf-credential-store.mjs \
+  scripts/materialize-vault-client-config.mjs \
+  scripts/run-omf-with-vault.mjs \
+  scripts/lib/omf-credential-store.mjs; do
   rsync -a "$ROOT/$f" "$WS/$f"
 done
 printf '%s\n' "$VERSION" > "$WS/VERSION"   # updater reads installed version here

@@ -62,12 +62,21 @@ local)
   # runtime entrypoints (floyd-agent → vault environment + provider handoff).
   # Whitelist exactly those + their scripts/lib dependency or every TUI exits
   # with "Cannot find module .../scripts/run-with-vault-environment.mjs".
+  # The omf/ff launch.sh gates exec their own runtime scripts from the same
+  # tree (Vault verify/lock/materialize + the OMF vault runner); omitting them
+  # made OMF and FLOYD CLI refuse to launch and fall back to a bare shell.
   chmod -R u+w "$WS/scripts" 2>/dev/null || true
   for f in \
     scripts/run-with-vault-environment.mjs \
     scripts/vault-provider-handoff.mjs \
     scripts/update-floyd-providers-with-vault.mjs \
-    scripts/lib/floyd-provider-update.mjs; do
+    scripts/lib/floyd-provider-update.mjs \
+    scripts/apply-omf-vault-routing-patch.sh \
+    scripts/verify-omf-vault-tools.mjs \
+    scripts/lock-omf-credential-store.mjs \
+    scripts/materialize-vault-client-config.mjs \
+    scripts/run-omf-with-vault.mjs \
+    scripts/lib/omf-credential-store.mjs; do
     mkdir -p "$WS/$(dirname "$f")"
     rsync -a "$ROOT/$f" "$WS/$f"
   done

@@ -205,16 +205,28 @@ function wirePtyToSession(ptyProcess, session, ws) {
     // Shell self-exit: notify client and respawn a live shell (UI feature).
     info(id, 'Shell exited, respawning', { code });
     if (ws.readyState === WebSocket.OPEN && session.sessionActive) {
+      // Storm guard (same class as the pty surface): a shell dying within a
+      // second of spawn will keep dying; unbounded 50ms respawns leak one PTY
+      // master per iteration and exhaust kern.tty.ptmx_max machine-wide.
+      const earlyExit = session.lastSpawnAt && (Date.now() - session.lastSpawnAt) < 1000;
+      session.respawnStreak = earlyExit ? (session.respawnStreak || 0) + 1 : 0;
+      if (session.respawnStreak >= 5) {
+        error(id, 'Shell keeps dying on spawn — refusing to respawn', { code, streak: session.respawnStreak });
+        try { ws.send(JSON.stringify({ type: 'exit', code: code || 0, reason: 'respawn-storm-guard' })); }
+        catch (_) {}
+        return;
+      }
+      const delay = Math.min(50 * 2 ** session.respawnStreak, 2000);
       try { ws.send(JSON.stringify({ type: 'shell-reset', code: code || 0 })); }
       catch (_) {}
-      // CR-006: check clientClosing to prevent respawn if client closed during the 50ms window
+      // CR-006: check clientClosing to prevent respawn if client closed during the delay window
       setTimeout(() => {
         if (session.sessionActive && !session.clientClosing && ws.readyState === WebSocket.OPEN) {
           spawnShell(session, ws, session.shellCwd);
         } else {
           cleanupSession(session);
         }
-      }, 50);
+      }, delay);
     } else {
       cleanupSession(session);
     }
@@ -335,6 +347,7 @@ function spawnShell(session, ws, cwd) {
   session.processExited = false;
   session.protocolBuffer = '';
   session.startedAt = Date.now();
+  session.lastSpawnAt = session.startedAt; // storm guard: see exit handler
   activeSessions.set(id, session);
   wirePtyToSession(ptyProcess, session, ws);
 }

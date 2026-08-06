@@ -25,6 +25,7 @@ import { createVaultOmpBroker } from "./vault-omf-broker.mjs";
 import { createVaultLeakMonitor } from "./vault-leak-monitor.mjs";
 import { createUpdater } from "./self-update.mjs";
 import { applyVaultEnvironment, buildVaultProfile } from "../../../lib/vault-routing.mjs";
+import { shellQuote } from "../../../lib/shell-quote.mjs";
 import { publicProviderCatalog, VAULT_PROVIDER_CATALOG } from "../../../lib/vault-provider-catalog.mjs";
 import { authorizeManagementBootstrap, authorizeVaultManagement } from "./management-auth.mjs";
 import {
@@ -73,7 +74,10 @@ for (const file of readdirSync(join(FRAME_DIR, "backgrounds"))) {
 
 function wrapperFor(id, execLine) {
   const path = join(WRAPPER_DIR, `${id}.sh`);
-  writeFileSync(path, `#!/bin/zsh\n# frame-managed shell for ${id} — TerminalOne spawns this as SHELL\nexec ${execLine}\n`, { mode: 0o755 });
+  // CR-013: execLine is an absolute path under the space-bearing app bundle —
+  // quote it or zsh execs "/Applications/FLOYD" and dies 127, which the pty
+  // surface then hot-respawns into a machine-wide PTY exhaustion storm.
+  writeFileSync(path, `#!/bin/zsh\n# frame-managed shell for ${id} — TerminalOne spawns this as SHELL\nexec ${shellQuote(execLine)}\n`, { mode: 0o755 });
   return path;
 }
 

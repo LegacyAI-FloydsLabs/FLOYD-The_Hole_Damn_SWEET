@@ -284,6 +284,23 @@ function wirePtyToSession(ptyProcess, session) {
     }
     if (!session.sessionActive) { cleanupSession(session); return; }
 
+    // Storm guard: a shell that dies within a second of spawning will almost
+    // always die again (bad wrapper, missing binary). Unbounded 50ms respawns
+    // leaked one PTY master per iteration and once exhausted
+    // kern.tty.ptmx_max (511), taking down every terminal on the machine with
+    // "posix_spawnp failed". Back off exponentially and give up after a few
+    // consecutive early exits — the client gets a dead-shell notice instead
+    // of a silently melting process table.
+    const earlyExit = session.lastSpawnAt && (Date.now() - session.lastSpawnAt) < 1000;
+    session.respawnStreak = earlyExit ? (session.respawnStreak || 0) + 1 : 0;
+    if (session.respawnStreak >= 5) {
+      error(id, 'Shell keeps dying on spawn — refusing to respawn', { code, streak: session.respawnStreak });
+      try { session.ws.send(JSON.stringify({ type: 'shell-dead', code: code || 0, reason: 'respawn-storm-guard' })); }
+      catch (_) {}
+      return;
+    }
+    const delay = Math.min(50 * 2 ** session.respawnStreak, 2000);
+
     try { session.ws.send(JSON.stringify({ type: 'shell-reset', code: code || 0 })); }
     catch (_) {}
     setTimeout(() => {
@@ -292,7 +309,7 @@ function wirePtyToSession(ptyProcess, session) {
       } else {
         cleanupSession(session);
       }
-    }, 50);
+    }, delay);
   });
 
   ptyProcess.on('error', (err) => {
@@ -342,6 +359,7 @@ function spawnShell(session, cwd) {
   session.ptyProcess = ptyProcess;
   session.processExited = false;
   session.startedAt = Date.now();
+  session.lastSpawnAt = session.startedAt; // storm guard: see wirePtyToSession exit handler
   activeSessions.set(id, session);
   wirePtyToSession(ptyProcess, session);
 }

@@ -9,7 +9,8 @@ const WebSocket = require('ws');
 const PORT = 11015;
 const BASE = `http://127.0.0.1:${PORT}`;
 const child = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
-  env: { ...process.env, HOST: '127.0.0.1', PORT: String(PORT) },
+  // The same-origin WS guard otherwise rejects these origin-less test clients.
+  env: { ...process.env, HOST: '127.0.0.1', PORT: String(PORT), FLOYD_LAUNCHER_TEST_ALLOW_NO_ORIGIN: '1' },
   stdio: ['ignore', 'ignore', 'inherit'],
 });
 
