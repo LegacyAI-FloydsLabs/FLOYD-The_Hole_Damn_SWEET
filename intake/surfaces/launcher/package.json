@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
-    "test": "node tests/multi-harness-test.js && node tests/error-recovery-test.js && node tests/security-args-test.js && node tests/respawn-race-test.js && node tests/concurrent-sessions-test.js && node tests/process-lifecycle-test.js && node tests/accessibility-card-test.js",
+    "test": "node tests/multi-harness-test.js && node tests/error-recovery-test.js && node tests/security-args-test.js && node tests/respawn-race-test.js && node tests/concurrent-sessions-test.js && node tests/process-lifecycle-test.js && node tests/accessibility-card-test.js && node tests/command-path-quoting-test.js",
+    "test:quoting": "node tests/command-path-quoting-test.js",
     "test:multi": "node tests/multi-harness-test.js",
     "test:errors": "node tests/error-recovery-test.js",
     "test:security": "node tests/security-args-test.js",

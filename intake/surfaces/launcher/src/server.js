@@ -38,6 +38,9 @@ const {
   HARNESS_BY_NAME
 } = require('./harnesses');
 
+// CR-004/CR-013: shell-safe construction of the launch command line
+const { buildLaunchCommand } = require('./shell-quote');
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /**
@@ -356,9 +359,11 @@ function launchHarness(session, ws, harnessName, config = {}) {
   }
 
   const { workingDir, ptyEnv, shell } = resolvePtyConfig(cwd, env);
-  // CR-004: shell-escape each arg to prevent command injection via metacharacters
-  const escapedArgs = args.map((a) => `'${String(a).replace(/'/g, `'"'"'`)}'`);
-  const command = resolved + (escapedArgs.length ? ' ' + escapedArgs.join(' ') : '');
+  // CR-004 (args) + CR-013 (binary path): both are shell-quoted by
+  // buildLaunchCommand — see src/shell-quote.js. Without CR-013 the installed
+  // path "/Applications/FLOYD Desktop Suite.app/..." word-splits and zsh tries
+  // to execute "/Applications/FLOYD".
+  const command = buildLaunchCommand(resolved, args);
 
   /** @type {import('node-pty').IPty|undefined} */
   let ptyProcess;
