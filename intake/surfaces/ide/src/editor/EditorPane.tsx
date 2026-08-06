@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { EditorAdapter } from './types';
 import type { EditorCommand } from './commands';
 import { useWorkspace } from '@/workspace';
@@ -10,21 +10,51 @@ import { toPlatformTheme } from '@/theme';
 import { fontStack } from '@/font';
 import { LspService } from '@/lsp';
 import { detectLanguage } from './types';
+import { isMarkdownPath } from './fileRouting';
+import { MarkdownPreview } from './MarkdownPreview';
 import { InlineCompletionService } from './InlineCompletionService';
+
+const DocumentPane = lazy(() => import('./DocumentPane').then((module) => ({ default: module.DocumentPane })));
 
 export function EditorPane() {
   const containerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<EditorAdapter | null>(null);
   const lspRef = useRef<LspService | null>(null);
   const saveActiveRef = useRef<(() => Promise<void>) | null>(null);
+  const previewSyncRef = useRef<((path: string, content: string) => void) | null>(null);
   const autosaveTimers = useRef(new Map<string, number>());
   const preferencesRef = useRef(useUIStore.getState().preferences);
   const { fs } = useWorkspace();
   const { gateway } = usePlatform();
   const { activeTabPath, tabs, markDirty, setCursor } = useEditorStore();
+  const markdownPreview = useEditorStore((state) => state.markdownPreview);
   const preferences = useUIStore((state) => state.preferences);
   const addToast = useUIStore((state) => state.addToast);
+  const [previewContent, setPreviewContent] = useState('');
   preferencesRef.current = preferences;
+
+  const activeTab = activeTabPath ? tabs.find((tab) => tab.path === activeTabPath) : undefined;
+  const isDocumentTab = activeTab?.kind === 'document';
+  const previewActive = !!activeTabPath && !isDocumentTab && isMarkdownPath(activeTabPath) && !!markdownPreview[activeTabPath];
+
+  // Live preview content: prefer the Monaco model, fall back to disk.
+  previewSyncRef.current = (path, content) => {
+    if (path === activeTabPath && markdownPreview[path]) setPreviewContent(content);
+  };
+
+  useEffect(() => {
+    if (!previewActive || !activeTabPath) return;
+    const existing = adapterRef.current?.getContent(activeTabPath);
+    if (existing != null) {
+      setPreviewContent(existing);
+      return;
+    }
+    let cancelled = false;
+    fs.readFile(activeTabPath)
+      .then((content) => { if (!cancelled) setPreviewContent(content); })
+      .catch(() => { if (!cancelled) setPreviewContent(''); });
+    return () => { cancelled = true; };
+  }, [previewActive, activeTabPath, fs]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -68,6 +98,7 @@ export function EditorPane() {
       adapter.onContentChange((path, content) => {
         markDirty(path, true);
         fs.saveBuffer(path, content);
+        previewSyncRef.current?.(path, content);
         lsp?.changeDocument(detectLanguage(path), path, content);
         const previous = autosaveTimers.current.get(path);
         if (previous) window.clearTimeout(previous);
@@ -96,7 +127,7 @@ export function EditorPane() {
       });
 
       const currentPath = useEditorStore.getState().activeTabPath;
-      if (currentPath) void loadPath(currentPath, adapter);
+      if (currentPath && useEditorStore.getState().getTab(currentPath)?.kind !== 'document') void loadPath(currentPath, adapter);
       applyPreferences(adapter);
     }).catch((error) => addToast(error instanceof Error ? error.message : 'Editor engine failed to load.', 'error'));
 
@@ -146,7 +177,7 @@ export function EditorPane() {
 
   useEffect(() => {
     const adapter = adapterRef.current;
-    if (!adapter || !activeTabPath) return;
+    if (!adapter || !activeTabPath || isDocumentTab) return;
     if (adapter.getContent(activeTabPath) !== null) {
       adapter.setActiveFile(activeTabPath);
       gateway.emit({ type: 'file.selected', path: activeTabPath });
@@ -161,7 +192,7 @@ export function EditorPane() {
       gateway.emit({ type: 'file.selected', path: activeTabPath });
       void lspRef.current?.openDocument(detectLanguage(activeTabPath), activeTabPath, recovered ?? content).catch(() => undefined);
     }).catch((error) => addToast(error instanceof Error ? error.message : `Could not open ${activeTabPath}.`, 'error'));
-  }, [activeTabPath, addToast, fs, gateway, markDirty]);
+  }, [activeTabPath, addToast, fs, gateway, isDocumentTab, markDirty]);
 
   useEffect(() => {
     const listener = async (event: Event) => {
@@ -208,6 +239,12 @@ export function EditorPane() {
   return (
     <div className="editor-pane">
       <div ref={containerRef} className="monaco-container" />
+      {isDocumentTab && activeTabPath && (
+        <Suspense fallback={<div className="document-pane"><div className="panel-empty"><span className="progress-line" /><span>Loading viewer</span></div></div>}>
+          <DocumentPane path={activeTabPath} />
+        </Suspense>
+      )}
+      {previewActive && <MarkdownPreview content={previewContent} />}
       {!activeTabPath && <WelcomeScreen />}
       <span className="visually-hidden" aria-live="polite">{tabs.length} open editor{tabs.length === 1 ? '' : 's'}</span>
     </div>

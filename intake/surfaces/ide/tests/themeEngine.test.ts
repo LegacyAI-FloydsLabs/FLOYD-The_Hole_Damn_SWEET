@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { applyThemeToElement, DEFAULT_THEME_ID, getTheme, resolveTheme, THEMES, ThemeEngine, toPlatformTheme, toTerminalTheme } from '@/theme';
 
 describe('CURSE\'M semantic theme engine', () => {
-  it('ships ten curated popular dark presets plus six requested originals', () => {
-    expect(THEMES).toHaveLength(16);
-    expect(THEMES.filter((theme) => theme.group === 'Popular dark terminals')).toHaveLength(10);
+  it('ships the CURSEM presets plus the ported Cate darks and lights', () => {
+    expect(THEMES).toHaveLength(26);
+    expect(THEMES.filter((theme) => theme.group === 'Popular dark terminals')).toHaveLength(12);
     expect(THEMES.map((theme) => theme.name)).toEqual(expect.arrayContaining([
       'Tokyo Night', 'Dracula', 'Catppuccin Mocha', 'One Dark', 'Gruvbox Dark', 'Nord',
       'Solarized Dark', 'Monokai', 'Ayu Mirage', 'Kanagawa Wave', 'CURSEM Neon', 'CURSEM Inverse',

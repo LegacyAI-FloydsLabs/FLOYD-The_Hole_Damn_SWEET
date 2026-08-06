@@ -125,6 +125,43 @@ describe('standalone trusted host', () => {
     expect(auth.expiresAt).toBeGreaterThan(Date.now());
   });
 
+  it('serves binary file bytes as base64 with a mime hint', async () => {
+    const { root, base } = await fixture();
+    await writeFile(join(root, 'pixel.png'), Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+    const response = await fetch(`${base}/api/fs/read-binary?path=${encodeURIComponent(join(root, 'pixel.png'))}`);
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.name).toBe('pixel.png');
+    expect(payload.size).toBe(8);
+    expect(payload.mime).toBe('image/png');
+    expect(Buffer.from(payload.data, 'base64')).toEqual(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+  });
+
+  it('persists the boot theme snapshot for the frame parent handoff', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cursem-boot-'));
+    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    const { base } = await fixture({ bootThemePath: join(root, 'boot-theme.json') });
+
+    await expect(fetch(`${base}/api/platform/theme`).then((response) => response.json())).resolves.toBeNull();
+
+    const write = await fetch(`${base}/api/platform/theme`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ themeId: 'tokyo-night', backgroundColor: '#16161e', appearance: 'dark' }),
+    });
+    expect(write.status).toBe(200);
+    await expect(fetch(`${base}/api/platform/theme`).then((response) => response.json()))
+      .resolves.toEqual({ themeId: 'tokyo-night', backgroundColor: '#16161e', appearance: 'dark' });
+    expect(JSON.parse(await readFile(join(root, 'boot-theme.json'), 'utf8')).themeId).toBe('tokyo-night');
+
+    const invalid = await fetch(`${base}/api/platform/theme`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ themeId: 'tokyo-night', backgroundColor: '#16161e', appearance: 'sepia' }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it('exposes profile migration as a read-only preview operation', async () => {
     const migrationService = { preview: async (source) => ({ source, found: true, preferences: { fontSize: 17 }, importedKeys: ['fontSize'] }) };
     const { base } = await fixture({ migrationService });

@@ -356,11 +356,32 @@ export class MonacoAdapter implements EditorAdapter {
       this.currentTheme = theme.monacoTheme;
       return;
     }
-    const name = `cursem-${theme.id}`;
+    // Single stable name (ported from Cate): redefining 'cursem-active'
+    // re-themes every open editor, including diff editors, without
+    // accumulating a stale definition per theme id.
+    const name = 'cursem-active';
+    const colors: Record<string, string> = {
+      'editor.background': monacoColor(theme.colors['editor.background'], theme.isDark ? '#0d1117' : '#ffffff'),
+      'editor.foreground': monacoColor(theme.colors['editor.foreground'], theme.isDark ? '#c9d1d9' : '#24292e'),
+      'editorLineNumber.foreground': monacoColor(theme.colors['editorLineNumber.foreground'], '#6e7681'),
+      'editorLineNumber.activeForeground': monacoColor(theme.colors['editorLineNumber.activeForeground'], '#c9d1d9'),
+      'editorCursor.foreground': monacoColor(theme.colors['editorCursor.foreground'], '#58a6ff'),
+      'editor.selectionBackground': monacoColor(theme.colors['editor.selectionBackground'], '#264f78'),
+      'editor.inactiveSelectionBackground': monacoColor(theme.colors['editor.inactiveSelectionBackground'], '#264f7855'),
+      'editor.lineHighlightBackground': monacoColor(theme.colors['editor.lineHighlightBackground'], '#161b22'),
+      'editorWhitespace.foreground': monacoColor(theme.colors['editorWhitespace.foreground'], '#30363d'),
+      'editorIndentGuide.background1': monacoColor(theme.colors['editorIndentGuide.background1'], '#30363d'),
+      'editorIndentGuide.activeBackground1': monacoColor(theme.colors['editorIndentGuide.activeBackground1'], '#58a6ff'),
+    };
+    // Unified themes may carry extra Monaco IColors (gutter, minimap, …).
+    for (const [key, value] of Object.entries(theme.colors)) {
+      if (key.startsWith('syntax.')) continue;
+      colors[key] = monacoColor(value, colors[key] ?? value);
+    }
     monaco.editor.defineTheme(name, {
-      base: theme.isDark ? 'vs-dark' : 'vs',
+      base: theme.editorBase ?? (theme.isDark ? 'vs-dark' : 'vs'),
       inherit: true,
-      rules: [
+      rules: theme.editorRules ?? [
         { token: 'comment', foreground: syntaxColor(theme.colors['syntax.comment'], '768098'), fontStyle: 'italic' },
         { token: 'keyword', foreground: syntaxColor(theme.colors['syntax.keyword'], 'FF5FA2') },
         { token: 'string', foreground: syntaxColor(theme.colors['syntax.string'], '77E7F5') },
@@ -369,19 +390,7 @@ export class MonacoAdapter implements EditorAdapter {
         { token: 'type', foreground: syntaxColor(theme.colors['syntax.type'], 'FFE08A') },
         { token: 'operator', foreground: syntaxColor(theme.colors['syntax.operator'], '25D9F5') },
       ],
-      colors: {
-        'editor.background': monacoColor(theme.colors['editor.background'], theme.isDark ? '#0d1117' : '#ffffff'),
-        'editor.foreground': monacoColor(theme.colors['editor.foreground'], theme.isDark ? '#c9d1d9' : '#24292e'),
-        'editorLineNumber.foreground': monacoColor(theme.colors['editorLineNumber.foreground'], '#6e7681'),
-        'editorLineNumber.activeForeground': monacoColor(theme.colors['editorLineNumber.activeForeground'], '#c9d1d9'),
-        'editorCursor.foreground': monacoColor(theme.colors['editorCursor.foreground'], '#58a6ff'),
-        'editor.selectionBackground': monacoColor(theme.colors['editor.selectionBackground'], '#264f78'),
-        'editor.inactiveSelectionBackground': monacoColor(theme.colors['editor.inactiveSelectionBackground'], '#264f7855'),
-        'editor.lineHighlightBackground': monacoColor(theme.colors['editor.lineHighlightBackground'], '#161b22'),
-        'editorWhitespace.foreground': monacoColor(theme.colors['editorWhitespace.foreground'], '#30363d'),
-        'editorIndentGuide.background1': monacoColor(theme.colors['editorIndentGuide.background1'], '#30363d'),
-        'editorIndentGuide.activeBackground1': monacoColor(theme.colors['editorIndentGuide.activeBackground1'], '#58a6ff'),
-      },
+      colors,
     });
     monaco.editor.setTheme(name);
     this.currentTheme = name;

@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0912" />
+    <!-- First-paint boot background. Inline scripts are CSP-blocked, so this is
+         a static default matching the default dark theme; the exact per-theme
+         color is handed to the frame parent via /api/platform/theme. -->
+    <style>
+      html, body, #root { background: #0b0912; }
+    </style>
     <link rel="icon" type="image/png" href="%BASE_URL%brand/cursem-official.png" />
     <title>CURSEM Standalone IDE</title>
   </head>

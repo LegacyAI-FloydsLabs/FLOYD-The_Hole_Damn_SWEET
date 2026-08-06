@@ -47,6 +47,7 @@ import type {
   PlatformNotification,
   DirEntry,
   FileStat,
+  BinaryFile,
   FileWatchEvent,
   GitStatus,
   GitCommit,
@@ -113,6 +114,7 @@ export interface HostGateway {
 
   // Filesystem (§2, §9)
   readFile(path: string): Promise<string>;
+  readFileBinary(path: string): Promise<BinaryFile>;
   writeFile(path: string, content: string): Promise<void>;
   listDir(path: string): Promise<DirEntry[]>;
   stat(path: string): Promise<FileStat>;
@@ -388,6 +390,14 @@ export class HttpHostGateway implements HostGateway {
   async readFile(path: string): Promise<string> {
     const r = await this.api<{ content: string }>(`/api/fs/read?path=${encodeURIComponent(path)}`);
     return r.content;
+  }
+
+  async readFileBinary(path: string): Promise<BinaryFile> {
+    const r = await this.api<{ name: string; size: number; mime: string; data: string }>(`/api/fs/read-binary?path=${encodeURIComponent(path)}`);
+    const binary = atob(r.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return { name: r.name, size: r.size, mime: r.mime, data: bytes };
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -834,6 +844,10 @@ export class MockHostGateway implements HostGateway {
   async taskRun(task: WorkspaceTask) { return { executable: task.executable, args: task.args, cwd: this.config.workspaceRoot, stdout: '', stderr: '', exitCode: 0, signal: null, durationMs: 0 }; }
 
   async readFile(path: string) { return this.files.get(path) ?? ''; }
+  async readFileBinary(path: string) {
+    const content = this.files.get(path) ?? '';
+    return { name: path.split('/').pop() ?? path, size: content.length, mime: 'application/octet-stream', data: new TextEncoder().encode(content) };
+  }
   async writeFile(path: string, content: string) { this.files.set(path, content); }
   async listDir(path: string) {
     const prefix = path.endsWith('/') ? path : `${path}/`;

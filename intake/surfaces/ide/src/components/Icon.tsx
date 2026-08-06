@@ -5,7 +5,8 @@ export type IconName =
   | 'spark' | 'settings' | 'command' | 'close' | 'chevron-right'
   | 'chevron-down' | 'refresh' | 'upload' | 'download' | 'folder-open' | 'plus'
   | 'play' | 'pause' | 'stop' | 'step-over' | 'step-in' | 'step-out'
-  | 'undo' | 'redo' | 'menu' | 'copy' | 'check' | 'warning' | 'info';
+  | 'undo' | 'redo' | 'menu' | 'copy' | 'check' | 'warning' | 'info'
+  | 'eye' | 'trash' | 'image';
 
 const paths: Record<IconName, React.ReactNode> = {
   files: <><path d="M3 5.5h7l2 2h9v12H3z"/><path d="M3 8h18"/></>,
@@ -38,6 +39,9 @@ const paths: Record<IconName, React.ReactNode> = {
   check: <path d="m5 12 4 4L19 6"/>,
   warning: <><path d="M12 3 2.5 20h19z"/><path d="M12 9v4m0 3v.1"/></>,
   info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></>,
+  eye: <><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></>,
+  trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/><path d="M10 11v6m4-6v6"/></>,
+  image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m5 19 5.5-5.5 3 3L19 12l2 2"/></>,
 };
 
 export function Icon({ name, size = 18, ...props }: SVGProps<SVGSVGElement> & { name: IconName; size?: number }) {

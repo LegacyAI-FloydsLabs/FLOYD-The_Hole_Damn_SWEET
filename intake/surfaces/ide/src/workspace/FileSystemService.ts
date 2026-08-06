@@ -12,7 +12,7 @@
 //   - Conflict detection (editor vs. disk)
 //   - Buffer recovery (localStorage — NOT authoritative FS)
 
-import type { HostGateway, DirEntry, FileStat, FileWatchEvent } from '@/platform';
+import type { HostGateway, DirEntry, FileStat, BinaryFile, FileWatchEvent } from '@/platform';
 import { validateWorkspacePath } from './pathSecurity';
 
 export interface ConflictResult {
@@ -68,6 +68,13 @@ export class FileSystemService {
     const content = await this.gateway.readFile(resolved);
     this.openFiles.set(resolved, content);
     return content;
+  }
+
+  /** Raw bytes for document viewers (images, PDF, DOCX). Not tracked as an
+   *  open text file — viewers never participate in conflict detection. */
+  async readBinary(path: string): Promise<BinaryFile> {
+    const resolved = this.validate(path);
+    return this.gateway.readFileBinary(resolved);
   }
 
   async writeFile(path: string, content: string): Promise<void> {

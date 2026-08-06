@@ -1,9 +1,18 @@
 import { create } from 'zustand';
 import type { Tab } from '@/editor';
+import { getDocumentType } from '@/editor/fileRouting';
 
 export interface CursorPosition {
   line: number;
   column: number;
+}
+
+/** Build a tab routed by extension: document files open as viewer tabs. */
+function makeTab(path: string, preview: boolean): Tab {
+  const documentType = getDocumentType(path);
+  return documentType
+    ? { path, isDirty: false, isPreview: preview, kind: 'document', documentType }
+    : { path, isDirty: false, isPreview: preview };
 }
 
 interface EditorState {
@@ -11,6 +20,8 @@ interface EditorState {
   activeTabPath: string | null;
   recentlyClosed: string[];
   cursor: CursorPosition;
+  /** Per-path markdown preview flags (survive tab reuse, like Cate's panel flag). */
+  markdownPreview: Record<string, boolean>;
 
   openTab: (path: string, preview?: boolean) => void;
   closeTab: (path: string) => void;
@@ -23,6 +34,7 @@ interface EditorState {
   markDirty: (path: string, dirty: boolean) => void;
   setCursor: (line: number, column: number) => void;
   getTab: (path: string) => Tab | undefined;
+  toggleMarkdownPreview: (path: string) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -30,12 +42,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   activeTabPath: null,
   recentlyClosed: [],
   cursor: { line: 1, column: 1 },
+  markdownPreview: {},
 
   openTab: (path, preview = false) => set((state) => {
     const existing = state.tabs.find((tab) => tab.path === path);
     if (existing) return { activeTabPath: path };
-    const tab: Tab = { path, isDirty: false, isPreview: preview };
-    return { tabs: [...state.tabs, tab], activeTabPath: path };
+    return { tabs: [...state.tabs, makeTab(path, preview)], activeTabPath: path };
   }),
 
   closeTab: (path) => set((state) => {
@@ -79,7 +91,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!path) return state;
     if (state.tabs.some((tab) => tab.path === path)) return { recentlyClosed, activeTabPath: path };
     return {
-      tabs: [...state.tabs, { path, isDirty: false, isPreview: false }],
+      tabs: [...state.tabs, makeTab(path, false)],
       activeTabPath: path,
       recentlyClosed,
     };
@@ -101,4 +113,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   })),
   setCursor: (line, column) => set({ cursor: { line, column } }),
   getTab: (path) => get().tabs.find((tab) => tab.path === path),
+  toggleMarkdownPreview: (path) => set((state) => ({
+    markdownPreview: { ...state.markdownPreview, [path]: !state.markdownPreview[path] },
+  })),
 }));

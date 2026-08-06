@@ -11,6 +11,7 @@ import {
 } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { createAgentStore } from './agent-store.mjs';
 import { createPatchTransactions } from './patch-transactions.mjs';
@@ -76,6 +77,38 @@ export async function createStandaloneHost(options = {}) {
   const migrationService = options.migrationService || createMigrationService();
   const taskDiscovery = options.taskDiscovery || createTaskDiscovery({ workspaceRoot: boundary.root });
 
+  // Boot-background handoff (feature map unified-theme-system S9.2): the
+  // renderer publishes the resolved first-paint color after every theme
+  // application; the frame parent reads it to paint the iframe backdrop
+  // before the surface loads. The value is always derived from the
+  // renderer's authoritative persisted preferences, never cached separately.
+  const bootThemePath = options.bootThemePath
+    || join(homedir(), 'Library', 'Application Support', 'CURSEM', 'boot-theme.json');
+
+  function sanitizeBootTheme(value) {
+    if (!value || typeof value !== 'object') return null;
+    if (typeof value.themeId !== 'string' || value.themeId.length > 64) return null;
+    if (typeof value.backgroundColor !== 'string' || value.backgroundColor.length > 64) return null;
+    if (value.appearance !== 'dark' && value.appearance !== 'light') return null;
+    return { themeId: value.themeId, backgroundColor: value.backgroundColor, appearance: value.appearance };
+  }
+
+  async function readBootTheme() {
+    try {
+      return sanitizeBootTheme(JSON.parse(await readFile(bootThemePath, 'utf8')));
+    } catch {
+      return null;
+    }
+  }
+
+  async function writeBootTheme(body) {
+    const snapshot = sanitizeBootTheme(body);
+    if (!snapshot) throw new HttpError(400, 'Expected { themeId, backgroundColor, appearance: dark|light }.');
+    await mkdir(dirname(bootThemePath), { recursive: true });
+    await writeFile(bootThemePath, JSON.stringify(snapshot), 'utf8');
+    return snapshot;
+  }
+
   const resetAgentState = () => {
     if (options.agentStore) return;
     agentStore.close();
@@ -117,7 +150,10 @@ export async function createStandaloneHost(options = {}) {
         return sendJson(res, 200, { workspace: await applyWorkspaceRoot(selected) });
       }
       if (url.pathname === '/api/platform/agent' && req.method === 'GET') return sendJson(res, 200, null);
-      if (url.pathname === '/api/platform/theme' && req.method === 'GET') return sendJson(res, 200, null);
+      if (url.pathname === '/api/platform/theme' && req.method === 'GET') return sendJson(res, 200, await readBootTheme());
+      if (url.pathname === '/api/platform/theme' && req.method === 'POST') {
+        return sendJson(res, 200, await writeBootTheme(await readJson(req)));
+      }
       if (url.pathname === '/api/platform/permission' && req.method === 'POST') {
         const body = await readJson(req);
         const allowed = typeof body.resource === 'string' && typeof body.action === 'string';

@@ -1,9 +1,15 @@
 import type { Theme } from '@/platform';
-import { DEFAULT_THEME_ID, getTheme, isThemeId, nextThemeId, THEMES, type ThemeId } from './presets';
+import { DEFAULT_THEME_ID, getTheme, isThemeId, nextThemeId, setCustomThemeDefinitions, THEMES, type ThemeId } from './presets';
 import { ThemeEngine } from './ThemeEngine';
+import { mixHex } from './makeTheme';
+import { unifiedToDefinition } from './unified';
+import { validateTheme } from './validate';
 import type { ResolvedTheme, TerminalRendererTheme, ThemeDefinition } from './types';
 
 export { DEFAULT_THEME_ID, getTheme, isThemeId, nextThemeId, THEMES, ThemeEngine };
+export { APP_COLOR_KEYS, definitionToUnified, mergeThemeApp, THEME_SCHEMA_VERSION, unifiedToDefinition } from './unified';
+export { MAX_IMPORT_BYTES, parseThemeImport, validateTheme } from './validate';
+export type { UnifiedTheme } from './unified';
 export type { ResolvedTheme, TerminalRendererTheme, ThemeDefinition, ThemeId };
 
 const cssVariables: Record<string, string> = {
@@ -19,6 +25,21 @@ const cssVariables: Record<string, string> = {
 };
 
 const resolvedCache = new Map<string, ResolvedTheme>();
+
+/**
+ * Register imported user themes with the resolver. Invalid persisted entries
+ * are skipped here (never mutated in storage) — resolution simply falls back
+ * to the default until a valid theme registers under that id.
+ */
+export function syncCustomThemes(themes: unknown[]): void {
+  const definitions: ThemeDefinition[] = [];
+  for (const raw of themes) {
+    const result = validateTheme(raw);
+    if (result.ok) definitions.push(unifiedToDefinition(result.theme));
+  }
+  setCustomThemeDefinitions(definitions);
+  resolvedCache.clear();
+}
 
 function onAccent(background: string): '#09090b' | '#ffffff' {
   const hex = background.replace('#', '');
@@ -53,17 +74,40 @@ export function applyThemeToElement(value: unknown, root: HTMLElement): Resolved
   }
   root.style.setProperty('--on-accent', onAccent(resolved.tokens['accent.primary']));
   root.dataset.theme = resolved.definition.id;
-  root.style.colorScheme = 'dark';
+  root.style.colorScheme = resolved.definition.mode;
   return resolved;
+}
+
+/**
+ * Boot-background handoff (browser analog of Cate's boot.json): the frame
+ * parent owns the iframe backdrop, so the renderer publishes the exact
+ * first-paint color after every theme application. The value is derived from
+ * the resolved theme itself, never from a separately cached copy.
+ */
+export function publishBootSnapshot(resolved: ResolvedTheme): void {
+  const backgroundColor = resolved.definition.bootBackground ?? resolved.tokens['bg.canvas'];
+  if (!backgroundColor) return;
+  fetch('/api/platform/theme', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      themeId: resolved.definition.id,
+      backgroundColor,
+      appearance: resolved.definition.mode,
+    }),
+  }).catch(() => { /* the parent frame falls back to its own backdrop */ });
 }
 
 export function toPlatformTheme(value: unknown): Theme {
   const resolved = resolveTheme(value);
   const token = (name: string) => resolved.tokens[name];
+  const editor = resolved.definition.editor;
   return {
     id: resolved.definition.id,
     name: resolved.definition.name,
-    isDark: true,
+    isDark: resolved.definition.mode === 'dark',
+    editorBase: editor?.base ?? (resolved.definition.mode === 'light' ? 'vs' : 'vs-dark'),
+    editorRules: editor?.tokens,
     colors: {
       'editor.background': token('bg.editor'),
       'editor.foreground': token('fg.primary'),
@@ -76,6 +120,7 @@ export function toPlatformTheme(value: unknown): Theme {
       'editorWhitespace.foreground': token('border.primary'),
       'editorIndentGuide.background1': token('border.primary'),
       'editorIndentGuide.activeBackground1': token('accent.primary'),
+      ...editor?.colors,
       'syntax.comment': token('syntax.comment'),
       'syntax.keyword': token('syntax.keyword'),
       'syntax.string': token('syntax.string'),
@@ -89,12 +134,35 @@ export function toPlatformTheme(value: unknown): Theme {
 
 export function toTerminalTheme(value: unknown): TerminalRendererTheme {
   const resolved = resolveTheme(value);
+  const palette = resolved.definition.terminal;
+  if (palette) {
+    return {
+      background: palette.background,
+      foreground: palette.foreground,
+      cursor: palette.cursor ?? resolved.tokens['accent.companion'],
+      cursorAccent: palette.cursorAccent ?? palette.background,
+      selectionBackground: palette.selectionBackground ?? resolved.tokens['selection.primary'],
+      ...(palette.selectionForeground ? { selectionForeground: palette.selectionForeground } : {}),
+      black: palette.black, red: palette.red, green: palette.green, yellow: palette.yellow,
+      blue: palette.blue, magenta: palette.magenta, cyan: palette.cyan, white: palette.white,
+      brightBlack: palette.brightBlack, brightRed: palette.brightRed, brightGreen: palette.brightGreen,
+      brightYellow: palette.brightYellow, brightBlue: palette.brightBlue, brightMagenta: palette.brightMagenta,
+      brightCyan: palette.brightCyan, brightWhite: palette.brightWhite,
+    };
+  }
+  // Hand-built definitions without a terminal block: derive the full palette.
   const token = (name: string) => resolved.tokens[name];
+  const brighten = (hex: string) => mixHex(hex, resolved.definition.mode === 'light' ? '#000000' : '#ffffff', 0.28);
   return {
     background: token('bg.editor'), foreground: token('fg.primary'), cursor: token('accent.companion'),
     cursorAccent: token('bg.editor'), selectionBackground: token('selection.primary'), black: token('bg.canvas'),
     red: token('semantic.error'), green: token('semantic.success'), yellow: token('semantic.warning'),
     blue: token('syntax.function'), magenta: token('syntax.keyword'), cyan: token('accent.companion'), white: token('fg.primary'),
+    brightBlack: mixHex(token('bg.canvas'), token('fg.primary'), 0.45),
+    brightRed: brighten(token('semantic.error')), brightGreen: brighten(token('semantic.success')),
+    brightYellow: brighten(token('semantic.warning')), brightBlue: brighten(token('syntax.function')),
+    brightMagenta: brighten(token('syntax.keyword')), brightCyan: brighten(token('accent.companion')),
+    brightWhite: mixHex(token('fg.primary'), resolved.definition.mode === 'light' ? '#000000' : '#ffffff', 0.35),
   };
 }
 

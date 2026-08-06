@@ -9,12 +9,12 @@ import { applyThemeToElement, THEMES } from '@/theme';
 describe('visual theme picker', () => {
   beforeEach(() => {
     localStorage.clear();
-    useUIStore.setState({ preferences: DEFAULT_PREFERENCES, dialog: 'settings' });
+    useUIStore.setState({ preferences: DEFAULT_PREFERENCES, customThemes: {}, dialog: 'settings' });
   });
 
   it('shows all presets as visual radios and switches to Deep Black', () => {
     render(<SettingsDialog />);
-    expect(screen.getAllByRole('radio')).toHaveLength(16);
+    expect(screen.getAllByRole('radio')).toHaveLength(26);
     const deepBlack = screen.getByRole('radio', { name: /Deep Black/ });
     fireEvent.click(deepBlack);
     expect(useUIStore.getState().preferences.theme).toBe('deep-black');

@@ -304,6 +304,10 @@ export interface Theme {
   colors: Record<string, string>;
   /** Monaco editor theme name for Floyd theme integration (§3). */
   monacoTheme?: string;
+  /** Monaco base theme the unified theme's rules inherit from. */
+  editorBase?: 'vs' | 'vs-dark';
+  /** Monaco token rules (foreground/background hex WITHOUT '#'). */
+  editorRules?: Array<{ token: string; foreground?: string; background?: string; fontStyle?: string }>;
 }
 
 // ─── Notifications ────────────────────────────────────────────────────
@@ -354,6 +358,14 @@ export interface FileStat {
   size: number;
   mtimeMs: number;
   mode?: number;
+}
+
+/** Raw file bytes from the host (document viewers). */
+export interface BinaryFile {
+  name: string;
+  size: number;
+  mime: string;
+  data: Uint8Array;
 }
 
 export interface FileWatchEvent {

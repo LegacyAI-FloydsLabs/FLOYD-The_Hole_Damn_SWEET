@@ -41,6 +41,7 @@ export type {
   Diagnostic,
   DirEntry,
   FileStat,
+  BinaryFile,
   FileWatchEvent,
   GitStatus,
   GitChangedFile,

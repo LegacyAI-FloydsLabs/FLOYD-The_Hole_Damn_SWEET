@@ -14,7 +14,7 @@ import { HelpDialog } from './HelpDialog';
 import { ToastRegion } from './ToastRegion';
 import { EditorToolbar } from './EditorToolbar';
 import { useWorkspace } from '@/workspace';
-import { applyThemeToElement } from '@/theme';
+import { applyThemeToElement, publishBootSnapshot } from '@/theme';
 import { fontStack } from '@/font';
 
 const TerminalPane = lazy(() => import('@/terminal/TerminalPane').then((module) => ({ default: module.TerminalPane })));
@@ -38,7 +38,8 @@ export function AppShell() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    applyThemeToElement(ui.preferences.theme, root);
+    const resolved = applyThemeToElement(ui.preferences.theme, root);
+    publishBootSnapshot(resolved);
     root.style.setProperty('--workbench-font-family', fontStack(ui.preferences.fontFamily));
     root.dataset.motion = ui.preferences.reducedMotion ? 'reduced' : 'full';
   }, [ui.preferences.fontFamily, ui.preferences.reducedMotion, ui.preferences.theme]);

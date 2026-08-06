@@ -10,6 +10,7 @@
 import type { Diagnostic, Theme } from '@/platform';
 import type { LspService } from '@/lsp/LspService';
 import type { InlineCompletionService } from './InlineCompletionService';
+import type { DocumentType } from './fileRouting';
 
 export interface EditorModel {
   path: string;
@@ -22,6 +23,9 @@ export interface Tab {
   path: string;
   isDirty: boolean;
   isPreview: boolean;
+  /** 'document' tabs render a viewer (image/PDF/DOCX/binary) instead of Monaco. */
+  kind?: 'editor' | 'document';
+  documentType?: DocumentType;
 }
 
 export interface EditorSelection {

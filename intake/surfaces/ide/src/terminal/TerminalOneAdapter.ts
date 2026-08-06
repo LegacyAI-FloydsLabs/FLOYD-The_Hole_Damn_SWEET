@@ -81,6 +81,8 @@ export class TerminalOneAdapter {
       background: '#0B0912', foreground: '#E9E7EE', cursor: '#25D9F5', cursorAccent: '#0B0912',
       selectionBackground: '#4F234F', black: '#08070D', red: '#FF6B83', green: '#51D59A',
       yellow: '#F4C464', blue: '#73B9FF', magenta: '#FF5FA2', cyan: '#25D9F5', white: '#EBE8EF',
+      brightBlack: '#575268', brightRed: '#FF8FA3', brightGreen: '#7DE5B4', brightYellow: '#F8D68C',
+      brightBlue: '#97CBFF', brightMagenta: '#FF85BD', brightCyan: '#66E5F8', brightWhite: '#FFFFFF',
     };
   }
 
