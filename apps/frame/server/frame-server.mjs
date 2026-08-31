@@ -10,7 +10,7 @@
  */
 import http from "node:http";
 import { spawn, execFile } from "node:child_process";
-import { chmodSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -653,20 +653,33 @@ async function openChrome(url) {
   let alive = false;
   try { await cdpHttp("/json/version"); alive = true; } catch {}
   if (!alive) {
+    const chromeLog = join(RUNTIME_ROOT, "internal-browser-chrome.log");
+    const chromeLogFd = openSync(chromeLog, "a");
     const child = spawn(CHROME_BIN, [
       `--user-data-dir=${INTERNAL_BROWSER_PROFILE}`,
       `--remote-debugging-port=${INTERNAL_BROWSER_CDP_PORT}`,
       "--enable-unsafe-extension-debugging",
       "--no-first-run", "--no-default-browser-check",
+      ...(process.env.FLOYD_INTERNAL_BROWSER_HEADLESS === "1" ? ["--headless=new"] : []),
       ...(url ? [url] : []),
-    ], { detached: true, stdio: "ignore" });
+    ], { detached: true, stdio: ["ignore", chromeLogFd, chromeLogFd] });
+    closeSync(chromeLogFd);
     child.unref();
     let up = false;
     for (let i = 0; i < 40; i++) {
       try { await cdpHttp("/json/version"); up = true; break; } catch {}
       await new Promise((r) => setTimeout(r, 250));
     }
-    if (!up) throw new Error("internal browser did not expose its CDP port within 10s");
+    if (!up) {
+      const details = (() => {
+        try { return readFileSync(chromeLog, "utf8").slice(-8192).trim(); } catch { return ""; }
+      })();
+      throw new Error(
+        `internal browser did not expose its CDP port within 10s; Chrome exit=${child.exitCode ?? "running"}`
+        + (child.signalCode ? ` signal=${child.signalCode}` : "")
+        + (details ? `; Chrome log tail:\n${details}` : ""),
+      );
+    }
   } else if (url) {
     await cdpHttp(`/json/new?${encodeURIComponent(url)}`, "PUT").catch(() => {});
   }

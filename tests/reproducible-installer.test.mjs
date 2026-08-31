@@ -249,6 +249,12 @@ test('clean-install contract exercises the mandatory internal browser', () => {
   assert.match(frameServer, /\/api\/action\/close-chrome/);
   assert.match(installedVerifier, /CHROME_BIN="\/Applications\/Google Chrome\.app\/Contents\/MacOS\/Google Chrome"/);
   assert.match(installedVerifier, /\/api\/action\/open-chrome/);
+  assert.match(installedVerifier, /FLOYD_INTERNAL_BROWSER_HEADLESS=1/);
+  assert.match(installer, /FLOYD_INTERNAL_BROWSER_HEADLESS/);
+  assert.match(frameServer, /FLOYD_INTERNAL_BROWSER_HEADLESS === "1"/);
+  assert.match(frameServer, /--headless=new/);
+  assert.match(frameServer, /internal-browser-chrome\.log/);
+  assert.match(frameServer, /Chrome log tail/);
   assert.match(installedVerifier, /installed internal browser did not launch \(HTTP \$BROWSER_STATUS\)/);
   assert.match(installedVerifier, /sed -n '1,120p' "\$BROWSER_RESPONSE"/);
   assert.match(installedVerifier, /browser\.get\("opened"\) is True/);

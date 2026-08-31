@@ -196,7 +196,11 @@ plist() { # label program-args...
     printf '</array>\n<key>EnvironmentVariables</key><dict>\n'
     printf '<key>HOME</key><string>%s</string>\n<key>FLOYD_RUNTIME_ROOT</key><string>%s</string>\n' "$HOME" "$RUNTIME_ROOT"
     printf '<key>PATH</key><string>%s:/usr/bin:/bin:/usr/sbin:/sbin</string>\n' "$NODE_DIR"
-    printf '<key>FLOYD_AGENT_NODE</key><string>%s</string>\n</dict>\n' "$NODE"
+    printf '<key>FLOYD_AGENT_NODE</key><string>%s</string>\n' "$NODE"
+    if [ "${FLOYD_INTERNAL_BROWSER_HEADLESS:-}" = 1 ]; then
+      printf '<key>FLOYD_INTERNAL_BROWSER_HEADLESS</key><string>1</string>\n'
+    fi
+    printf '</dict>\n'
     printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n'
     printf '<key>StandardOutPath</key><string>%s/%s.log</string>\n<key>StandardErrorPath</key><string>%s/%s.log</string>\n' "$LOG_DIR" "$label" "$LOG_DIR" "$label"
     printf '</dict></plist>\n'

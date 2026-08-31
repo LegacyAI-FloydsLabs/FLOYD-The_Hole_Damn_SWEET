@@ -147,7 +147,8 @@ for app in ff omf launcher; do
   chmod 600 "$PROFILE_DIR/$app.json"
 done
 SERVICES_STARTED=1
-HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" "$APP/Contents/MacOS/FLOYD Desktop Suite"
+HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" FLOYD_INTERNAL_BROWSER_HEADLESS=1 \
+  "$APP/Contents/MacOS/FLOYD Desktop Suite"
 echo "==> installed launcher started"
 
 python3 - "$TEST_HOME/Library/LaunchAgents/com.floyd.frame.plist" \
@@ -160,6 +161,8 @@ for path in sys.argv[1:3]:
         environment = plistlib.load(handle)["EnvironmentVariables"]
     assert environment["PATH"] == sys.argv[3], (path, environment.get("PATH"))
     assert environment["FLOYD_AGENT_NODE"] == sys.argv[4], (path, environment.get("FLOYD_AGENT_NODE"))
+    if path.endswith("com.floyd.frame.plist"):
+        assert environment["FLOYD_INTERNAL_BROWSER_HEADLESS"] == "1", environment
 PY
 
 wait_http() {
