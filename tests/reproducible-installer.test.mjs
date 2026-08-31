@@ -6,6 +6,7 @@ const rootPackage = JSON.parse(readFileSync('package.json', 'utf8'));
 const lock = JSON.parse(readFileSync('upstream.lock', 'utf8'));
 const prepare = readFileSync('scripts/prepare-release-inputs.sh', 'utf8');
 const installer = readFileSync('scripts/build-installer.sh', 'utf8');
+const postinstall = readFileSync('scripts/install-packaged-application.sh', 'utf8');
 const workflow = readFileSync('.github/workflows/clean-macos-install.yml', 'utf8');
 
 test('every packaged Node project has a committed lockfile', () => {
@@ -36,8 +37,14 @@ test('installer rebuilds in an isolated git export before staging', () => {
   assert.match(installer, /SOURCE\/build-assets\/FLOYD\.icns/);
   assert.match(installer, /SOURCE\/\$workspace\/node_modules/);
   assert.doesNotMatch(installer, /pkgbuild --analyze/);
-  assert.match(installer, /<plist version="1\.0"><array\/><\/plist>/);
-  assert.match(installer, /--component-plist "\$COMPONENTS"/);
+  assert.match(installer, /ditto -c -k --sequesterRsrc --keepParent "\$APP" "\$ARCHIVE"/);
+  assert.match(installer, /SOURCE\/scripts\/install-packaged-application\.sh/);
+  assert.match(installer, /--scripts "\$STAGE\/scripts"/);
+  assert.doesNotMatch(installer, /--component-plist/);
+  assert.match(postinstall, /ditto -x -k "\$ARCHIVE" "\$EXTRACTED"/);
+  assert.match(postinstall, /mv "\$CANDIDATE" "\$APP"/);
+  assert.match(postinstall, /desktop\/dist-server\/index\.js/);
+  assert.match(postinstall, /ide\/dist\/index\.html/);
   assert.match(prepare, /release builds require Node 26 or newer/);
   assert.match(prepare, /npx --yes pnpm@11\.24\.0 install --frozen-lockfile/);
   assert.match(prepare, /npm ci/);

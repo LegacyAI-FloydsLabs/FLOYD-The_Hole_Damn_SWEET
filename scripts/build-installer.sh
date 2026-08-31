@@ -244,19 +244,21 @@ echo "    scan clean"
 
 echo "==> building pkg"
 PKG="$DIST/FLOYD-$VERSION.pkg"
-COMPONENTS="$STAGE/components.plist"
-# Package the staged tree as a literal payload. An analyzed component list
-# makes Installer apply bundle upgrade/relocation rules, which can leave a
-# partial app at /Applications even when every file is present in the PKG.
-# An empty component list emits no upgrade targets and an empty relocation
-# table, so every freshly staged file is installed at its exact payload path.
-cat > "$COMPONENTS" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><array/></plist>
-PLIST
+# Do not put the .app itself in the component payload. Installer applies
+# bundle update semantics to application components and has been observed to
+# install only part of this large app even though the missing files are in the
+# package BOM. Package a freshly produced archive instead; the postinstall
+# script expands that archive as one complete app and verifies its critical
+# production bundles before declaring success.
+ARCHIVE_DIR="$STAGE/payload/Library/Application Support/FLOYD Installer"
+ARCHIVE="$ARCHIVE_DIR/FLOYD Desktop Suite.zip"
+mkdir -p "$ARCHIVE_DIR" "$STAGE/scripts"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+rm -rf "$APP"
+cp "$SOURCE/scripts/install-packaged-application.sh" "$STAGE/scripts/postinstall"
+chmod 755 "$STAGE/scripts/postinstall"
 pkgbuild --root "$STAGE/payload" \
-  --component-plist "$COMPONENTS" \
+  --scripts "$STAGE/scripts" \
   --identifier "$IDENTIFIER" \
   --version "$VERSION" \
   --install-location / \

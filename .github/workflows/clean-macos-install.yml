@@ -13,11 +13,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '26.5.0'
 
@@ -36,7 +36,7 @@ jobs:
       - name: Verify installed primary workflow
         run: ./scripts/verify-installed-application.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: floyd-clean-macos-installer
