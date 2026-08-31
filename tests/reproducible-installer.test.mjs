@@ -153,6 +153,9 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /security default-keychain -d user -s/);
   assert.match(installedVerifier, /clean-install verification refuses to replace running service/);
   assert.match(installedVerifier, /SERVICES_STARTED=1/);
+  assert.match(installedVerifier, /installed workflow diagnostics/);
+  assert.match(installedVerifier, /launch_surface\(\)/);
+  assert.match(installedVerifier, /installed surface \$id did not launch \(HTTP \$status\)/);
   assert.match(installedVerifier, /TTY Bridge runtime dependency missing/);
   for (const addon of ttyAddons) assert.match(installedVerifier, new RegExp(`\\b${addon}\\b`));
   assert.match(installedVerifier, /IDE_ROOT="\$WS\/intake\/surfaces\/ide"/);
@@ -203,7 +206,7 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /api\/lsp\/restart/);
   assert.match(installedVerifier, /health\.get\("status"\) == "running"/);
   for (const surface of ['harness-launcher', 'floyd-code-cli', 'ohmyfloyd']) {
-    assert.match(installedVerifier, new RegExp(`api/launch/${surface}`));
+    assert.match(installedVerifier, new RegExp(`launch_surface ${surface}`));
   }
   assert.match(installedVerifier, /floyd-agent" code-reviewer --version/);
   assert.match(installedVerifier, /installed \$app managed launcher could not use bundled Node/);

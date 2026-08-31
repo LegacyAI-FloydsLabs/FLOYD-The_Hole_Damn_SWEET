@@ -18,6 +18,15 @@ TEST_KEYCHAIN="$TEST_HOME/Library/Keychains/floyd-clean-install.keychain-db"
 SERVICES_STARTED=0
 
 cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "==> installed workflow diagnostics (exit $status)" >&2
+    for log in "$LOG_DIR"/*.log; do
+      [ -f "$log" ] || continue
+      echo "--- $log" >&2
+      sed -n '1,240p' "$log" >&2
+    done
+  fi
   if [ "$SERVICES_STARTED" = 1 ]; then
     curl -fsS -X POST http://127.0.0.1:13030/api/action/close-chrome >/dev/null 2>&1 || true
     launchctl bootout "gui/$(id -u)/com.floyd.frame" 2>/dev/null || true
@@ -99,6 +108,7 @@ for (const executable of ['npm', 'npx', 'tsc']) {
   }
 }
 JS
+echo "==> bundled IDE task runtime verified"
 
 EXPECTED_ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['sha256'])")
 EXPECTED_ENGINE_VERSION=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['version'])")
@@ -138,6 +148,7 @@ for app in ff omf launcher; do
 done
 SERVICES_STARTED=1
 HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" "$APP/Contents/MacOS/FLOYD Desktop Suite"
+echo "==> installed launcher started"
 
 python3 - "$TEST_HOME/Library/LaunchAgents/com.floyd.frame.plist" \
   "$TEST_HOME/Library/LaunchAgents/com.floyd.core.plist" "$SERVICE_PATH" "$NODE" <<'PY'
@@ -191,6 +202,7 @@ while [ "$i" -lt 60 ]; do
   i=$((i + 1))
 done
 [ "$CORE_READY" = 1 ] || { echo "FAIL: installed Core/OpenCode did not become healthy" >&2; exit 1; }
+echo "==> Core and OpenCode healthy"
 
 # Frame/Vault must mint Core's real capability before Core starts. Prove that
 # the installed OpenCode configuration consumed that exact live capability,
@@ -217,11 +229,13 @@ assert options["baseURL"] == "http://127.0.0.1:13031/p/zai/api/coding/paas/v4", 
 print(profile["proxyToken"], end="")
 PY
 )
+echo "==> verifying live Vault capability"
 VAULT_STATUS=$(curl -fsS -H "Authorization: Bearer $VAULT_CORE_TOKEN" \
   http://127.0.0.1:13031/status)
 printf '%s' "$VAULT_STATUS" | python3 -c 'import json,sys; status=json.load(sys.stdin); assert status.get("ok") is True and status.get("app") == "core" and status.get("authority") == "floyd-vault-keychain", status'
 
 for app in ff omf; do
+  echo "==> verifying installed $app launcher"
   case "$app" in
     ff) version_pattern='^floyd version v[0-9]+\.[0-9]+\.[0-9]+$' ;;
     omf) version_pattern='^omp/[0-9]+\.[0-9]+\.[0-9]+$' ;;
@@ -256,7 +270,18 @@ fi
 
 REGISTRY=$(curl -fsS http://127.0.0.1:13030/api/registry)
 printf '%s' "$REGISTRY" | python3 -c 'import json,sys; ids={app["id"] for app in json.load(sys.stdin)["apps"]}; required={"cursem-ide","floyd-desktop","harness-launcher","floyd-code-cli","ohmyfloyd"}; assert required <= ids, required-ids'
-curl -fsS -X POST http://127.0.0.1:13030/api/launch/cursem-ide | grep -q '"up":true'
+launch_surface() {
+  id=$1
+  response="$RUNTIME/launch-$id.json"
+  status=$(curl -sS -o "$response" -w '%{http_code}' -X POST "http://127.0.0.1:13030/api/launch/$id")
+  if [ "$status" != 200 ] || ! grep -q '"up":true' "$response"; then
+    echo "FAIL: installed surface $id did not launch (HTTP $status)" >&2
+    sed -n '1,120p' "$response" >&2
+    return 1
+  fi
+}
+echo "==> launching installed CURSEM IDE and TerminalOne"
+launch_surface cursem-ide
 wait_http http://127.0.0.1:13012/
 wait_http http://127.0.0.1:13013/
 CURSEM="$IDE_ROOT/cli/bin/cursem"
@@ -282,13 +307,14 @@ for language in typescript json html css python shell; do
   LSP_HEALTH=$(curl -fsS "http://127.0.0.1:13012/api/lsp/health?language=$language")
   printf '%s' "$LSP_HEALTH" | python3 -c 'import json,sys; health=json.load(sys.stdin); assert health.get("status") == "running", health'
 done
-curl -fsS -X POST http://127.0.0.1:13030/api/launch/floyd-desktop | grep -q '"up":true'
+echo "==> launching remaining installed surfaces"
+launch_surface floyd-desktop
 wait_http http://127.0.0.1:13010/
-curl -fsS -X POST http://127.0.0.1:13030/api/launch/harness-launcher | grep -q '"up":true'
+launch_surface harness-launcher
 wait_http http://127.0.0.1:13014/
-curl -fsS -X POST http://127.0.0.1:13030/api/launch/floyd-code-cli | grep -q '"up":true'
+launch_surface floyd-code-cli
 wait_http http://127.0.0.1:13022/
-curl -fsS -X POST http://127.0.0.1:13030/api/launch/ohmyfloyd | grep -q '"up":true'
+launch_surface ohmyfloyd
 wait_http http://127.0.0.1:13023/
 SURFACE_STATUS=$(curl -fsS -H "Authorization: Bearer $CORE_TOKEN" \
   http://127.0.0.1:41414/api/surfaces)
@@ -300,6 +326,7 @@ for name in ("desktop", "ide", "pty", "launcher"):
     surface=by_id.get(name)
     assert surface is not None and surface.get("verified") is True, (name, surface, payload)
 '
+echo "==> launching installed internal browser"
 BROWSER_RESULT=$(curl -fsS -X POST -H 'Content-Type: application/json' \
   --data '{"url":"about:blank"}' \
   http://127.0.0.1:13030/api/action/open-chrome)
