@@ -66,6 +66,14 @@ test('OpenCode lock identifies and hashes an immutable platform artifact', () =>
   assert.match(lock.opencode.sha256, /^[a-f0-9]{64}$/);
 });
 
+test('Node runtime lock identifies and hashes the exact release runtime', () => {
+  assert.equal(lock.node.version, '26.5.0');
+  assert.match(lock.node.artifact_url, /node-v26\.5\.0-darwin-arm64\.tar\.gz$/);
+  assert.match(lock.node.artifact_sha256, /^[a-f0-9]{64}$/);
+  assert.equal(lock.node.artifact_binary_path, 'node-v26.5.0-darwin-arm64/bin/node');
+  assert.match(lock.node.sha256, /^[a-f0-9]{64}$/);
+});
+
 test('installer rebuilds in an isolated git export before staging', () => {
   assert.match(installer, /git archive HEAD/);
   assert.match(installer, /prepare-release-inputs\.sh" "\$SOURCE"/);
@@ -91,11 +99,16 @@ test('installer rebuilds in an isolated git export before staging', () => {
   assert.match(postinstall, /required="\$IDE_ROOT\/node_modules\/\.bin\/\$launcher"\n  \[ -x "\$required" \] \|\| \{/);
   for (const launcher of ideRuntimeLaunchers) assert.match(postinstall, new RegExp(`\\b${launcher}\\b`));
   assert.match(postinstall, /TS_SERVER="\$IDE_ROOT\/node_modules\/typescript\/lib\/tsserver\.js"\n\[ -f "\$TS_SERVER" \] \|\| \{/);
+  const recovery = postinstall.indexOf('if [ ! -e "$APP" ] && [ -e "$PREVIOUS" ]; then');
+  const extractedCleanup = postinstall.indexOf('rm -rf "$EXTRACTED"');
+  assert.ok(recovery >= 0 && recovery < extractedCleanup, 'interrupted install recovery must precede cleanup');
+  assert.doesNotMatch(postinstall, /rm -rf "\$EXTRACTED" "\$PREVIOUS"/);
   for (const launcher of packagedGatewayLaunchers) {
     assert.match(lspGateway, new RegExp(`['"]${launcher}['"]`));
     assert.ok(ideRuntimeLaunchers.includes(launcher), `${launcher} must be required by the installed package`);
   }
-  assert.match(prepare, /release builds require Node 26 or newer/);
+  assert.match(prepare, /\['node'\]\['version'\]/);
+  assert.match(prepare, /release builds require Node \$REQUIRED_NODE_VERSION exactly/);
   assert.match(prepare, /npx --yes pnpm@11\.24\.0 install --frozen-lockfile/);
   assert.match(prepare, /npm ci/);
   assert.match(prepare, /npm run build/);
@@ -123,7 +136,7 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /OpenCode version mismatch/);
   assert.match(installedVerifier, /Contents\/MacOS\/FLOYD Desktop Suite/);
   assert.match(installedVerifier, /proxy-app-profiles/);
-  assert.match(installedVerifier, /chmod 600 "\$PROFILE_DIR\/core\.json"/);
+  assert.match(installedVerifier, /chmod 600 "\$PROFILE_DIR\/\$app\.json"/);
   assert.match(installedVerifier, /Library\/Preferences/);
   assert.match(installedVerifier, /security create-keychain/);
   assert.match(installedVerifier, /security unlock-keychain/);
@@ -137,6 +150,29 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /IDE runtime launcher missing/);
   for (const launcher of ideRuntimeLaunchers) assert.match(installedVerifier, new RegExp(`\\b${launcher}\\b`));
   assert.match(installedVerifier, /\[ -f "\$IDE_ROOT\/node_modules\/typescript\/lib\/tsserver\.js" \] \|\| \{/);
+  assert.match(installer, /NODE_DIR="\$HERE\/Resources\/node\/bin"/);
+  assert.match(installer, /<key>PATH<\/key><string>%s:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin<\/string>/);
+  assert.match(installer, /<key>FLOYD_AGENT_NODE<\/key><string>%s<\/string>/);
+  assert.doesNotMatch(installer, /FLOYD_NODE_VERSION|FLOYD_NODE_SHA256/);
+  assert.match(installer, /node binary sha mismatch/);
+  assert.match(installedVerifier, /EnvironmentVariables/);
+  assert.match(installedVerifier, /environment\["PATH"\]/);
+  assert.match(installedVerifier, /environment\["FLOYD_AGENT_NODE"\]/);
+  assert.match(installedVerifier, /installed Node sha mismatch/);
+  assert.match(installedVerifier, /installed Node version mismatch/);
+  for (const language of ['typescript', 'json', 'html', 'css', 'python', 'shell']) {
+    assert.match(installedVerifier, new RegExp(`\\b${language}\\b`));
+  }
+  assert.match(installedVerifier, /api\/lsp\/restart/);
+  assert.match(installedVerifier, /health\.get\("status"\) == "running"/);
+  for (const surface of ['harness-launcher', 'floyd-code-cli', 'ohmyfloyd']) {
+    assert.match(installedVerifier, new RegExp(`api/launch/${surface}`));
+  }
+  assert.match(installedVerifier, /floyd-agent" code-reviewer --version/);
+  assert.match(installedVerifier, /installed \$app managed launcher could not use bundled Node/);
+  assert.match(installedVerifier, /\^floyd version v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
+  assert.match(installedVerifier, /\^omp\/\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
+  assert.match(installedVerifier, /launcher did not execute its packaged binary/);
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
 });

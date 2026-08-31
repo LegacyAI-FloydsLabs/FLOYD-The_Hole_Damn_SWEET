@@ -6,10 +6,16 @@ set -eu
 ROOT=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)}
 NPM_FLAGS="--no-audit --no-fund"
 BUILD_ROOT="$ROOT/.floyd-build"
+LOCK="$ROOT/upstream.lock"
 
-NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])")
-[ "$NODE_MAJOR" -ge 26 ] || {
-  echo "FATAL: release builds require Node 26 or newer (found $(node --version))" >&2
+command -v python3 >/dev/null 2>&1 || {
+  echo "FATAL: release builds require Python 3" >&2
+  exit 1
+}
+REQUIRED_NODE_VERSION="v$(python3 -c "import json; print(json.load(open('$LOCK'))['node']['version'])")"
+ACTUAL_NODE_VERSION=$(node --version)
+[ "$ACTUAL_NODE_VERSION" = "$REQUIRED_NODE_VERSION" ] || {
+  echo "FATAL: release builds require Node $REQUIRED_NODE_VERSION exactly (found $ACTUAL_NODE_VERSION)" >&2
   exit 1
 }
 
@@ -68,7 +74,6 @@ done
 
 echo "==> acquiring pinned OpenCode executable"
 mkdir -p "$BUILD_ROOT/downloads" "$BUILD_ROOT/opencode"
-LOCK="$ROOT/upstream.lock"
 read_lock() {
   python3 -c "import json; print(json.load(open('$LOCK'))['opencode']['$1'])"
 }

@@ -13,18 +13,32 @@ routed through the Vault.
 - Contract and fixed decisions: `FLOYD.md` (read it first — it describes the
   current machine reality, including the runtime-root gotcha below).
 
-## Install
+## Rebuild and install on a clean Mac
 
-Requires macOS, Node >= 26 (Homebrew node preferred), npm, and `qrencode`
-(`brew install qrencode`) for local QR handoff rendering.
+The supported recovery path requires an Apple-silicon Mac running macOS 14 or
+newer, Git LFS, Python 3, and Node 26.5.0. The release script performs frozen
+installs from every committed lockfile, rebuilds the Desktop and IDE bundles,
+downloads and verifies the pinned OpenCode and Node binaries, and packages
+only that fresh release tree.
 
 ```sh
+git lfs install
 git clone https://github.com/LegacyAI-FloydsLabs/FLOYD-The_Hole_Damn_SWEET.git
 cd FLOYD-The_Hole_Damn_SWEET
-npm install
-npm run typecheck        # builds TS project references
-npm test                 # full suite
+git lfs pull
+./scripts/build-installer.sh
+sudo installer -pkg "dist/FLOYD-$(tr -d '[:space:]' < VERSION).pkg" -target /
+./scripts/verify-installed-application.sh
 ```
+
+The package is unsigned unless `FLOYD_SIGN_IDENTITY` names a Developer ID
+Installer certificate. The command-line installer above supports the unsigned
+development package used by the clean-Mac workflow; sign release packages for
+normal distribution.
+
+For source development, install the root workspace with the pinned package
+manager (`npx --yes pnpm@11.24.0 install --frozen-lockfile`). `qrencode` is
+optional and is used only for local QR handoff rendering.
 
 The runtime root defaults to `~/.floyd`. Any manual run can override it:
 

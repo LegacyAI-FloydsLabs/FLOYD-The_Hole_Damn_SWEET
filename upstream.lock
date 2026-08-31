@@ -9,5 +9,14 @@
     "arch": "arm64-darwin",
     "pinned_at": "2026-07-13T23:36:00-04:00",
     "notes": "Managed loopback child only. The versioned official npm platform artifact is downloaded and both the archive and extracted executable are SHA-256 verified. binary_path is runtime-root-relative (FLOYD_RUNTIME_ROOT or ~/.floyd); the installer stages the verified binary there. Floyd Core verifies this sha256 before every spawn and fails closed on mismatch. Never resolved via PATH."
+  },
+  "node": {
+    "version": "26.5.0",
+    "artifact_url": "https://nodejs.org/dist/v26.5.0/node-v26.5.0-darwin-arm64.tar.gz",
+    "artifact_sha256": "ee920559aaa2391569cff4d737e3b83963430e3a14dedd91bfe0ff53171b5af9",
+    "artifact_binary_path": "node-v26.5.0-darwin-arm64/bin/node",
+    "sha256": "cbee2298aee5cc476bf8d5441e7348b627254a39d869743a5b04489028c729d4",
+    "arch": "arm64-darwin",
+    "notes": "Official self-contained Node runtime used for release dependency installation and shipped inside the application. Release preparation requires this exact version; the archive and extracted installed executable are both SHA-256 verified."
   }
 }

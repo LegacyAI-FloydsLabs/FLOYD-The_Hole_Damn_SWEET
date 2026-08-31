@@ -107,20 +107,27 @@ chmod 755 "$RES/engine/opencode"
 echo "==> staging node runtime (official self-contained build)"
 # Homebrew node links against /opt/homebrew dylibs and cannot be copied.
 # Bundle the official nodejs.org binary, cached under dist/.node-cache.
-NODE_VER=${FLOYD_NODE_VERSION:-v26.5.0}
+NODE_VERSION=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['version'])")
+NODE_VER="v$NODE_VERSION"
+NODE_URL=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['artifact_url'])")
+NODE_MEMBER=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['artifact_binary_path'])")
 NODE_TGZ="$DIST/.node-cache/node-$NODE_VER-darwin-arm64.tar.gz"
-NODE_SHA=${FLOYD_NODE_SHA256:-ee920559aaa2391569cff4d737e3b83963430e3a14dedd91bfe0ff53171b5af9}
+NODE_SHA=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['artifact_sha256'])")
+NODE_BINARY_SHA=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['sha256'])")
 if [ ! -f "$NODE_TGZ" ]; then
   mkdir -p "$DIST/.node-cache"
-  curl -fsSL "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-darwin-arm64.tar.gz" -o "$NODE_TGZ"
+  curl -fsSL "$NODE_URL" -o "$NODE_TGZ"
 fi
 ACTUAL_NODE_SHA=$(shasum -a 256 "$NODE_TGZ" | cut -d' ' -f1)
 [ "$ACTUAL_NODE_SHA" = "$NODE_SHA" ] || { echo "FATAL: node archive sha mismatch ($ACTUAL_NODE_SHA != $NODE_SHA)" >&2; exit 1; }
 mkdir -p "$RES/node/bin"
-tar -xzf "$NODE_TGZ" -C "$STAGE" "node-$NODE_VER-darwin-arm64/bin/node"
-cp "$STAGE/node-$NODE_VER-darwin-arm64/bin/node" "$RES/node/bin/node"
+tar -xzf "$NODE_TGZ" -C "$STAGE" "$NODE_MEMBER"
+ACTUAL_NODE_BINARY_SHA=$(shasum -a 256 "$STAGE/$NODE_MEMBER" | cut -d' ' -f1)
+[ "$ACTUAL_NODE_BINARY_SHA" = "$NODE_BINARY_SHA" ] || { echo "FATAL: node binary sha mismatch ($ACTUAL_NODE_BINARY_SHA != $NODE_BINARY_SHA)" >&2; exit 1; }
+cp "$STAGE/$NODE_MEMBER" "$RES/node/bin/node"
 chmod 755 "$RES/node/bin/node"
-"$RES/node/bin/node" -e 'process.exit(0)' || { echo "FATAL: bundled node does not run" >&2; exit 1; }
+[ "$("$RES/node/bin/node" --version)" = "$NODE_VER" ] || { echo "FATAL: bundled node version mismatch" >&2; exit 1; }
+file "$RES/node/bin/node" | grep -q 'Mach-O 64-bit executable arm64' || { echo "FATAL: bundled node is not an arm64 macOS executable" >&2; exit 1; }
 
 echo "==> writing app bundle skeleton"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -147,7 +154,8 @@ cat > "$APP/Contents/MacOS/FLOYD Desktop Suite" <<'LAUNCHER'
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)   # Contents/
 WS="$HERE/Resources/workstation"
-NODE="$HERE/Resources/node/bin/node"
+NODE_DIR="$HERE/Resources/node/bin"
+NODE="$NODE_DIR/node"
 RUNTIME_ROOT=${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}
 AGENT_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/Floyd"
@@ -169,7 +177,8 @@ plist() { # label program-args...
     for a in "$@"; do printf '<string>%s</string>\n' "$a"; done
     printf '</array>\n<key>EnvironmentVariables</key><dict>\n'
     printf '<key>HOME</key><string>%s</string>\n<key>FLOYD_RUNTIME_ROOT</key><string>%s</string>\n' "$HOME" "$RUNTIME_ROOT"
-    printf '<key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>\n</dict>\n'
+    printf '<key>PATH</key><string>%s:/usr/bin:/bin:/usr/sbin:/sbin</string>\n' "$NODE_DIR"
+    printf '<key>FLOYD_AGENT_NODE</key><string>%s</string>\n</dict>\n' "$NODE"
     printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n'
     printf '<key>StandardOutPath</key><string>%s/%s.log</string>\n<key>StandardErrorPath</key><string>%s/%s.log</string>\n' "$LOG_DIR" "$label" "$LOG_DIR" "$label"
     printf '</dict></plist>\n'

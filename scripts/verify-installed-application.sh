@@ -8,6 +8,8 @@ WS="$APP/Contents/Resources/workstation"
 NODE="$APP/Contents/Resources/node/bin/node"
 ENGINE="$APP/Contents/Resources/engine/opencode"
 IDE_ROOT="$WS/intake/surfaces/ide"
+NODE_DIR=$(dirname "$NODE")
+SERVICE_PATH="$NODE_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
 RUNTIME=$(mktemp -d /tmp/floyd-installed-runtime.XXXXXX)
 TEST_HOME="$RUNTIME/home"
 LOG_DIR="$TEST_HOME/Library/Logs/Floyd"
@@ -60,6 +62,16 @@ done
   exit 1
 }
 
+EXPECTED_NODE_SHA=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['node']['sha256'])")
+EXPECTED_NODE_VERSION="v$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['node']['version'])")"
+ACTUAL_NODE_SHA=$(shasum -a 256 "$NODE" | cut -d' ' -f1)
+[ "$ACTUAL_NODE_SHA" = "$EXPECTED_NODE_SHA" ] || { echo "FAIL: installed Node sha mismatch" >&2; exit 1; }
+ACTUAL_NODE_VERSION=$("$NODE" --version 2>/dev/null | tr -d '[:space:]')
+[ "$ACTUAL_NODE_VERSION" = "$EXPECTED_NODE_VERSION" ] || {
+  echo "FAIL: installed Node version mismatch ($ACTUAL_NODE_VERSION != $EXPECTED_NODE_VERSION)" >&2
+  exit 1
+}
+
 EXPECTED_ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['sha256'])")
 EXPECTED_ENGINE_VERSION=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['version'])")
 ACTUAL_ENGINE_SHA=$(shasum -a 256 "$ENGINE" | cut -d' ' -f1)
@@ -91,12 +103,25 @@ HOME="$TEST_HOME" /usr/bin/security default-keychain -d user -s "$TEST_KEYCHAIN"
 HOME="$TEST_HOME" /usr/bin/security default-keychain -d user >/dev/null
 unset KEYCHAIN_PASSWORD
 
-cat > "$PROFILE_DIR/core.json" <<'PROFILE'
-{"app":"core","proxyToken":"fv_core_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}
-PROFILE
-chmod 600 "$PROFILE_DIR/core.json"
+for app in core ff omf launcher; do
+  printf '{"app":"%s","proxyToken":"fv_%s_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}\n' \
+    "$app" "$app" > "$PROFILE_DIR/$app.json"
+  chmod 600 "$PROFILE_DIR/$app.json"
+done
 SERVICES_STARTED=1
 HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" "$APP/Contents/MacOS/FLOYD Desktop Suite"
+
+python3 - "$TEST_HOME/Library/LaunchAgents/com.floyd.frame.plist" \
+  "$TEST_HOME/Library/LaunchAgents/com.floyd.core.plist" "$SERVICE_PATH" "$NODE" <<'PY'
+import plistlib
+import sys
+
+for path in sys.argv[1:3]:
+    with open(path, "rb") as handle:
+        environment = plistlib.load(handle)["EnvironmentVariables"]
+    assert environment["PATH"] == sys.argv[3], (path, environment.get("PATH"))
+    assert environment["FLOYD_AGENT_NODE"] == sys.argv[4], (path, environment.get("FLOYD_AGENT_NODE"))
+PY
 
 wait_http() {
   url=$1
@@ -138,10 +163,60 @@ while [ "$i" -lt 60 ]; do
   i=$((i + 1))
 done
 [ "$CORE_READY" = 1 ] || { echo "FAIL: installed Core/OpenCode did not become healthy" >&2; exit 1; }
-curl -fsS http://127.0.0.1:13030/api/registry | grep -q 'cursem-ide'
+
+for app in ff omf; do
+  case "$app" in
+    ff) version_pattern='^floyd version v[0-9]+\.[0-9]+\.[0-9]+$' ;;
+    omf) version_pattern='^omp/[0-9]+\.[0-9]+\.[0-9]+$' ;;
+  esac
+  if ! HOME="$TEST_HOME" PATH="$SERVICE_PATH" FLOYD_RUNTIME_ROOT="$RUNTIME" \
+    FLOYD_VAULT_APP_PROFILE="$PROFILE_DIR/$app.json" \
+    "$WS/intake/surfaces/$app/launch.sh" --version >"$LOG_DIR/$app-version.log" 2>&1; then
+    echo "FAIL: installed $app managed launcher could not use bundled Node" >&2
+    sed -n '1,160p' "$LOG_DIR/$app-version.log" >&2
+    exit 1
+  fi
+  if ! grep -Eq "$version_pattern" "$LOG_DIR/$app-version.log"; then
+    echo "FAIL: installed $app launcher did not execute its packaged binary" >&2
+    sed -n '1,160p' "$LOG_DIR/$app-version.log" >&2
+    exit 1
+  fi
+done
+if ! HOME="$TEST_HOME" PATH="$SERVICE_PATH" FLOYD_RUNTIME_ROOT="$RUNTIME" \
+  FLOYD_AGENT_NODE="$NODE" FLOYD_AGENT_REAL_BIN="$WS/intake/surfaces/ff/bin/floyd-ff-real" \
+  FLOYD_VAULT_APP_PROFILE="$PROFILE_DIR/launcher.json" \
+  "$WS/intake/surfaces/launcher/agents/bin/floyd-agent" code-reviewer --version \
+  >"$LOG_DIR/floyd-agent-version.log" 2>&1; then
+  echo "FAIL: installed agent launcher could not use bundled Node" >&2
+  sed -n '1,160p' "$LOG_DIR/floyd-agent-version.log" >&2
+  exit 1
+fi
+if ! grep -Eq '^floyd version v[0-9]+\.[0-9]+\.[0-9]+$' "$LOG_DIR/floyd-agent-version.log"; then
+  echo "FAIL: installed agent launcher did not execute its packaged binary" >&2
+  sed -n '1,160p' "$LOG_DIR/floyd-agent-version.log" >&2
+  exit 1
+fi
+
+REGISTRY=$(curl -fsS http://127.0.0.1:13030/api/registry)
+printf '%s' "$REGISTRY" | python3 -c 'import json,sys; ids={app["id"] for app in json.load(sys.stdin)["apps"]}; required={"cursem-ide","floyd-desktop","harness-launcher","floyd-code-cli","ohmyfloyd"}; assert required <= ids, required-ids'
 curl -fsS -X POST http://127.0.0.1:13030/api/launch/cursem-ide | grep -q '"up":true'
 wait_http http://127.0.0.1:13012/
+wait_http http://127.0.0.1:13013/
+for language in typescript json html css python shell; do
+  curl -fsS -X POST -H 'Content-Type: application/json' \
+    --data "{\"languageId\":\"$language\"}" \
+    http://127.0.0.1:13012/api/lsp/restart | grep -q '"ok":true'
+  sleep 1
+  LSP_HEALTH=$(curl -fsS "http://127.0.0.1:13012/api/lsp/health?language=$language")
+  printf '%s' "$LSP_HEALTH" | python3 -c 'import json,sys; health=json.load(sys.stdin); assert health.get("status") == "running", health'
+done
 curl -fsS -X POST http://127.0.0.1:13030/api/launch/floyd-desktop | grep -q '"up":true'
 wait_http http://127.0.0.1:13010/
+curl -fsS -X POST http://127.0.0.1:13030/api/launch/harness-launcher | grep -q '"up":true'
+wait_http http://127.0.0.1:13014/
+curl -fsS -X POST http://127.0.0.1:13030/api/launch/floyd-code-cli | grep -q '"up":true'
+wait_http http://127.0.0.1:13022/
+curl -fsS -X POST http://127.0.0.1:13030/api/launch/ohmyfloyd | grep -q '"up":true'
+wait_http http://127.0.0.1:13023/
 
-echo "FLOYD_INSTALLED_SMOKE PASS launcher=installed-app core=41414 frame=13030 ide=13012 desktop=13010 opencode=$ACTUAL_ENGINE_VERSION sha256=$ACTUAL_ENGINE_SHA"
+echo "FLOYD_INSTALLED_SMOKE PASS launcher=installed-app core=41414 frame=13030 ide=13012 terminal=13013 desktop=13010 harness=13014 ff=13022 omf=13023 lsp=typescript,json,html,css,python,shell node=$ACTUAL_NODE_VERSION node_sha256=$ACTUAL_NODE_SHA opencode=$ACTUAL_ENGINE_VERSION opencode_sha256=$ACTUAL_ENGINE_SHA"

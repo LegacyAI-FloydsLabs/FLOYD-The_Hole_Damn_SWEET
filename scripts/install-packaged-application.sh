@@ -18,7 +18,24 @@ IDE_ROOT="$CANDIDATE/Contents/Resources/workstation/intake/surfaces/ide"
   exit 1
 }
 
-rm -rf "$EXTRACTED" "$PREVIOUS"
+# Recover an interrupted prior upgrade before cleaning temporary state. If the
+# previous postinstall lost power after moving the live app aside, PREVIOUS is
+# the only complete installed copy and must never be deleted on the next run.
+if [ ! -e "$APP" ] && [ -e "$PREVIOUS" ]; then
+  echo "Recovering application preserved by an interrupted prior install"
+  mv "$PREVIOUS" "$APP" || {
+    echo "FATAL: could not recover the previously installed application" >&2
+    exit 1
+  }
+fi
+rm -rf "$EXTRACTED"
+if [ -e "$PREVIOUS" ]; then
+  [ -e "$APP" ] || {
+    echo "FATAL: refusing to discard the only recoverable application copy" >&2
+    exit 1
+  }
+  rm -rf "$PREVIOUS"
+fi
 mkdir -p "$APPLICATIONS" "$EXTRACTED"
 ditto -x -k "$ARCHIVE" "$EXTRACTED"
 
