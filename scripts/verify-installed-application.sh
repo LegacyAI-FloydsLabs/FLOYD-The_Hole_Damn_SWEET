@@ -327,9 +327,17 @@ for name in ("desktop", "ide", "pty", "launcher"):
     assert surface is not None and surface.get("verified") is True, (name, surface, payload)
 '
 echo "==> launching installed internal browser"
-BROWSER_RESULT=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+BROWSER_RESPONSE="$RUNTIME/open-chrome.json"
+BROWSER_STATUS=$(curl -sS -o "$BROWSER_RESPONSE" -w '%{http_code}' \
+  -X POST -H 'Content-Type: application/json' \
   --data '{"url":"about:blank"}' \
   http://127.0.0.1:13030/api/action/open-chrome)
+if [ "$BROWSER_STATUS" != 200 ]; then
+  echo "FAIL: installed internal browser did not launch (HTTP $BROWSER_STATUS)" >&2
+  sed -n '1,120p' "$BROWSER_RESPONSE" >&2
+  exit 1
+fi
+BROWSER_RESULT=$(cat "$BROWSER_RESPONSE")
 printf '%s' "$BROWSER_RESULT" | python3 -c '
 import json,sys
 browser=json.load(sys.stdin)

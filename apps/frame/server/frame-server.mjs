@@ -1081,6 +1081,7 @@ const server = http.createServer(async (req, res) => {
         const result = await openChrome(target);
         return json(res, 200, { opened: true, ...result });
       } catch (err) {
+        console.error(`[internal-browser] launch failed: ${String(err?.stack ?? err?.message ?? err)}`);
         return json(res, 500, { opened: false, error: String(err?.message ?? err) });
       }
     }
