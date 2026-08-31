@@ -253,6 +253,8 @@ test('clean-install contract exercises the mandatory internal browser', () => {
   assert.match(installer, /FLOYD_INTERNAL_BROWSER_HEADLESS/);
   assert.match(frameServer, /FLOYD_INTERNAL_BROWSER_HEADLESS === "1"/);
   assert.match(frameServer, /--headless=new/);
+  assert.match(frameServer, /--use-mock-keychain/);
+  assert.match(frameServer, /--remote-debugging-address=127\.0\.0\.1/);
   assert.match(frameServer, /internal-browser-chrome\.log/);
   assert.match(frameServer, /Chrome log tail/);
   assert.match(installedVerifier, /installed internal browser did not launch \(HTTP \$BROWSER_STATUS\)/);

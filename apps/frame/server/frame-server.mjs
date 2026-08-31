@@ -658,9 +658,12 @@ async function openChrome(url) {
     const child = spawn(CHROME_BIN, [
       `--user-data-dir=${INTERNAL_BROWSER_PROFILE}`,
       `--remote-debugging-port=${INTERNAL_BROWSER_CDP_PORT}`,
+      "--remote-debugging-address=127.0.0.1",
       "--enable-unsafe-extension-debugging",
       "--no-first-run", "--no-default-browser-check",
-      ...(process.env.FLOYD_INTERNAL_BROWSER_HEADLESS === "1" ? ["--headless=new"] : []),
+      ...(process.env.FLOYD_INTERNAL_BROWSER_HEADLESS === "1"
+        ? ["--headless=new", "--use-mock-keychain"]
+        : []),
       ...(url ? [url] : []),
     ], { detached: true, stdio: ["ignore", chromeLogFd, chromeLogFd] });
     closeSync(chromeLogFd);
