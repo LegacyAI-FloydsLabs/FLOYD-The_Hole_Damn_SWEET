@@ -153,6 +153,18 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installer, /NODE_DIR="\$HERE\/Resources\/node\/bin"/);
   assert.match(installer, /<key>PATH<\/key><string>%s:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin<\/string>/);
   assert.match(installer, /<key>FLOYD_AGENT_NODE<\/key><string>%s<\/string>/);
+  const frameBootstrap = installer.indexOf('plist com.floyd.frame');
+  const vaultReady = installer.indexOf('http://127.0.0.1:13031/healthz');
+  const coreProfileReady = installer.indexOf('proxy-app-profiles/core.json');
+  const coreBootstrap = installer.indexOf('plist com.floyd.core');
+  assert.ok(
+    frameBootstrap >= 0
+      && vaultReady > frameBootstrap
+      && coreProfileReady > frameBootstrap
+      && coreBootstrap > vaultReady
+      && coreBootstrap > coreProfileReady,
+    'the installed launcher must wait for Frame/Vault to mint Core credentials before starting Core',
+  );
   assert.doesNotMatch(installer, /FLOYD_NODE_VERSION|FLOYD_NODE_SHA256/);
   assert.match(installer, /node binary sha mismatch/);
   assert.match(installedVerifier, /EnvironmentVariables/);
@@ -160,6 +172,14 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /environment\["FLOYD_AGENT_NODE"\]/);
   assert.match(installedVerifier, /installed Node sha mismatch/);
   assert.match(installedVerifier, /installed Node version mismatch/);
+  assert.doesNotMatch(installedVerifier, /for app in core ff omf launcher; do/);
+  assert.match(installedVerifier, /CORE_PROFILE="\$PROFILE_DIR\/core\.json"/);
+  assert.match(installedVerifier, /ENGINE_CONFIG="\$RUNTIME\/engines\/opencode\/config\/opencode\.json"/);
+  assert.match(installedVerifier, /profile\["proxyUrl"\] == "http:\/\/127\.0\.0\.1:13031"/);
+  assert.match(installedVerifier, /options\["apiKey"\] == profile\["proxyToken"\]/);
+  assert.match(installedVerifier, /options\["baseURL"\] == "http:\/\/127\.0\.0\.1:13031\/p\/zai\/api\/coding\/paas\/v4"/);
+  assert.match(installedVerifier, /http:\/\/127\.0\.0\.1:13031\/status/);
+  assert.match(installedVerifier, /status\.get\("authority"\) == "floyd-vault-keychain"/);
   for (const language of ['typescript', 'json', 'html', 'css', 'python', 'shell']) {
     assert.match(installedVerifier, new RegExp(`\\b${language}\\b`));
   }

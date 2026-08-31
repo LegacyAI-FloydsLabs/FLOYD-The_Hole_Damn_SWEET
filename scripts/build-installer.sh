@@ -189,13 +189,25 @@ plist() { # label program-args...
 }
 
 plist com.floyd.frame "$NODE" "$WS/apps/frame/server/frame-server.mjs"
-plist com.floyd.core  "$NODE" "$WS/core/daemon/src/main.ts"
 
-# Wait briefly for the frame, then open it.
-i=0; while [ $i -lt 40 ]; do
-  if curl -s -o /dev/null "http://127.0.0.1:13030/"; then break; fi
+# Core consumes an owner-only capability profile that Frame/Vault writes at
+# startup. Do not race both launch agents: wait for Frame, its Vault listener,
+# and the freshly minted Core profile before Core is allowed to read it.
+CORE_PROFILE="$RUNTIME_ROOT/secrets/proxy-app-profiles/core.json"
+i=0; while [ $i -lt 120 ]; do
+  if curl -fsS -o /dev/null "http://127.0.0.1:13030/" \
+    && curl -fsS -o /dev/null "http://127.0.0.1:13031/healthz" \
+    && [ -s "$CORE_PROFILE" ]; then
+    break
+  fi
   i=$((i+1)); sleep 0.25
 done
+[ "$i" -lt 120 ] || {
+  echo "FLOYD Frame/Vault did not become ready; Core was not started" >&2
+  exit 1
+}
+plist com.floyd.core "$NODE" "$WS/core/daemon/src/main.ts"
+
 open "http://127.0.0.1:13030/"
 LAUNCHER
 chmod 755 "$APP/Contents/MacOS/FLOYD Desktop Suite"

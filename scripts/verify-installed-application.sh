@@ -103,7 +103,7 @@ HOME="$TEST_HOME" /usr/bin/security default-keychain -d user -s "$TEST_KEYCHAIN"
 HOME="$TEST_HOME" /usr/bin/security default-keychain -d user >/dev/null
 unset KEYCHAIN_PASSWORD
 
-for app in core ff omf launcher; do
+for app in ff omf launcher; do
   printf '{"app":"%s","proxyToken":"fv_%s_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}\n' \
     "$app" "$app" > "$PROFILE_DIR/$app.json"
   chmod 600 "$PROFILE_DIR/$app.json"
@@ -164,6 +164,35 @@ while [ "$i" -lt 60 ]; do
 done
 [ "$CORE_READY" = 1 ] || { echo "FAIL: installed Core/OpenCode did not become healthy" >&2; exit 1; }
 
+# Frame/Vault must mint Core's real capability before Core starts. Prove that
+# the installed OpenCode configuration consumed that exact live capability,
+# then authenticate it against the running Vault. This prevents a dead or
+# pre-seeded profile from making a healthy-but-unusable Core false-pass.
+CORE_PROFILE="$PROFILE_DIR/core.json"
+ENGINE_CONFIG="$RUNTIME/engines/opencode/config/opencode.json"
+VAULT_CORE_TOKEN=$(python3 - "$CORE_PROFILE" "$ENGINE_CONFIG" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    profile = json.load(handle)
+with open(sys.argv[2], encoding="utf-8") as handle:
+    config = json.load(handle)
+
+assert profile["app"] == "core", profile
+assert profile["proxyUrl"] == "http://127.0.0.1:13031", profile
+assert re.fullmatch(r"fv_core_[0-9a-f]{32,}", profile["proxyToken"]), profile
+options = config["provider"]["zai-coding-plan"]["options"]
+assert options["apiKey"] == profile["proxyToken"], options
+assert options["baseURL"] == "http://127.0.0.1:13031/p/zai/api/coding/paas/v4", options
+print(profile["proxyToken"], end="")
+PY
+)
+VAULT_STATUS=$(curl -fsS -H "Authorization: Bearer $VAULT_CORE_TOKEN" \
+  http://127.0.0.1:13031/status)
+printf '%s' "$VAULT_STATUS" | python3 -c 'import json,sys; status=json.load(sys.stdin); assert status.get("ok") is True and status.get("app") == "core" and status.get("authority") == "floyd-vault-keychain", status'
+
 for app in ff omf; do
   case "$app" in
     ff) version_pattern='^floyd version v[0-9]+\.[0-9]+\.[0-9]+$' ;;
@@ -219,4 +248,4 @@ wait_http http://127.0.0.1:13022/
 curl -fsS -X POST http://127.0.0.1:13030/api/launch/ohmyfloyd | grep -q '"up":true'
 wait_http http://127.0.0.1:13023/
 
-echo "FLOYD_INSTALLED_SMOKE PASS launcher=installed-app core=41414 frame=13030 ide=13012 terminal=13013 desktop=13010 harness=13014 ff=13022 omf=13023 lsp=typescript,json,html,css,python,shell node=$ACTUAL_NODE_VERSION node_sha256=$ACTUAL_NODE_SHA opencode=$ACTUAL_ENGINE_VERSION opencode_sha256=$ACTUAL_ENGINE_SHA"
+echo "FLOYD_INSTALLED_SMOKE PASS launcher=installed-app core=41414 frame=13030 vault=13031 ide=13012 terminal=13013 desktop=13010 harness=13014 ff=13022 omf=13023 lsp=typescript,json,html,css,python,shell node=$ACTUAL_NODE_VERSION node_sha256=$ACTUAL_NODE_SHA opencode=$ACTUAL_ENGINE_VERSION opencode_sha256=$ACTUAL_ENGINE_SHA"
