@@ -78,6 +78,8 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /security create-keychain/);
   assert.match(installedVerifier, /security unlock-keychain/);
   assert.match(installedVerifier, /security default-keychain -d user -s/);
+  assert.match(installedVerifier, /clean-install verification refuses to replace running service/);
+  assert.match(installedVerifier, /SERVICES_STARTED=1/);
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
 });

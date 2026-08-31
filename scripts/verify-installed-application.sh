@@ -11,14 +11,24 @@ RUNTIME=$(mktemp -d /tmp/floyd-installed-runtime.XXXXXX)
 TEST_HOME="$RUNTIME/home"
 LOG_DIR="$TEST_HOME/Library/Logs/Floyd"
 TEST_KEYCHAIN="$TEST_HOME/Library/Keychains/floyd-clean-install.keychain-db"
+SERVICES_STARTED=0
 
 cleanup() {
-  launchctl bootout "gui/$(id -u)/com.floyd.frame" 2>/dev/null || true
-  launchctl bootout "gui/$(id -u)/com.floyd.core" 2>/dev/null || true
+  if [ "$SERVICES_STARTED" = 1 ]; then
+    launchctl bootout "gui/$(id -u)/com.floyd.frame" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/com.floyd.core" 2>/dev/null || true
+  fi
   HOME="$TEST_HOME" /usr/bin/security delete-keychain "$TEST_KEYCHAIN" >/dev/null 2>&1 || true
   rm -rf "$RUNTIME" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+for label in com.floyd.frame com.floyd.core; do
+  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    echo "FAIL: clean-install verification refuses to replace running service $label" >&2
+    exit 1
+  fi
+done
 
 [ -x "$NODE" ] || { echo "FAIL: bundled node missing" >&2; exit 1; }
 [ -x "$ENGINE" ] || { echo "FAIL: bundled OpenCode missing" >&2; exit 1; }
@@ -61,6 +71,7 @@ cat > "$PROFILE_DIR/core.json" <<'PROFILE'
 {"app":"core","proxyToken":"fv_core_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}
 PROFILE
 chmod 600 "$PROFILE_DIR/core.json"
+SERVICES_STARTED=1
 HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" "$APP/Contents/MacOS/FLOYD Desktop Suite"
 
 wait_http() {
