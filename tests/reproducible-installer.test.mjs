@@ -8,6 +8,7 @@ const prepare = readFileSync('scripts/prepare-release-inputs.sh', 'utf8');
 const installer = readFileSync('scripts/build-installer.sh', 'utf8');
 const postinstall = readFileSync('scripts/install-packaged-application.sh', 'utf8');
 const workflow = readFileSync('.github/workflows/clean-macos-install.yml', 'utf8');
+const ttyAddons = ['addon-fit', 'addon-webgl', 'addon-canvas', 'addon-search', 'addon-unicode11'];
 
 test('every packaged Node project has a committed lockfile', () => {
   assert.doesNotThrow(() => readFileSync('pnpm-lock.yaml', 'utf8'));
@@ -16,6 +17,7 @@ test('every packaged Node project has a committed lockfile', () => {
     'intake/surfaces/ide/package-lock.json',
     'intake/surfaces/launcher/package-lock.json',
     'intake/surfaces/pty/package-lock.json',
+    'apps/frame/extensions/floyd-tty-bridge/package-lock.json',
   ]) assert.doesNotThrow(() => JSON.parse(readFileSync(path, 'utf8')), path);
   assert.equal(rootPackage.engines.node, '>=26');
   assert.equal(rootPackage.packageManager, 'pnpm@11.24.0');
@@ -36,6 +38,7 @@ test('installer rebuilds in an isolated git export before staging', () => {
   assert.doesNotMatch(installer, /rsync -a "\$ROOT\/\$f"/);
   assert.match(installer, /SOURCE\/build-assets\/FLOYD\.icns/);
   assert.match(installer, /SOURCE\/\$workspace\/node_modules/);
+  assert.match(installer, /SOURCE\/\$TTY_BRIDGE\/node_modules/);
   assert.doesNotMatch(installer, /pkgbuild --analyze/);
   assert.match(installer, /ditto -c -k --sequesterRsrc --keepParent "\$APP" "\$ARCHIVE"/);
   assert.match(installer, /SOURCE\/scripts\/install-packaged-application\.sh/);
@@ -45,12 +48,16 @@ test('installer rebuilds in an isolated git export before staging', () => {
   assert.match(postinstall, /mv "\$CANDIDATE" "\$APP"/);
   assert.match(postinstall, /desktop\/dist-server\/index\.js/);
   assert.match(postinstall, /ide\/dist\/index\.html/);
+  for (const addon of ttyAddons) {
+    assert.match(postinstall, new RegExp(`floyd-tty-bridge/node_modules/@xterm/${addon}`));
+  }
   assert.match(prepare, /release builds require Node 26 or newer/);
   assert.match(prepare, /npx --yes pnpm@11\.24\.0 install --frozen-lockfile/);
   assert.match(prepare, /npm ci/);
   assert.match(prepare, /npm run build/);
   assert.match(prepare, /CI=true npx --yes pnpm@11\.24\.0 install --prod --frozen-lockfile/);
   assert.match(prepare, /npm prune --omit=dev/);
+  assert.equal((prepare.match(/apps\/frame\/extensions\/floyd-tty-bridge/g) || []).length, 3);
   assert.doesNotMatch(installer, /--exclude-dir=intake/);
   for (const path of [
     'scripts/apply-omf-vault-routing-patch.sh',
@@ -80,6 +87,8 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /security default-keychain -d user -s/);
   assert.match(installedVerifier, /clean-install verification refuses to replace running service/);
   assert.match(installedVerifier, /SERVICES_STARTED=1/);
+  assert.match(installedVerifier, /TTY Bridge runtime dependency missing/);
+  for (const addon of ttyAddons) assert.match(installedVerifier, new RegExp(`\\b${addon}\\b`));
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
 });

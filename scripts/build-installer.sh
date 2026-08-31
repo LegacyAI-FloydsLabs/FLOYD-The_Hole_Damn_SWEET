@@ -68,6 +68,13 @@ for workspace in packages/contracts packages/sdk engines/opencode core/daemon cl
   mkdir -p "$WS/$workspace/node_modules"
   rsync -a "$SOURCE/$workspace/node_modules/" "$WS/$workspace/node_modules/"
 done
+# The internal-browser TTY Bridge loads its xterm add-ons directly from its
+# own node_modules tree. Root staging excludes every node_modules directory,
+# so copy this freshly installed and production-pruned tree explicitly.
+TTY_BRIDGE=apps/frame/extensions/floyd-tty-bridge
+[ -d "$SOURCE/$TTY_BRIDGE/node_modules" ] || { echo "FATAL: TTY Bridge runtime dependencies are missing" >&2; exit 1; }
+mkdir -p "$WS/$TTY_BRIDGE/node_modules"
+rsync -a "$SOURCE/$TTY_BRIDGE/node_modules/" "$WS/$TTY_BRIDGE/node_modules/"
 
 echo "==> staging surfaces (runtime copies only — no planning docs, tests, or artifacts)"
 for s in desktop ff ide launcher omf pty; do

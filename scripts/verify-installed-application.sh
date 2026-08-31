@@ -35,6 +35,12 @@ done
 [ -f "$WS/intake/surfaces/desktop/dist-server/index.js" ] || { echo "FAIL: desktop server bundle missing" >&2; exit 1; }
 [ -f "$WS/intake/surfaces/desktop/dist/index.html" ] || { echo "FAIL: desktop web bundle missing" >&2; exit 1; }
 [ -f "$WS/intake/surfaces/ide/dist/index.html" ] || { echo "FAIL: IDE web bundle missing" >&2; exit 1; }
+for addon in addon-fit addon-webgl addon-canvas addon-search addon-unicode11; do
+  [ -f "$WS/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/$addon/lib/$addon.js" ] || {
+    echo "FAIL: TTY Bridge runtime dependency missing: $addon" >&2
+    exit 1
+  }
+done
 
 EXPECTED_ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['sha256'])")
 EXPECTED_ENGINE_VERSION=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['version'])")

@@ -23,6 +23,7 @@ for file in \
   intake/surfaces/ide/package-lock.json \
   intake/surfaces/launcher/package-lock.json \
   intake/surfaces/pty/package-lock.json \
+  apps/frame/extensions/floyd-tty-bridge/package-lock.json \
   upstream.lock; do
   need "$file"
 done
@@ -33,7 +34,8 @@ echo "    pnpm install: root workspace"
 for project in intake/surfaces/desktop \
   intake/surfaces/ide \
   intake/surfaces/launcher \
-  intake/surfaces/pty; do
+  intake/surfaces/pty \
+  apps/frame/extensions/floyd-tty-bridge; do
   echo "    npm ci: $project"
   (cd "$ROOT/$project" && npm ci $NPM_FLAGS)
 done
@@ -58,7 +60,8 @@ echo "==> pruning build-only dependencies"
 for project in intake/surfaces/desktop \
   intake/surfaces/ide \
   intake/surfaces/launcher \
-  intake/surfaces/pty; do
+  intake/surfaces/pty \
+  apps/frame/extensions/floyd-tty-bridge; do
   echo "    npm prune --omit=dev: $project"
   (cd "$ROOT/$project" && npm prune --omit=dev $NPM_FLAGS)
 done

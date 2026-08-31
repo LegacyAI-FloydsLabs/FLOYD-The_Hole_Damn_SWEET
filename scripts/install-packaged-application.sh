@@ -33,7 +33,12 @@ done
 for required in \
   "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/desktop/dist-server/index.js" \
   "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/desktop/dist/index.html" \
-  "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/ide/dist/index.html"; do
+  "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/ide/dist/index.html" \
+  "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-fit/lib/addon-fit.js" \
+  "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-webgl/lib/addon-webgl.js" \
+  "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-canvas/lib/addon-canvas.js" \
+  "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-search/lib/addon-search.js" \
+  "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"; do
   [ -f "$required" ] || {
     echo "FATAL: installed application is incomplete: $required" >&2
     exit 1
