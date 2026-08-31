@@ -72,6 +72,8 @@ test('cloud workflow builds, installs, and exercises the installed application',
   const installedVerifier = readFileSync('scripts/verify-installed-application.sh', 'utf8');
   assert.match(installedVerifier, /OpenCode version mismatch/);
   assert.match(installedVerifier, /Contents\/MacOS\/FLOYD Desktop Suite/);
+  assert.match(installedVerifier, /proxy-app-profiles/);
+  assert.match(installedVerifier, /chmod 600 "\$PROFILE_DIR\/core\.json"/);
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
 });

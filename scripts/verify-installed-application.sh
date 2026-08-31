@@ -34,7 +34,13 @@ ACTUAL_ENGINE_VERSION=$("$ENGINE" --version 2>/dev/null | sed -n '1p' | tr -d '[
   exit 1
 }
 
-mkdir -p "$TEST_HOME/Library/LaunchAgents" "$LOG_DIR"
+PROFILE_DIR="$RUNTIME/secrets/proxy-app-profiles"
+mkdir -p "$TEST_HOME/Library/LaunchAgents" "$LOG_DIR" "$PROFILE_DIR"
+chmod 700 "$RUNTIME/secrets" "$PROFILE_DIR"
+cat > "$PROFILE_DIR/core.json" <<'PROFILE'
+{"app":"core","proxyToken":"fv_core_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}
+PROFILE
+chmod 600 "$PROFILE_DIR/core.json"
 HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" "$APP/Contents/MacOS/FLOYD Desktop Suite"
 
 wait_http() {
