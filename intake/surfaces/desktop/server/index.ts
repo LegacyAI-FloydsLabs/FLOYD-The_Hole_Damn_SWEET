@@ -80,13 +80,12 @@ const SURFACE_IDENTITY = (() => {
 let wsMcpServer: WebSocketMCPServer | null = null;
 
 // Initialize tool executor. Allowed roots cover the app itself, the operator
-// home, temp space, and the FLOYD workstation/runtime volumes. Override or
-// extend with FLOYD_TOOL_PATHS (colon-separated).
+// home and temp space. Extend explicitly with FLOYD_TOOL_PATHS; clean installs
+// never assume a development volume exists.
 const toolExecutor = new ToolExecutor([
   process.cwd(),
   process.env.HOME || '/',
   '/tmp',
-  '/Volumes/Storage',
   ...(process.env.FLOYD_TOOL_PATHS ? process.env.FLOYD_TOOL_PATHS.split(':').filter(Boolean) : []),
 ]);
 

@@ -2,6 +2,7 @@
   "name": "floyd",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@11.24.0",
   "description": "FLOYD workstation \u2014 Floyd Core durable authority + managed OpenCode engine",
   "type": "module",
   "workspaces": [

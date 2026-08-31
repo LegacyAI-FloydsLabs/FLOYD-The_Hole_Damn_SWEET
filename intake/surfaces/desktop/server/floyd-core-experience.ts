@@ -15,6 +15,7 @@
  */
 
 import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
 
 export const DESKTOP_SURFACE_ID = 'desktop';
@@ -78,7 +79,7 @@ export function defaultCoreBaseUrl(): string {
   return (process.env.FLOYD_CORE_URL || `http://127.0.0.1:${process.env.FLOYD_CORE_PORT || 41414}`).replace(/\/+$/, '');
 }
 
-export async function readGatewayToken(runtimeRoot = process.env.FLOYD_RUNTIME_ROOT || '/Volumes/Storage/FLOYD_RUNTIME'): Promise<string> {
+export async function readGatewayToken(runtimeRoot = process.env.FLOYD_RUNTIME_ROOT || path.join(os.homedir(), '.floyd')): Promise<string> {
   return (await fs.readFile(path.join(runtimeRoot, 'core', 'gateway.token'), 'utf8')).trim();
 }
 

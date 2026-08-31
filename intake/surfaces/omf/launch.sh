@@ -1,8 +1,9 @@
 #!/bin/zsh
 # OMF plane launcher — the frame execs this as the TerminalOne SHELL.
 # The monorepo runtime copy is ONLY the compiled binary (bin/omp); the
-# canonical app (source, build toolchain, branding guard) lives at
-# /Volumes/SanDisk1Tb/OhMyFloyd and is where updates land.
+# An optional canonical source checkout may be supplied through
+# FLOYD_OMF_CANONICAL_SOURCE on development machines. Clean installations use
+# only the verified binary shipped in this surface.
 #
 # On load: 1) canonical self-heals Floyd branding, 2) Vault source routing is
 # patched and rebuilt if changed, 3) a candidate binary must pass the compiled
@@ -10,15 +11,15 @@
 # its fail-closed marker gate immediately before execution.
 
 # Canonical exists only on the dev machine; installed apps run the shipped copy.
-CANON="/Volumes/SanDisk1Tb/OhMyFloyd"
-CANON_BIN="${CANON}/packages/coding-agent/dist/omp"
+CANON="${FLOYD_OMF_CANONICAL_SOURCE:-}"
+CANON_BIN="${CANON:+${CANON}/packages/coding-agent/dist/omp}"
 HERE="${0:A:h}"
 COPY_BIN="${HERE}/bin/omp"
 VERIFY_TOOLS="${HERE}/../../../scripts/verify-omf-vault-tools.mjs"
 CANON_READY=1
 PATCH_RESULT=""
 
-if [ -d "${CANON}" ]; then
+if [ -n "${CANON}" ] && [ -d "${CANON}" ]; then
     if ! "${CANON}/customizations/apply-floyd-branding.sh"; then
         echo "[omf] branding guard failed — preserving last verified runtime binary"
         CANON_READY=0

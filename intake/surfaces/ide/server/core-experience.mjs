@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { FloydApiError, FloydClient, FLOYD_SDK_PROTOCOL_VERSION } from '../vendor/floyd-sdk/index.js';
 
@@ -34,7 +35,7 @@ function resolveCoreUrl(env) {
  * blocking the IDE boot or the chat path.
  */
 export function createCoreExperience({ env = process.env, fetchImpl } = {}) {
-  const runtimeRoot = env.FLOYD_RUNTIME_ROOT || '/Volumes/Storage/FLOYD_RUNTIME';
+  const runtimeRoot = env.FLOYD_RUNTIME_ROOT || join(homedir(), '.floyd');
   const tokenPath = join(runtimeRoot, 'core', 'gateway.token');
   const client = new FloydClient({
     baseUrl: resolveCoreUrl(env),

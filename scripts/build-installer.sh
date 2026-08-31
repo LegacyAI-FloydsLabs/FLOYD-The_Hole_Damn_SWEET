@@ -20,8 +20,9 @@ VERSION=${FLOYD_VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}
 IDENTIFIER="com.floydslabs.floyd"
 DIST="$ROOT/dist"
 STAGE=$(mktemp -d /tmp/floyd-pkg.XXXXXX)
+SOURCE=$(mktemp -d /tmp/floyd-source.XXXXXX)
 # Tolerate EACCES when cleaning up (old root-owned installed app may block deletion)
-cleanup() { rm -rf "$STAGE" 2>/dev/null || true; }
+cleanup() { rm -rf "$STAGE" "$SOURCE" 2>/dev/null || true; }
 trap cleanup EXIT
 
 APP="$STAGE/payload/Applications/FLOYD Desktop Suite.app"
@@ -29,10 +30,19 @@ RES="$APP/Contents/Resources"
 WS="$RES/workstation"
 mkdir -p "$APP/Contents/MacOS" "$WS" "$DIST"
 
-echo "==> staging repo (tracked files only)"
-(cd "$ROOT" && git archive HEAD) | tar -x -C "$WS"
+echo "==> exporting exact git commit"
+(cd "$ROOT" && git archive HEAD) | tar -x -C "$SOURCE"
+VERSION=${FLOYD_VERSION:-$(tr -d '[:space:]' < "$SOURCE/VERSION")}
+[ -n "$VERSION" ] || { echo "FATAL: empty VERSION" >&2; exit 1; }
+
+echo "==> recreating dependencies, production bundles, and pinned engine"
+"$ROOT/scripts/prepare-release-inputs.sh" "$SOURCE"
+
+echo "==> staging repo (tracked source + freshly generated inputs)"
+rsync -a --exclude ".floyd-build/" --exclude "node_modules/" "$SOURCE/" "$WS/"
 rm -rf "$WS/scripts"   # build tooling never ships
 rm -rf "$WS/plans" "$WS/.agents"   # repo planning docs + agent harness tooling never ship
+rm -rf "$WS/intake/surfaces" # recopied below with runtime-only exclusions
 # ...except the runtime entrypoints the surfaces exec (floyd-agent → vault
 # environment + provider handoff; omf/ff launch.sh → Vault verify/lock/
 # materialize + OMF vault runner) and their scripts/lib dependencies.
@@ -48,15 +58,20 @@ for f in \
   scripts/materialize-vault-client-config.mjs \
   scripts/run-omf-with-vault.mjs \
   scripts/lib/omf-credential-store.mjs; do
-  rsync -a "$ROOT/$f" "$WS/$f"
+  rsync -a "$SOURCE/$f" "$WS/$f"
 done
 printf '%s\n' "$VERSION" > "$WS/VERSION"   # updater reads installed version here
 # Workspace deps (small; @floyd/* are relative symlinks that survive rsync -a).
-rsync -a "$ROOT/node_modules/" "$WS/node_modules/"
+rsync -a "$SOURCE/node_modules/" "$WS/node_modules/"
+for workspace in packages/contracts packages/sdk engines/opencode core/daemon clients/cli; do
+  [ -d "$SOURCE/$workspace/node_modules" ] || continue
+  mkdir -p "$WS/$workspace/node_modules"
+  rsync -a "$SOURCE/$workspace/node_modules/" "$WS/$workspace/node_modules/"
+done
 
 echo "==> staging surfaces (runtime copies only — no planning docs, tests, or artifacts)"
 for s in desktop ff ide launcher omf pty; do
-  src="$ROOT/intake/surfaces/$s"
+  src="$SOURCE/intake/surfaces/$s"
   [ -d "$src" ] || { echo "FATAL: missing surface $s" >&2; exit 1; }
   mkdir -p "$WS/intake/surfaces/$s"
   rsync -a \
@@ -64,6 +79,8 @@ for s in desktop ff ide launcher omf pty; do
     --exclude "*.log" --exclude ".DS_Store" \
     --exclude "docs/" --exclude "Issues/" --exclude "SSOT/" \
     --exclude "test/" --exclude "tests/" --exclude "__tests__/" \
+    --exclude "README.md" --exclude "FLOYD.md" \
+    --exclude "scripts/install-service.sh" --exclude "vendor/TerminalOne/CURSEM_COPY_PROVENANCE.md" \
     --exclude "Claude.md" --exclude "CLAUDE.md" --exclude "AGENTS.md" --exclude "PLAN.md" \
     --exclude "repository_report.md" --exclude "STABILITY.md" --exclude "DEPLOYMENT.md" \
     --exclude "*.tmp.*" --exclude ".floyd-data/" --exclude "sessions/" \
@@ -71,9 +88,9 @@ for s in desktop ff ide launcher omf pty; do
 done
 
 echo "==> staging pinned opencode engine"
-ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$ROOT/upstream.lock'))['opencode']['sha256'])")
-ENGINE_SRC="${FLOYD_RUNTIME_ROOT:-$HOME/.floyd}/engines/opencode/bin/opencode"
-[ -f "$ENGINE_SRC" ] || { echo "FATAL: engine binary not at $ENGINE_SRC" >&2; exit 1; }
+ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['opencode']['sha256'])")
+ENGINE_SRC="$SOURCE/.floyd-build/opencode/opencode"
+[ -f "$ENGINE_SRC" ] || { echo "FATAL: prepared engine binary missing at $ENGINE_SRC" >&2; exit 1; }
 ACTUAL=$(shasum -a 256 "$ENGINE_SRC" | cut -d' ' -f1)
 [ "$ACTUAL" = "$ENGINE_SHA" ] || { echo "FATAL: engine sha mismatch ($ACTUAL != $ENGINE_SHA)" >&2; exit 1; }
 mkdir -p "$RES/engine"
@@ -85,10 +102,13 @@ echo "==> staging node runtime (official self-contained build)"
 # Bundle the official nodejs.org binary, cached under dist/.node-cache.
 NODE_VER=${FLOYD_NODE_VERSION:-v26.5.0}
 NODE_TGZ="$DIST/.node-cache/node-$NODE_VER-darwin-arm64.tar.gz"
+NODE_SHA=${FLOYD_NODE_SHA256:-ee920559aaa2391569cff4d737e3b83963430e3a14dedd91bfe0ff53171b5af9}
 if [ ! -f "$NODE_TGZ" ]; then
   mkdir -p "$DIST/.node-cache"
   curl -fsSL "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-darwin-arm64.tar.gz" -o "$NODE_TGZ"
 fi
+ACTUAL_NODE_SHA=$(shasum -a 256 "$NODE_TGZ" | cut -d' ' -f1)
+[ "$ACTUAL_NODE_SHA" = "$NODE_SHA" ] || { echo "FATAL: node archive sha mismatch ($ACTUAL_NODE_SHA != $NODE_SHA)" >&2; exit 1; }
 mkdir -p "$RES/node/bin"
 tar -xzf "$NODE_TGZ" -C "$STAGE" "node-$NODE_VER-darwin-arm64/bin/node"
 cp "$STAGE/node-$NODE_VER-darwin-arm64/bin/node" "$RES/node/bin/node"
@@ -164,7 +184,7 @@ open "http://127.0.0.1:13030/"
 LAUNCHER
 chmod 755 "$APP/Contents/MacOS/FLOYD Desktop Suite"
 
-cp "$ROOT/build-assets/FLOYD.icns" "$APP/Contents/Resources/FLOYD.icns"
+cp "$SOURCE/build-assets/FLOYD.icns" "$APP/Contents/Resources/FLOYD.icns"
 
 echo "==> secret scan (fail closed)"
 SCAN_FAIL=0
@@ -216,7 +236,7 @@ if find "$STAGE/payload" \( -name ".env" -o -name ".env.production" -o -name ".e
   echo "FATAL: staged payload contains secret-bearing filenames (above)" >&2; SCAN_FAIL=1
 fi
 if grep -rI "/Volumes/Storage\|/Volumes/SanDisk" "$STAGE/payload/Applications/FLOYD Desktop Suite.app/Contents/Resources/workstation" \
-     --exclude-dir=node_modules --exclude-dir=intake -l | head -5 | grep .; then
+     --exclude-dir=node_modules -l | head -5 | grep .; then
   echo "FATAL: staged payload references dev volumes (above)" >&2; SCAN_FAIL=1
 fi
 [ "$SCAN_FAIL" = 0 ] || exit 1

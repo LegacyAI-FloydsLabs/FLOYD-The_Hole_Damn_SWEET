@@ -1,13 +1,14 @@
 #!/bin/zsh
 set -euo pipefail
 
-ROOT="${1:-/Volumes/SanDisk1Tb/OhMyFloyd}"
+ROOT="${1:-}"
 HERE="${0:A:h}"
 PATCH="${HERE}/../intake/surfaces/omf/patches/vault-provider-tools.patch"
 FAIL_CLOSED_PATCH="${HERE}/../intake/surfaces/omf/patches/vault-provider-tools-fail-closed.patch"
 TAVILY="${ROOT}/packages/coding-agent/src/web/search/providers/tavily.ts"
 GITHUB="${ROOT}/packages/coding-agent/src/web/scrapers/github.ts"
 
+[ -n "${ROOT}" ] || { echo "[omf-vault] canonical source path is required" >&2; exit 64; }
 [ -d "${ROOT}/.git" ] || { echo "[omf-vault] canonical source unavailable: ${ROOT}" >&2; exit 66; }
 [ -f "${PATCH}" ] || { echo "[omf-vault] patch missing: ${PATCH}" >&2; exit 66; }
 [ -f "${FAIL_CLOSED_PATCH}" ] || { echo "[omf-vault] patch missing: ${FAIL_CLOSED_PATCH}" >&2; exit 66; }

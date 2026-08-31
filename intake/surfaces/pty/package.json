@@ -35,7 +35,7 @@
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.20.0-beta.289",
-    "@xterm/xterm": "^6.0.0",
+    "@xterm/xterm": "6.1.0-beta.304",
     "express": "^4.22.2",
     "node-pty": "^1.1.0",
     "ws": "^8.21.0"
@@ -45,5 +45,8 @@
   },
   "engines": {
     "node": ">=16"
+  },
+  "allowScripts": {
+    "node-pty": true
   }
 }

@@ -1,0 +1,46 @@
+name: Clean macOS installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-install-smoke:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.5.0'
+
+      - name: Require arm64 clean runner and expanded LFS payloads
+        run: |
+          test "$(uname -m)" = arm64
+          file intake/surfaces/ff/bin/floyd-ff-real | grep -q 'Mach-O 64-bit executable arm64'
+          file intake/surfaces/omf/bin/omp | grep -q 'Mach-O 64-bit executable arm64'
+
+      - name: Build unsigned installer from clean inputs
+        run: ./scripts/build-installer.sh
+
+      - name: Install package on clean hosted macOS
+        run: sudo installer -pkg "dist/FLOYD-$(tr -d '[:space:]' < VERSION).pkg" -target /
+
+      - name: Verify installed primary workflow
+        run: ./scripts/verify-installed-application.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: floyd-clean-macos-installer
+          path: |
+            dist/FLOYD-*.pkg
+            dist/manifest.json
+          if-no-files-found: error

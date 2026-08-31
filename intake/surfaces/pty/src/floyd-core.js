@@ -1,10 +1,11 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { FLOYD_SDK_PROTOCOL_VERSION, FloydApiError, FloydClient } = require('@floyd/sdk');
 
-const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT || '/Volumes/Storage/FLOYD_RUNTIME';
+const RUNTIME_ROOT = process.env.FLOYD_RUNTIME_ROOT || path.join(os.homedir(), '.floyd');
 const CORE_URL = process.env.FLOYD_CORE_URL || `http://127.0.0.1:${process.env.FLOYD_CORE_PORT || 41414}`;
 const PTY_SURFACE_ID = 'pty';
 const PTY_CAPABILITIES = ['terminal-transport', 'experience-read', 'floyd-launch'];

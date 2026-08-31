@@ -16,17 +16,19 @@
 
 import { execFile } from 'child_process';
 import { existsSync } from 'fs';
+import path from 'path';
 
 const CHRONO_PY = process.env.CHRONO_PY || (existsSync('/opt/homebrew/bin/python3') ? '/opt/homebrew/bin/python3' : 'python3');
-const CHRONO_CLI = process.env.CHRONO_CLI || '/Volumes/Storage/FLOYD_WORKSTATION/ops/chrono/chrono_sandbox.py';
+const WORKSTATION_ROOT = process.env.FLOYD_WORKSTATION_ROOT || path.resolve(process.cwd(), '..', '..', '..');
+const CHRONO_CLI = process.env.CHRONO_CLI || path.join(WORKSTATION_ROOT, 'ops', 'chrono', 'chrono_sandbox.py');
 
 /** Repos the agent may time-manipulate. Mirrors the frame's CHRONO_SURFACES. */
 const CHRONO_REPOS: Record<string, string> = {
-  desktop: '/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/desktop',
-  ide: '/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/ide',
-  launcher: '/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/launcher',
-  pty: '/Volumes/Storage/FLOYD_WORKSTATION/intake/surfaces/pty',
-  workstation: '/Volumes/Storage/FLOYD_WORKSTATION',
+  desktop: path.join(WORKSTATION_ROOT, 'intake', 'surfaces', 'desktop'),
+  ide: path.join(WORKSTATION_ROOT, 'intake', 'surfaces', 'ide'),
+  launcher: path.join(WORKSTATION_ROOT, 'intake', 'surfaces', 'launcher'),
+  pty: path.join(WORKSTATION_ROOT, 'intake', 'surfaces', 'pty'),
+  workstation: WORKSTATION_ROOT,
 };
 
 const NAME_RE = /^[\w-]{1,40}$/;

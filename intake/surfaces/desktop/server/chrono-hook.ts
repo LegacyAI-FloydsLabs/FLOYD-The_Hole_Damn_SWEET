@@ -14,7 +14,8 @@ import { existsSync } from 'fs';
 import path from 'path';
 
 const CHRONO_PY = process.env.CHRONO_PY || (existsSync('/opt/homebrew/bin/python3') ? '/opt/homebrew/bin/python3' : 'python3');
-const CHRONO_CLI = process.env.CHRONO_CLI || '/Volumes/Storage/FLOYD_WORKSTATION/ops/chrono/chrono_sandbox.py';
+const WORKSTATION_ROOT = process.env.FLOYD_WORKSTATION_ROOT || path.resolve(process.cwd(), '..', '..', '..');
+const CHRONO_CLI = process.env.CHRONO_CLI || path.join(WORKSTATION_ROOT, 'ops', 'chrono', 'chrono_sandbox.py');
 
 /** Tools whose success mutates the filesystem and deserves a recovery point. */
 const MUTATING_TOOLS = new Set([

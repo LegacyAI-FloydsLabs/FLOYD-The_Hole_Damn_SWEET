@@ -2,9 +2,12 @@
   "opencode": {
     "version": "1.17.18",
     "binary_path": "engines/opencode/bin/opencode",
-    "sha256": "6449b0dd36ec4b9bc1aa7e573d5b18b8056eb5af80e24032302f6de7bc8a3d07",
+    "artifact_url": "https://registry.npmjs.org/opencode-darwin-arm64/-/opencode-darwin-arm64-1.17.18.tgz",
+    "artifact_sha256": "6fb43e2d8728fa0e2a590d49c45c63489ecda33a6ed4e7064c34b06b0df5081d",
+    "artifact_binary_path": "package/bin/opencode",
+    "sha256": "652a34cab759c0fa348f107aa737df86355a49b1576834864e89ee43c059b25d",
     "arch": "arm64-darwin",
     "pinned_at": "2026-07-13T23:36:00-04:00",
-    "notes": "Managed loopback child only. binary_path is runtime-root-relative (FLOYD_RUNTIME_ROOT or ~/.floyd); the installer stages the binary there. Floyd Core verifies this sha256 before every spawn and fails closed on mismatch. Never resolved via PATH."
+    "notes": "Managed loopback child only. The versioned official npm platform artifact is downloaded and both the archive and extracted executable are SHA-256 verified. binary_path is runtime-root-relative (FLOYD_RUNTIME_ROOT or ~/.floyd); the installer stages the verified binary there. Floyd Core verifies this sha256 before every spawn and fails closed on mismatch. Never resolved via PATH."
   }
 }
