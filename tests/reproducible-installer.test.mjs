@@ -35,9 +35,8 @@ test('installer rebuilds in an isolated git export before staging', () => {
   assert.doesNotMatch(installer, /rsync -a "\$ROOT\/\$f"/);
   assert.match(installer, /SOURCE\/build-assets\/FLOYD\.icns/);
   assert.match(installer, /SOURCE\/\$workspace\/node_modules/);
-  assert.match(installer, /pkgbuild --analyze --root/);
-  assert.match(installer, /BundleIsRelocatable.*False/);
-  assert.match(installer, /BundleOverwriteAction.*upgrade/);
+  assert.doesNotMatch(installer, /pkgbuild --analyze/);
+  assert.match(installer, /<plist version="1\.0"><array\/><\/plist>/);
   assert.match(installer, /--component-plist "\$COMPONENTS"/);
   assert.match(prepare, /release builds require Node 26 or newer/);
   assert.match(prepare, /npx --yes pnpm@11\.24\.0 install --frozen-lockfile/);

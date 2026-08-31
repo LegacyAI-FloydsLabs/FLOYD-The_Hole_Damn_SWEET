@@ -245,31 +245,16 @@ echo "    scan clean"
 echo "==> building pkg"
 PKG="$DIST/FLOYD-$VERSION.pkg"
 COMPONENTS="$STAGE/components.plist"
-pkgbuild --analyze --root "$STAGE/payload" "$COMPONENTS"
-python3 - "$COMPONENTS" <<'PYEOF'
-import plistlib
-import sys
-
-path = sys.argv[1]
-with open(path, "rb") as source:
-    components = plistlib.load(source)
-
-def lock_install_location(component):
-    # macOS 15 defaults bundles to relocatable. That can move an otherwise
-    # valid app payload away from /Applications on clean CI and recovery Macs.
-    component["BundleIsRelocatable"] = False
-    component["BundleIsVersionChecked"] = False
-    component["BundleHasStrictIdentifier"] = True
-    component["BundleOverwriteAction"] = "upgrade"
-    for child in component.get("ChildBundles", []):
-        lock_install_location(child)
-
-for component in components:
-    lock_install_location(component)
-
-with open(path, "wb") as destination:
-    plistlib.dump(components, destination, sort_keys=True)
-PYEOF
+# Package the staged tree as a literal payload. An analyzed component list
+# makes Installer apply bundle upgrade/relocation rules, which can leave a
+# partial app at /Applications even when every file is present in the PKG.
+# An empty component list emits no upgrade targets and an empty relocation
+# table, so every freshly staged file is installed at its exact payload path.
+cat > "$COMPONENTS" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><array/></plist>
+PLIST
 pkgbuild --root "$STAGE/payload" \
   --component-plist "$COMPONENTS" \
   --identifier "$IDENTIFIER" \
