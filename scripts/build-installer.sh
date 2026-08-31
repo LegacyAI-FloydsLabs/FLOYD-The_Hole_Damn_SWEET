@@ -244,7 +244,34 @@ echo "    scan clean"
 
 echo "==> building pkg"
 PKG="$DIST/FLOYD-$VERSION.pkg"
+COMPONENTS="$STAGE/components.plist"
+pkgbuild --analyze --root "$STAGE/payload" "$COMPONENTS"
+python3 - "$COMPONENTS" <<'PYEOF'
+import plistlib
+import sys
+
+path = sys.argv[1]
+with open(path, "rb") as source:
+    components = plistlib.load(source)
+
+def lock_install_location(component):
+    # macOS 15 defaults bundles to relocatable. That can move an otherwise
+    # valid app payload away from /Applications on clean CI and recovery Macs.
+    component["BundleIsRelocatable"] = False
+    component["BundleIsVersionChecked"] = False
+    component["BundleHasStrictIdentifier"] = True
+    component["BundleOverwriteAction"] = "upgrade"
+    for child in component.get("ChildBundles", []):
+        lock_install_location(child)
+
+for component in components:
+    lock_install_location(component)
+
+with open(path, "wb") as destination:
+    plistlib.dump(components, destination, sort_keys=True)
+PYEOF
 pkgbuild --root "$STAGE/payload" \
+  --component-plist "$COMPONENTS" \
   --identifier "$IDENTIFIER" \
   --version "$VERSION" \
   --install-location / \
