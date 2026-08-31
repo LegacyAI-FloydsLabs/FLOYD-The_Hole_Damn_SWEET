@@ -7,6 +7,7 @@ APP=${FLOYD_APP:-/Applications/FLOYD Desktop Suite.app}
 WS="$APP/Contents/Resources/workstation"
 NODE="$APP/Contents/Resources/node/bin/node"
 ENGINE="$APP/Contents/Resources/engine/opencode"
+IDE_ROOT="$WS/intake/surfaces/ide"
 RUNTIME=$(mktemp -d /tmp/floyd-installed-runtime.XXXXXX)
 TEST_HOME="$RUNTIME/home"
 LOG_DIR="$TEST_HOME/Library/Logs/Floyd"
@@ -41,6 +42,23 @@ for addon in addon-fit addon-webgl addon-canvas addon-search addon-unicode11; do
     exit 1
   }
 done
+for launcher in \
+  bash-language-server \
+  pyright \
+  pyright-langserver \
+  typescript-language-server \
+  vscode-css-language-server \
+  vscode-html-language-server \
+  vscode-json-language-server; do
+  [ -x "$IDE_ROOT/node_modules/.bin/$launcher" ] || {
+    echo "FAIL: IDE runtime launcher missing: $launcher" >&2
+    exit 1
+  }
+done
+[ -f "$IDE_ROOT/node_modules/typescript/lib/tsserver.js" ] || {
+  echo "FAIL: TypeScript server runtime missing" >&2
+  exit 1
+}
 
 EXPECTED_ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['sha256'])")
 EXPECTED_ENGINE_VERSION=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['version'])")

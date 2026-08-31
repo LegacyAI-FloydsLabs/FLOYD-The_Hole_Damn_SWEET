@@ -3,12 +3,40 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const rootPackage = JSON.parse(readFileSync('package.json', 'utf8'));
+const idePackage = JSON.parse(readFileSync('intake/surfaces/ide/package.json', 'utf8'));
+const idePackageLock = JSON.parse(readFileSync('intake/surfaces/ide/package-lock.json', 'utf8'));
 const lock = JSON.parse(readFileSync('upstream.lock', 'utf8'));
 const prepare = readFileSync('scripts/prepare-release-inputs.sh', 'utf8');
 const installer = readFileSync('scripts/build-installer.sh', 'utf8');
 const postinstall = readFileSync('scripts/install-packaged-application.sh', 'utf8');
+const installedVerifier = readFileSync('scripts/verify-installed-application.sh', 'utf8');
+const lspGateway = readFileSync('intake/surfaces/ide/server/lsp-gateway.mjs', 'utf8');
 const workflow = readFileSync('.github/workflows/clean-macos-install.yml', 'utf8');
 const ttyAddons = ['addon-fit', 'addon-webgl', 'addon-canvas', 'addon-search', 'addon-unicode11'];
+const ideRuntimeLaunchers = [
+  'bash-language-server',
+  'pyright',
+  'pyright-langserver',
+  'typescript-language-server',
+  'vscode-css-language-server',
+  'vscode-html-language-server',
+  'vscode-json-language-server',
+];
+const packagedGatewayLaunchers = [
+  'bash-language-server',
+  'pyright-langserver',
+  'typescript-language-server',
+  'vscode-css-language-server',
+  'vscode-html-language-server',
+  'vscode-json-language-server',
+];
+const ideRuntimePackages = [
+  'bash-language-server',
+  'pyright',
+  'typescript',
+  'typescript-language-server',
+  'vscode-langservers-extracted',
+];
 
 test('every packaged Node project has a committed lockfile', () => {
   assert.doesNotThrow(() => readFileSync('pnpm-lock.yaml', 'utf8'));
@@ -21,6 +49,14 @@ test('every packaged Node project has a committed lockfile', () => {
   ]) assert.doesNotThrow(() => JSON.parse(readFileSync(path, 'utf8')), path);
   assert.equal(rootPackage.engines.node, '>=26');
   assert.equal(rootPackage.packageManager, 'pnpm@11.24.0');
+  for (const dependency of ideRuntimePackages) {
+    assert.equal(
+      idePackageLock.packages[''].dependencies[dependency],
+      idePackage.dependencies[dependency],
+      `${dependency} must remain a locked IDE production dependency`,
+    );
+    assert.equal(idePackage.devDependencies?.[dependency], undefined);
+  }
 });
 
 test('OpenCode lock identifies and hashes an immutable platform artifact', () => {
@@ -51,6 +87,14 @@ test('installer rebuilds in an isolated git export before staging', () => {
   for (const addon of ttyAddons) {
     assert.match(postinstall, new RegExp(`floyd-tty-bridge/node_modules/@xterm/${addon}`));
   }
+  assert.match(postinstall, /IDE_ROOT="\$CANDIDATE\/Contents\/Resources\/workstation\/intake\/surfaces\/ide"/);
+  assert.match(postinstall, /required="\$IDE_ROOT\/node_modules\/\.bin\/\$launcher"\n  \[ -x "\$required" \] \|\| \{/);
+  for (const launcher of ideRuntimeLaunchers) assert.match(postinstall, new RegExp(`\\b${launcher}\\b`));
+  assert.match(postinstall, /TS_SERVER="\$IDE_ROOT\/node_modules\/typescript\/lib\/tsserver\.js"\n\[ -f "\$TS_SERVER" \] \|\| \{/);
+  for (const launcher of packagedGatewayLaunchers) {
+    assert.match(lspGateway, new RegExp(`['"]${launcher}['"]`));
+    assert.ok(ideRuntimeLaunchers.includes(launcher), `${launcher} must be required by the installed package`);
+  }
   assert.match(prepare, /release builds require Node 26 or newer/);
   assert.match(prepare, /npx --yes pnpm@11\.24\.0 install --frozen-lockfile/);
   assert.match(prepare, /npm ci/);
@@ -76,7 +120,6 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(workflow, /test "\$\(uname -m\)" = arm64/);
   assert.match(workflow, /sudo installer -pkg/);
   assert.match(workflow, /verify-installed-application\.sh/);
-  const installedVerifier = readFileSync('scripts/verify-installed-application.sh', 'utf8');
   assert.match(installedVerifier, /OpenCode version mismatch/);
   assert.match(installedVerifier, /Contents\/MacOS\/FLOYD Desktop Suite/);
   assert.match(installedVerifier, /proxy-app-profiles/);
@@ -89,6 +132,11 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /SERVICES_STARTED=1/);
   assert.match(installedVerifier, /TTY Bridge runtime dependency missing/);
   for (const addon of ttyAddons) assert.match(installedVerifier, new RegExp(`\\b${addon}\\b`));
+  assert.match(installedVerifier, /IDE_ROOT="\$WS\/intake\/surfaces\/ide"/);
+  assert.match(installedVerifier, /\[ -x "\$IDE_ROOT\/node_modules\/\.bin\/\$launcher" \] \|\| \{/);
+  assert.match(installedVerifier, /IDE runtime launcher missing/);
+  for (const launcher of ideRuntimeLaunchers) assert.match(installedVerifier, new RegExp(`\\b${launcher}\\b`));
+  assert.match(installedVerifier, /\[ -f "\$IDE_ROOT\/node_modules\/typescript\/lib\/tsserver\.js" \] \|\| \{/);
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
 });

@@ -11,6 +11,7 @@ APP="$APPLICATIONS/FLOYD Desktop Suite.app"
 EXTRACTED="$ARCHIVE_DIR/extracted"
 CANDIDATE="$EXTRACTED/FLOYD Desktop Suite.app"
 PREVIOUS="$ARCHIVE_DIR/previous.app"
+IDE_ROOT="$CANDIDATE/Contents/Resources/workstation/intake/surfaces/ide"
 
 [ -f "$ARCHIVE" ] || {
   echo "FATAL: packaged application archive is missing: $ARCHIVE" >&2
@@ -44,6 +45,25 @@ for required in \
     exit 1
   }
 done
+for launcher in \
+  bash-language-server \
+  pyright \
+  pyright-langserver \
+  typescript-language-server \
+  vscode-css-language-server \
+  vscode-html-language-server \
+  vscode-json-language-server; do
+  required="$IDE_ROOT/node_modules/.bin/$launcher"
+  [ -x "$required" ] || {
+    echo "FATAL: packaged application IDE runtime launcher is missing: $required" >&2
+    exit 1
+  }
+done
+TS_SERVER="$IDE_ROOT/node_modules/typescript/lib/tsserver.js"
+[ -f "$TS_SERVER" ] || {
+  echo "FATAL: packaged application TypeScript server runtime is missing: $TS_SERVER" >&2
+  exit 1
+}
 
 if [ -e "$APP" ]; then
   mv "$APP" "$PREVIOUS"
