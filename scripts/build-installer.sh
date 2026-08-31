@@ -32,8 +32,12 @@ mkdir -p "$APP/Contents/MacOS" "$WS" "$DIST"
 
 echo "==> exporting exact git commit"
 SOURCE_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
-SOURCE_BUILT_AT=$(git -C "$ROOT" show -s --format=%cI HEAD)
-(cd "$ROOT" && git archive HEAD) | tar -x -C "$SOURCE"
+[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] || {
+  echo "FATAL: release builds require a clean tracked worktree" >&2
+  exit 1
+}
+SOURCE_BUILT_AT=$(git -C "$ROOT" show -s --format=%cI "$SOURCE_COMMIT")
+(cd "$ROOT" && git archive "$SOURCE_COMMIT") | tar -x -C "$SOURCE"
 VERSION=${FLOYD_VERSION:-$(tr -d '[:space:]' < "$SOURCE/VERSION")}
 [ -n "$VERSION" ] || { echo "FATAL: empty VERSION" >&2; exit 1; }
 RELEASE_NODE_VERSION=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['version'])")
@@ -130,12 +134,16 @@ if [ ! -f "$NODE_TGZ" ]; then
 fi
 ACTUAL_NODE_SHA=$(shasum -a 256 "$NODE_TGZ" | cut -d' ' -f1)
 [ "$ACTUAL_NODE_SHA" = "$NODE_SHA" ] || { echo "FATAL: node archive sha mismatch ($ACTUAL_NODE_SHA != $NODE_SHA)" >&2; exit 1; }
-mkdir -p "$RES/node/bin"
-tar -xzf "$NODE_TGZ" -C "$STAGE" "$NODE_MEMBER"
+NODE_ARCHIVE_ROOT=${NODE_MEMBER%%/*}
+tar -xzf "$NODE_TGZ" -C "$STAGE" "$NODE_ARCHIVE_ROOT"
 ACTUAL_NODE_BINARY_SHA=$(shasum -a 256 "$STAGE/$NODE_MEMBER" | cut -d' ' -f1)
 [ "$ACTUAL_NODE_BINARY_SHA" = "$NODE_BINARY_SHA" ] || { echo "FATAL: node binary sha mismatch ($ACTUAL_NODE_BINARY_SHA != $NODE_BINARY_SHA)" >&2; exit 1; }
-cp "$STAGE/$NODE_MEMBER" "$RES/node/bin/node"
-chmod 755 "$RES/node/bin/node"
+mkdir -p "$RES/node"
+rsync -a "$STAGE/$NODE_ARCHIVE_ROOT/" "$RES/node/"
+for required in "$RES/node/bin/node" "$RES/node/bin/npm" "$RES/node/bin/npx"; do
+  [ -x "$required" ] || { echo "FATAL: bundled Node runtime tool is missing: $required" >&2; exit 1; }
+done
+[ -f "$RES/node/lib/node_modules/npm/bin/npm-cli.js" ] || { echo "FATAL: bundled npm runtime is missing" >&2; exit 1; }
 [ "$("$RES/node/bin/node" --version)" = "$NODE_VER" ] || { echo "FATAL: bundled node version mismatch" >&2; exit 1; }
 file "$RES/node/bin/node" | grep -q 'Mach-O 64-bit executable arm64' || { echo "FATAL: bundled node is not an arm64 macOS executable" >&2; exit 1; }
 

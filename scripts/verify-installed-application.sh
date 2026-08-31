@@ -36,6 +36,9 @@ for label in com.floyd.frame com.floyd.core; do
 done
 
 [ -x "$NODE" ] || { echo "FAIL: bundled node missing" >&2; exit 1; }
+[ -x "$APP/Contents/Resources/node/bin/npm" ] || { echo "FAIL: bundled npm missing" >&2; exit 1; }
+[ -x "$APP/Contents/Resources/node/bin/npx" ] || { echo "FAIL: bundled npx missing" >&2; exit 1; }
+[ -f "$APP/Contents/Resources/node/lib/node_modules/npm/bin/npm-cli.js" ] || { echo "FAIL: bundled npm runtime missing" >&2; exit 1; }
 [ -x "$ENGINE" ] || { echo "FAIL: bundled OpenCode missing" >&2; exit 1; }
 [ -x "$CHROME_BIN" ] || { echo "FAIL: Google Chrome required by the internal browser is missing" >&2; exit 1; }
 [ -f "$WS/intake/surfaces/desktop/dist-server/index.js" ] || { echo "FAIL: desktop server bundle missing" >&2; exit 1; }
@@ -81,6 +84,21 @@ ACTUAL_NODE_VERSION=$("$NODE" --version 2>/dev/null | tr -d '[:space:]')
   echo "FAIL: installed Node version mismatch ($ACTUAL_NODE_VERSION != $EXPECTED_NODE_VERSION)" >&2
   exit 1
 }
+
+HOME="$TEST_HOME" PATH="$SERVICE_PATH" "$NODE" --input-type=module - "$IDE_ROOT" <<'JS'
+import { pathToFileURL } from 'node:url';
+
+const ideRoot = process.argv[2];
+const runnerUrl = pathToFileURL(`${ideRoot}/server/agent-task-runner.mjs`);
+const { createAgentTaskRunner } = await import(runnerUrl);
+const runner = createAgentTaskRunner({ workspaceRoot: ideRoot });
+for (const executable of ['npm', 'npx', 'tsc']) {
+  const result = await runner.run({ executable, args: ['--version'], cwd: ideRoot });
+  if (result.exitCode !== 0) {
+    throw new Error(`installed IDE task runner failed ${executable}: ${result.stderr || result.stdout}`);
+  }
+}
+JS
 
 EXPECTED_ENGINE_SHA=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['sha256'])")
 EXPECTED_ENGINE_VERSION=$(python3 -c "import json;print(json.load(open('$WS/upstream.lock'))['opencode']['version'])")

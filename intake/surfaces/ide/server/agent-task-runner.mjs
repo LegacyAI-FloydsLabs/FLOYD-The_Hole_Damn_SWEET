@@ -27,12 +27,18 @@ export function createAgentTaskRunner({ workspaceRoot }) {
         throw httpError(403, 'Agent Git tasks are read-only. Use the dedicated Git UI for mutations.');
       }
       const cwd = confinedDirectory(root, request?.cwd || root);
+      const taskPath = [
+        resolve(cwd, 'node_modules', '.bin'),
+        resolve(root, 'node_modules', '.bin'),
+        resolve(import.meta.dirname, '..', 'node_modules', '.bin'),
+        process.env.PATH || '',
+      ].filter(Boolean).join(':');
       const timeoutMs = Math.max(1000, Math.min(120_000, Number(request?.timeoutMs) || 60_000));
       const startedAt = Date.now();
       return await new Promise((resolvePromise, reject) => {
         const child = execFile('/usr/bin/env', [executable, ...args], {
           cwd, encoding: 'utf8', maxBuffer: MAX_OUTPUT, timeout: timeoutMs, signal,
-          env: { ...process.env, CURSEM_AGENT_TASK: '1', NO_COLOR: '1' },
+          env: { ...process.env, PATH: taskPath, CURSEM_AGENT_TASK: '1', NO_COLOR: '1' },
         }, (error, stdout, stderr) => {
           if (error?.name === 'AbortError') { reject(error); return; }
           resolvePromise({

@@ -14,6 +14,7 @@ const lspGateway = readFileSync('intake/surfaces/ide/server/lsp-gateway.mjs', 'u
 const frameServer = readFileSync('apps/frame/server/frame-server.mjs', 'utf8');
 const coreHttp = readFileSync('core/daemon/src/http.ts', 'utf8');
 const cursemShim = readFileSync('intake/surfaces/ide/cli/bin/cursem', 'utf8');
+const agentTaskRunner = readFileSync('intake/surfaces/ide/server/agent-task-runner.mjs', 'utf8');
 const workflow = readFileSync('.github/workflows/clean-macos-install.yml', 'utf8');
 const readme = readFileSync('README.md', 'utf8');
 const ttyAddons = ['addon-fit', 'addon-webgl', 'addon-canvas', 'addon-search', 'addon-unicode11'];
@@ -79,7 +80,9 @@ test('Node runtime lock identifies and hashes the exact release runtime', () => 
 });
 
 test('installer rebuilds in an isolated git export before staging', () => {
-  assert.match(installer, /git archive HEAD/);
+  assert.match(installer, /status --porcelain --untracked-files=no/);
+  assert.match(installer, /git archive "\$SOURCE_COMMIT"/);
+  assert.match(installer, /git -C "\$ROOT" show -s --format=%cI "\$SOURCE_COMMIT"/);
   assert.match(installer, /prepare-release-inputs\.sh" "\$SOURCE"/);
   assert.match(installer, /SOURCE\/\.floyd-build\/opencode\/opencode/);
   assert.doesNotMatch(installer, /ENGINE_SRC=.*FLOYD_RUNTIME_ROOT/);
@@ -96,6 +99,9 @@ test('installer rebuilds in an isolated git export before staging', () => {
   assert.match(postinstall, /mv "\$CANDIDATE" "\$APP"/);
   assert.match(postinstall, /desktop\/dist-server\/index\.js/);
   assert.match(postinstall, /ide\/dist\/index\.html/);
+  assert.match(postinstall, /Resources\/node\/bin\/npm/);
+  assert.match(postinstall, /Resources\/node\/bin\/npx/);
+  assert.match(postinstall, /Resources\/node\/lib\/node_modules\/npm\/bin\/npm-cli\.js/);
   for (const addon of ttyAddons) {
     assert.match(postinstall, new RegExp(`floyd-tty-bridge/node_modules/@xterm/${addon}`));
   }
@@ -176,6 +182,13 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /environment\["FLOYD_AGENT_NODE"\]/);
   assert.match(installedVerifier, /installed Node sha mismatch/);
   assert.match(installedVerifier, /installed Node version mismatch/);
+  assert.match(installer, /rsync -a "\$STAGE\/\$NODE_ARCHIVE_ROOT\/" "\$RES\/node\/"/);
+  assert.match(installedVerifier, /createAgentTaskRunner/);
+  for (const tool of ['npm', 'npx', 'tsc']) assert.match(installedVerifier, new RegExp(`['"]${tool}['"]`));
+  assert.match(agentTaskRunner, /resolve\(cwd, 'node_modules', '\.bin'\)/);
+  assert.match(agentTaskRunner, /resolve\(root, 'node_modules', '\.bin'\)/);
+  assert.match(agentTaskRunner, /resolve\(import\.meta\.dirname, '\.\.', 'node_modules', '\.bin'\)/);
+  assert.match(agentTaskRunner, /PATH: taskPath/);
   assert.doesNotMatch(installedVerifier, /for app in core ff omf launcher; do/);
   assert.match(installedVerifier, /CORE_PROFILE="\$PROFILE_DIR\/core\.json"/);
   assert.match(installedVerifier, /ENGINE_CONFIG="\$RUNTIME\/engines\/opencode\/config\/opencode\.json"/);
