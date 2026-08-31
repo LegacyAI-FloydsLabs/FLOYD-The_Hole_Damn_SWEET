@@ -10,10 +10,12 @@ ENGINE="$APP/Contents/Resources/engine/opencode"
 RUNTIME=$(mktemp -d /tmp/floyd-installed-runtime.XXXXXX)
 TEST_HOME="$RUNTIME/home"
 LOG_DIR="$TEST_HOME/Library/Logs/Floyd"
+TEST_KEYCHAIN="$TEST_HOME/Library/Keychains/floyd-clean-install.keychain-db"
 
 cleanup() {
   launchctl bootout "gui/$(id -u)/com.floyd.frame" 2>/dev/null || true
   launchctl bootout "gui/$(id -u)/com.floyd.core" 2>/dev/null || true
+  HOME="$TEST_HOME" /usr/bin/security delete-keychain "$TEST_KEYCHAIN" >/dev/null 2>&1 || true
   rm -rf "$RUNTIME" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -35,8 +37,26 @@ ACTUAL_ENGINE_VERSION=$("$ENGINE" --version 2>/dev/null | sed -n '1p' | tr -d '[
 }
 
 PROFILE_DIR="$RUNTIME/secrets/proxy-app-profiles"
-mkdir -p "$TEST_HOME/Library/LaunchAgents" "$LOG_DIR" "$PROFILE_DIR"
+mkdir -p \
+  "$TEST_HOME/Library/LaunchAgents" \
+  "$TEST_HOME/Library/Preferences" \
+  "$LOG_DIR" \
+  "$PROFILE_DIR" \
+  "$(dirname "$TEST_KEYCHAIN")"
 chmod 700 "$RUNTIME/secrets" "$PROFILE_DIR"
+
+# Frame's Vault deliberately requires the macOS Keychain. A temporary HOME
+# does not have a default Keychain, so provision the same unlocked login
+# context that a real clean Mac user receives during account creation.
+KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+HOME="$TEST_HOME" /usr/bin/security create-keychain -p "$KEYCHAIN_PASSWORD" "$TEST_KEYCHAIN"
+HOME="$TEST_HOME" /usr/bin/security set-keychain-settings -lut 21600 "$TEST_KEYCHAIN"
+HOME="$TEST_HOME" /usr/bin/security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$TEST_KEYCHAIN"
+HOME="$TEST_HOME" /usr/bin/security list-keychains -d user -s "$TEST_KEYCHAIN"
+HOME="$TEST_HOME" /usr/bin/security default-keychain -d user -s "$TEST_KEYCHAIN"
+HOME="$TEST_HOME" /usr/bin/security default-keychain -d user >/dev/null
+unset KEYCHAIN_PASSWORD
+
 cat > "$PROFILE_DIR/core.json" <<'PROFILE'
 {"app":"core","proxyToken":"fv_core_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}
 PROFILE
@@ -57,6 +77,8 @@ wait_http() {
     echo "--- $log" >&2
     sed -n '1,240p' "$log" >&2
   done
+  launchctl print "gui/$(id -u)/com.floyd.frame" >&2 || true
+  HOME="$TEST_HOME" /usr/bin/security default-keychain -d user >&2 || true
   return 1
 }
 

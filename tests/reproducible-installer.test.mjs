@@ -74,6 +74,10 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /Contents\/MacOS\/FLOYD Desktop Suite/);
   assert.match(installedVerifier, /proxy-app-profiles/);
   assert.match(installedVerifier, /chmod 600 "\$PROFILE_DIR\/core\.json"/);
+  assert.match(installedVerifier, /Library\/Preferences/);
+  assert.match(installedVerifier, /security create-keychain/);
+  assert.match(installedVerifier, /security unlock-keychain/);
+  assert.match(installedVerifier, /security default-keychain -d user -s/);
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
 });
