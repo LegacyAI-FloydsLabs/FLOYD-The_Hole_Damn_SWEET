@@ -52,6 +52,7 @@ for required in \
   "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/desktop/dist-server/index.js" \
   "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/desktop/dist/index.html" \
   "$CANDIDATE/Contents/Resources/workstation/intake/surfaces/ide/dist/index.html" \
+  "$CANDIDATE/Contents/Resources/workstation/release.json" \
   "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-fit/lib/addon-fit.js" \
   "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-webgl/lib/addon-webgl.js" \
   "$CANDIDATE/Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-canvas/lib/addon-canvas.js" \

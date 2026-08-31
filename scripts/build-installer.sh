@@ -31,9 +31,12 @@ WS="$RES/workstation"
 mkdir -p "$APP/Contents/MacOS" "$WS" "$DIST"
 
 echo "==> exporting exact git commit"
+SOURCE_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
+SOURCE_BUILT_AT=$(git -C "$ROOT" show -s --format=%cI HEAD)
 (cd "$ROOT" && git archive HEAD) | tar -x -C "$SOURCE"
 VERSION=${FLOYD_VERSION:-$(tr -d '[:space:]' < "$SOURCE/VERSION")}
 [ -n "$VERSION" ] || { echo "FATAL: empty VERSION" >&2; exit 1; }
+RELEASE_NODE_VERSION=$(python3 -c "import json;print(json.load(open('$SOURCE/upstream.lock'))['node']['version'])")
 
 echo "==> recreating dependencies, production bundles, and pinned engine"
 "$ROOT/scripts/prepare-release-inputs.sh" "$SOURCE"
@@ -61,6 +64,13 @@ for f in \
   rsync -a "$SOURCE/$f" "$WS/$f"
 done
 printf '%s\n' "$VERSION" > "$WS/VERSION"   # updater reads installed version here
+cat > "$WS/release.json" <<JSON
+{
+  "source_commit": "$SOURCE_COMMIT",
+  "built_at": "$SOURCE_BUILT_AT",
+  "node_version": "v$RELEASE_NODE_VERSION"
+}
+JSON
 # Workspace deps (small; @floyd/* are relative symlinks that survive rsync -a).
 rsync -a "$SOURCE/node_modules/" "$WS/node_modules/"
 for workspace in packages/contracts packages/sdk engines/opencode core/daemon clients/cli; do

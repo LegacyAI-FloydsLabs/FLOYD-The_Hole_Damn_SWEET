@@ -84,6 +84,12 @@ function readReleaseIdentity(): ReleaseIdentity {
 const RELEASE_IDENTITY = Object.freeze(readReleaseIdentity());
 
 function admittedSurfaceCommit(id: string): string {
+  // A packaged release is one exact git export. Its release.json is the
+  // runtime provenance source because .git is deliberately not shipped; all
+  // managed surfaces must report that same package commit.
+  if (RELEASE_IDENTITY.source === "runtime-release" && RELEASE_IDENTITY.source_commit) {
+    return RELEASE_IDENTITY.source_commit;
+  }
   const manifest = JSON.parse(readFileSync(SURFACE_MANIFEST, "utf8")) as {
     surfaces?: Array<{ id?: unknown; integration?: { commit?: unknown } }>;
   };

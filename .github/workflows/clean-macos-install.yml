@@ -24,6 +24,7 @@ jobs:
       - name: Require arm64 clean runner and expanded LFS payloads
         run: |
           test "$(uname -m)" = arm64
+          test -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
           file intake/surfaces/ff/bin/floyd-ff-real | grep -q 'Mach-O 64-bit executable arm64'
           file intake/surfaces/omf/bin/omp | grep -q 'Mach-O 64-bit executable arm64'
 

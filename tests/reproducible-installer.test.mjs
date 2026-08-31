@@ -11,7 +11,11 @@ const installer = readFileSync('scripts/build-installer.sh', 'utf8');
 const postinstall = readFileSync('scripts/install-packaged-application.sh', 'utf8');
 const installedVerifier = readFileSync('scripts/verify-installed-application.sh', 'utf8');
 const lspGateway = readFileSync('intake/surfaces/ide/server/lsp-gateway.mjs', 'utf8');
+const frameServer = readFileSync('apps/frame/server/frame-server.mjs', 'utf8');
+const coreHttp = readFileSync('core/daemon/src/http.ts', 'utf8');
+const cursemShim = readFileSync('intake/surfaces/ide/cli/bin/cursem', 'utf8');
 const workflow = readFileSync('.github/workflows/clean-macos-install.yml', 'utf8');
+const readme = readFileSync('README.md', 'utf8');
 const ttyAddons = ['addon-fit', 'addon-webgl', 'addon-canvas', 'addon-search', 'addon-unicode11'];
 const ideRuntimeLaunchers = [
   'bash-language-server',
@@ -195,4 +199,42 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /launcher did not execute its packaged binary/);
   assert.match(installedVerifier, /engine.*ok/);
   assert.doesNotMatch(installedVerifier, /frame-server\.mjs.*>/);
+});
+
+test('installed release identity and CLI runtime remain self-contained', () => {
+  assert.match(installer, /SOURCE_COMMIT=\$\(git -C "\$ROOT" rev-parse HEAD\)/);
+  assert.match(installer, /"source_commit": "\$SOURCE_COMMIT"/);
+  assert.match(installer, /"node_version": "v\$RELEASE_NODE_VERSION"/);
+  assert.match(installer, /"\$WS\/release\.json"/);
+  assert.match(postinstall, /workstation\/release\.json/);
+  assert.match(frameServer, /PACKAGED_SOURCE_COMMIT/);
+  assert.match(frameServer, /requested\.FLOYD_SOURCE_COMMIT = PACKAGED_SOURCE_COMMIT/);
+  assert.match(coreHttp, /RELEASE_IDENTITY\.source === "runtime-release"/);
+  assert.match(coreHttp, /return RELEASE_IDENTITY\.source_commit/);
+  assert.match(installedVerifier, /EXPECTED_SOURCE_COMMIT=\$\(git -C "\$ROOT" rev-parse HEAD\)/);
+  assert.match(installedVerifier, /installed release identity mismatch/);
+  assert.match(installedVerifier, /\/api\/surfaces/);
+  for (const surface of ['desktop', 'ide', 'pty', 'launcher']) {
+    assert.match(installedVerifier, new RegExp(`\\b${surface}\\b`));
+  }
+  assert.match(installedVerifier, /surface\.get\("verified"\) is True/);
+
+  assert.match(cursemShim, /FLOYD_AGENT_NODE/);
+  assert.match(cursemShim, /\[ -x "\$NODE_BIN" \]/);
+  assert.match(cursemShim, /exec "\$NODE_BIN"/);
+  assert.match(installedVerifier, /\/bin\/zsh -l -c '\"\$1\" --version'/);
+  assert.match(installedVerifier, /CURSEM bundled-Node smoke/);
+});
+
+test('clean-install contract exercises the mandatory internal browser', () => {
+  assert.match(readme, /Google Chrome/);
+  assert.match(workflow, /Google Chrome\.app\/Contents\/MacOS\/Google Chrome/);
+  assert.match(frameServer, /\/api\/action\/open-chrome/);
+  assert.match(frameServer, /\/api\/action\/close-chrome/);
+  assert.match(installedVerifier, /CHROME_BIN="\/Applications\/Google Chrome\.app\/Contents\/MacOS\/Google Chrome"/);
+  assert.match(installedVerifier, /\/api\/action\/open-chrome/);
+  assert.match(installedVerifier, /browser\.get\("opened"\) is True/);
+  assert.match(installedVerifier, /browser\.get\("cdpPort"\) == 13032/);
+  assert.match(installedVerifier, /len\(browser\.get\("loaded", \[\]\)\) == 2/);
+  assert.match(installedVerifier, /\/api\/action\/close-chrome/);
 });

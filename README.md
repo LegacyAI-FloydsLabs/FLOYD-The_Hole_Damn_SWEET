@@ -16,10 +16,11 @@ routed through the Vault.
 ## Rebuild and install on a clean Mac
 
 The supported recovery path requires an Apple-silicon Mac running macOS 14 or
-newer, Git LFS, Python 3, and Node 26.5.0. The release script performs frozen
-installs from every committed lockfile, rebuilds the Desktop and IDE bundles,
-downloads and verifies the pinned OpenCode and Node binaries, and packages
-only that fresh release tree.
+newer, Git LFS, Python 3, Node 26.5.0, and Google Chrome. Chrome is the runtime
+host for FLOYD's internal browser and its two permanent extensions. The release
+script performs frozen installs from every committed lockfile, rebuilds the
+Desktop and IDE bundles, downloads and verifies the pinned OpenCode and Node
+binaries, and packages only that fresh release tree.
 
 ```sh
 git lfs install

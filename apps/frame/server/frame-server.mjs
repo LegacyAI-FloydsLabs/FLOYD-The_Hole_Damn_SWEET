@@ -45,6 +45,16 @@ const BACKGROUNDS_DIR = join(RUNTIME_ROOT, "backgrounds");
 const REGISTRY_PATH = join(FRAME_DIR, "registry.json");
 const HOST = process.env.FRAME_HOST || "127.0.0.1";
 const PORT = Number(process.env.FRAME_PORT || 13030);
+const PACKAGED_SOURCE_COMMIT = (() => {
+  try {
+    const release = JSON.parse(readFileSync(join(REPO_ROOT, "release.json"), "utf8"));
+    return typeof release.source_commit === "string" && /^[a-f0-9]{40}$/.test(release.source_commit)
+      ? release.source_commit
+      : "";
+  } catch {
+    return "";
+  }
+})();
 
 // ---- managed process table -------------------------------------------------
 // Every app the frame can own. Terminal apps get their own TerminalOne server
@@ -435,6 +445,10 @@ async function ensureApp(id) {
   // environment values that can linger across restarts.
   delete requested.FLOYD_SURFACE_COMMIT;
   delete requested.FLOYD_SOURCE_COMMIT;
+  // Installed releases are exact git exports and intentionally contain no
+  // .git directory. Stamp their immutable package identity after deleting
+  // inherited values; source checkouts still identify themselves from Git.
+  if (PACKAGED_SOURCE_COMMIT) requested.FLOYD_SOURCE_COMMIT = PACKAGED_SOURCE_COMMIT;
   const env = vaultEnv(id, requested);
   const child = spawn(spec.cmd, spec.args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   children.set(id, child);
@@ -1068,6 +1082,13 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { opened: true, ...result });
       } catch (err) {
         return json(res, 500, { opened: false, error: String(err?.message ?? err) });
+      }
+    }
+    if (path === "/api/action/close-chrome" && req.method === "POST") {
+      try {
+        return json(res, 200, { closed: await closeInternalBrowser() });
+      } catch (err) {
+        return json(res, 500, { closed: false, error: String(err?.message ?? err) });
       }
     }
     if (path === "/api/backgrounds" && req.method === "GET") return json(res, 200, { backgrounds: listBackgrounds() });

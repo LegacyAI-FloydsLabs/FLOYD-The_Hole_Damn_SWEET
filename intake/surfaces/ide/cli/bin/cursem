@@ -1,6 +1,16 @@
 #!/bin/sh
 # cursem — CURSEM IDE in-shell control CLI (bin shim).
-# Runs the zero-dependency cursem.mjs under the system Node. TerminalOne
-# prepends this directory to PATH in every CURSEM-spawned shell.
+# Runs the zero-dependency cursem.mjs under FLOYD's exact bundled Node when
+# installed. A login zsh may reorder PATH, so bare `node` is not trustworthy.
+# Source/development use falls back to the first executable Node on PATH.
 CURSEM_CLI_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec node "$CURSEM_CLI_DIR/../cursem.mjs" "$@"
+if [ -n "${FLOYD_AGENT_NODE:-}" ]; then
+  NODE_BIN=$FLOYD_AGENT_NODE
+else
+  NODE_BIN=$(command -v node 2>/dev/null || true)
+fi
+[ -x "$NODE_BIN" ] || {
+  echo "cursem: FLOYD Node runtime is unavailable" >&2
+  exit 127
+}
+exec "$NODE_BIN" "$CURSEM_CLI_DIR/../cursem.mjs" "$@"
