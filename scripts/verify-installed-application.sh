@@ -2,6 +2,13 @@
 # Cloud-safe smoke verification for an installed FLOYD Desktop Suite package.
 set -eu
 
+# This is a disposable-machine test, not an installer or a repair command.
+# Never change a person's launch agents, browser or Keychain to run it.
+[ "${GITHUB_ACTIONS:-}" = true ] && [ "${RUNNER_OS:-}" = macOS ] || {
+  echo 'Run installed-application verification in the clean macOS cloud workflow.' >&2
+  exit 1
+}
+
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 APP=${FLOYD_APP:-/Applications/FLOYD Desktop Suite.app}
 WS="$APP/Contents/Resources/workstation"
@@ -12,9 +19,8 @@ IDE_ROOT="$WS/intake/surfaces/ide"
 NODE_DIR=$(dirname "$NODE")
 SERVICE_PATH="$NODE_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
 RUNTIME=$(mktemp -d /tmp/floyd-installed-runtime.XXXXXX)
-TEST_HOME="$RUNTIME/home"
+TEST_HOME="$HOME"
 LOG_DIR="$TEST_HOME/Library/Logs/Floyd"
-TEST_KEYCHAIN="$TEST_HOME/Library/Keychains/floyd-clean-install.keychain-db"
 SERVICES_STARTED=0
 
 cleanup() {
@@ -32,7 +38,6 @@ cleanup() {
     launchctl bootout "gui/$(id -u)/com.floyd.frame" 2>/dev/null || true
     launchctl bootout "gui/$(id -u)/com.floyd.core" 2>/dev/null || true
   fi
-  HOME="$TEST_HOME" /usr/bin/security delete-keychain "$TEST_KEYCHAIN" >/dev/null 2>&1 || true
   rm -rf "$RUNTIME" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -125,21 +130,12 @@ mkdir -p \
   "$TEST_HOME/Library/LaunchAgents" \
   "$TEST_HOME/Library/Preferences" \
   "$LOG_DIR" \
-  "$PROFILE_DIR" \
-  "$(dirname "$TEST_KEYCHAIN")"
+  "$PROFILE_DIR"
 chmod 700 "$RUNTIME/secrets" "$PROFILE_DIR"
 
-# Frame's Vault deliberately requires the macOS Keychain. A temporary HOME
-# does not have a default Keychain, so provision the same unlocked login
-# context that a real clean Mac user receives during account creation.
-KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
-HOME="$TEST_HOME" /usr/bin/security create-keychain -p "$KEYCHAIN_PASSWORD" "$TEST_KEYCHAIN"
-HOME="$TEST_HOME" /usr/bin/security set-keychain-settings -lut 21600 "$TEST_KEYCHAIN"
-HOME="$TEST_HOME" /usr/bin/security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$TEST_KEYCHAIN"
-HOME="$TEST_HOME" /usr/bin/security list-keychains -d user -s "$TEST_KEYCHAIN"
-HOME="$TEST_HOME" /usr/bin/security default-keychain -d user -s "$TEST_KEYCHAIN"
+# Use the disposable runner's actual login account, just as a normal install
+# does. A fabricated HOME is not a new macOS account or a separate Keychain.
 HOME="$TEST_HOME" /usr/bin/security default-keychain -d user >/dev/null
-unset KEYCHAIN_PASSWORD
 
 for app in ff omf launcher; do
   printf '{"app":"%s","proxyToken":"fv_%s_0123456789abcdef0123456789abcdef","proxyUrl":"http://127.0.0.1:41999"}\n' \
@@ -147,7 +143,7 @@ for app in ff omf launcher; do
   chmod 600 "$PROFILE_DIR/$app.json"
 done
 SERVICES_STARTED=1
-HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" FLOYD_INTERNAL_BROWSER_HEADLESS=1 \
+HOME="$TEST_HOME" FLOYD_RUNTIME_ROOT="$RUNTIME" \
   "$APP/Contents/MacOS/FLOYD Desktop Suite"
 echo "==> installed launcher started"
 
@@ -161,8 +157,6 @@ for path in sys.argv[1:3]:
         environment = plistlib.load(handle)["EnvironmentVariables"]
     assert environment["PATH"] == sys.argv[3], (path, environment.get("PATH"))
     assert environment["FLOYD_AGENT_NODE"] == sys.argv[4], (path, environment.get("FLOYD_AGENT_NODE"))
-    if path.endswith("com.floyd.frame.plist"):
-        assert environment["FLOYD_INTERNAL_BROWSER_HEADLESS"] == "1", environment
 PY
 
 wait_http() {
@@ -329,7 +323,10 @@ for name in ("desktop", "ide", "pty", "launcher"):
     surface=by_id.get(name)
     assert surface is not None and surface.get("verified") is True, (name, surface, payload)
 '
-echo "==> launching installed internal browser"
+echo "==> verifying the interface opened by FLOYD"
+"$NODE" "$ROOT/scripts/verification/installed-ui.mjs" verify
+
+echo "==> verifying the additional internal-browser feature"
 BROWSER_RESPONSE="$RUNTIME/open-chrome.json"
 BROWSER_STATUS=$(curl -sS -o "$BROWSER_RESPONSE" -w '%{http_code}' \
   -X POST -H 'Content-Type: application/json' \

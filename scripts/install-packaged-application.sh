@@ -86,6 +86,8 @@ TS_SERVER="$IDE_ROOT/node_modules/typescript/lib/tsserver.js"
   exit 1
 }
 
+"$CANDIDATE/Contents/Resources/node/bin/node" \
+  "$CANDIDATE/Contents/Resources/verify-package-payload.mjs" verify "$CANDIDATE"
 if [ -e "$APP" ]; then
   mv "$APP" "$PREVIOUS"
 fi

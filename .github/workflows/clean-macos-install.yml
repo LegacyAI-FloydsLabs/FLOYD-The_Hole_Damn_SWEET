@@ -31,10 +31,16 @@ jobs:
       - name: Build unsigned installer from clean inputs
         run: ./scripts/build-installer.sh
 
+      - name: Install locked browser verification tools
+        run: npm ci --prefix scripts/verification --no-audit --no-fund
+
+      - name: Prepare the cloud account's default browser
+        run: node scripts/verification/installed-ui.mjs prepare
+
       - name: Install package on clean hosted macOS
         run: sudo installer -pkg "dist/FLOYD-$(tr -d '[:space:]' < VERSION).pkg" -target /
 
-      - name: Verify installed primary workflow
+      - name: Verify installed services, actual interface and terminal
         run: ./scripts/verify-installed-application.sh
 
       - uses: actions/upload-artifact@v7
@@ -44,4 +50,7 @@ jobs:
           path: |
             dist/FLOYD-*.pkg
             dist/manifest.json
+            dist/FLOYD-*.app.zip
+            dist/installed-ui-evidence/
+            scripts/install-for-user.sh
           if-no-files-found: error

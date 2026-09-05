@@ -236,6 +236,11 @@ chmod 755 "$APP/Contents/MacOS/FLOYD Desktop Suite"
 
 cp "$SOURCE/build-assets/FLOYD.icns" "$APP/Contents/Resources/FLOYD.icns"
 
+# Carry a complete file receipt inside the app and verify it again after
+# extraction. This catches truncation anywhere, not only three entrypoints.
+cp "$SOURCE/scripts/verify-package-payload.mjs" "$RES/verify-package-payload.mjs"
+"$RES/node/bin/node" "$RES/verify-package-payload.mjs" create "$APP" "$SOURCE/build-assets/runtime-components.json"
+
 echo "==> secret scan (fail closed)"
 SCAN_FAIL=0
 # Known live-key shapes, requiring the long random tail so provider-table
@@ -304,6 +309,7 @@ ARCHIVE_DIR="$STAGE/payload/Library/Application Support/FLOYD Installer"
 ARCHIVE="$ARCHIVE_DIR/FLOYD Desktop Suite.zip"
 mkdir -p "$ARCHIVE_DIR" "$STAGE/scripts"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+cp "$ARCHIVE" "$DIST/FLOYD-$VERSION.app.zip"
 rm -rf "$APP"
 cp "$SOURCE/scripts/install-packaged-application.sh" "$STAGE/scripts/postinstall"
 chmod 755 "$STAGE/scripts/postinstall"

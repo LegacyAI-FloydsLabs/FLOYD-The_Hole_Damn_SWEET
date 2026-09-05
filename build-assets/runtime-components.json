@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "components": {
+    "application": ["Contents/Info.plist", "Contents/MacOS/FLOYD Desktop Suite", "Contents/Resources/FLOYD.icns"],
+    "node": ["Contents/Resources/node/bin/node", "Contents/Resources/node/bin/npm", "Contents/Resources/node/bin/npx", "Contents/Resources/node/lib/node_modules/npm/bin/npm-cli.js"],
+    "opencode": ["Contents/Resources/engine/opencode", "Contents/Resources/workstation/engines/opencode/src/index.ts", "Contents/Resources/workstation/upstream.lock"],
+    "core": ["Contents/Resources/workstation/core/daemon/src/main.ts", "Contents/Resources/workstation/packages/sdk/src/index.ts", "Contents/Resources/workstation/packages/contracts/src/index.ts", "Contents/Resources/workstation/ecosystem/surfaces.json", "Contents/Resources/workstation/release.json"],
+    "frame-and-vault": ["Contents/Resources/workstation/apps/frame/server/frame-server.mjs", "Contents/Resources/workstation/apps/frame/server/keychain-vault.mjs", "Contents/Resources/workstation/apps/frame/server/vault-proxy.mjs", "Contents/Resources/workstation/apps/frame/registry.json", "Contents/Resources/workstation/apps/frame/public/index.html", "Contents/Resources/workstation/apps/frame/public/assets/floyd-labs-logo.png", "Contents/Resources/workstation/apps/frame/backgrounds/sweet-ecosystem-2.png"],
+    "desktop-and-browork": ["Contents/Resources/workstation/intake/surfaces/desktop/dist/index.html", "Contents/Resources/workstation/intake/surfaces/desktop/dist-server/index.js"],
+    "cursem-ide": ["Contents/Resources/workstation/intake/surfaces/ide/dist/index.html", "Contents/Resources/workstation/intake/surfaces/ide/server/cursem-server.mjs", "Contents/Resources/workstation/intake/surfaces/ide/cli/bin/cursem", "Contents/Resources/workstation/intake/surfaces/ide/node_modules/typescript/lib/tsserver.js"],
+    "terminals": ["Contents/Resources/workstation/intake/surfaces/pty/src/server.js", "Contents/Resources/workstation/intake/surfaces/pty/public/index.html", "Contents/Resources/workstation/intake/surfaces/ff/launch.sh", "Contents/Resources/workstation/intake/surfaces/ff/bin/floyd-ff-real", "Contents/Resources/workstation/intake/surfaces/omf/launch.sh", "Contents/Resources/workstation/intake/surfaces/omf/bin/omp"],
+    "harness-launcher": ["Contents/Resources/workstation/intake/surfaces/launcher/src/server.js", "Contents/Resources/workstation/intake/surfaces/launcher/public/index.html", "Contents/Resources/workstation/intake/surfaces/launcher/agents/bin/floyd-agent", "Contents/Resources/workstation/intake/surfaces/launcher/agents/lib/merge-config.mjs"],
+    "browser-extensions": ["Contents/Resources/workstation/apps/frame/extensions/open-anvil/manifest.json", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/manifest.json", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-fit/lib/addon-fit.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-webgl/lib/addon-webgl.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-canvas/lib/addon-canvas.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-search/lib/addon-search.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"],
+    "runtime-helpers": ["Contents/Resources/workstation/scripts/run-with-vault-environment.mjs", "Contents/Resources/workstation/scripts/vault-provider-handoff.mjs", "Contents/Resources/workstation/scripts/run-omf-with-vault.mjs", "Contents/Resources/workstation/lib/vault-routing.mjs", "Contents/Resources/workstation/lib/shell-quote.mjs"]
+  },
+  "external_optional_features": {
+    "internal_browser": "Google Chrome with the two packaged extensions; separate from the default browser used to display FLOYD.",
+    "chrono": "Python 3 and a writable Git workspace.",
+    "qr_handoff": "qrencode.",
+    "rust_language_server": "rust-analyzer.",
+    "provider_requests": "Provider authorization entered by the user in FLOYD Vault. No provider credentials are shipped."
+  }
+}

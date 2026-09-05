@@ -29,8 +29,28 @@ cd FLOYD-The_Hole_Damn_SWEET
 git lfs pull
 ./scripts/build-installer.sh
 sudo installer -pkg "dist/FLOYD-$(tr -d '[:space:]' < VERSION).pkg" -target /
-./scripts/verify-installed-application.sh
+open '/Applications/FLOYD Desktop Suite.app'
 ```
+
+For an installation in your own account, use the ZIP produced by the same
+build. It contains the identical application, with a complete file receipt:
+
+```sh
+./scripts/install-for-user.sh "dist/FLOYD-$(tr -d '[:space:]' < VERSION).app.zip"
+open "$HOME/Applications/FLOYD Desktop Suite.app"
+```
+
+Opening FLOYD registers its two services for the current account and opens
+its interface in the default browser. Existing account data in `~/.floyd`
+is retained. Provider credentials belong to that account's Keychain and are
+never copied from another user.
+
+The clean macOS workflow builds and installs the package, checks every
+packaged file against its receipt, observes the interface FLOYD opens, renders
+all six registered surfaces and types a command into the IDE terminal.
+It uploads screenshots and a result receipt alongside the installer and ZIP.
+`scripts/verify-installed-application.sh` is restricted to that disposable
+cloud account; do not run it against your everyday installation.
 
 The package is unsigned unless `FLOYD_SIGN_IDENTITY` names a Developer ID
 Installer certificate. The command-line installer above supports the unsigned

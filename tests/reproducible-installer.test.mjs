@@ -148,9 +148,10 @@ test('cloud workflow builds, installs, and exercises the installed application',
   assert.match(installedVerifier, /proxy-app-profiles/);
   assert.match(installedVerifier, /chmod 600 "\$PROFILE_DIR\/\$app\.json"/);
   assert.match(installedVerifier, /Library\/Preferences/);
-  assert.match(installedVerifier, /security create-keychain/);
-  assert.match(installedVerifier, /security unlock-keychain/);
-  assert.match(installedVerifier, /security default-keychain -d user -s/);
+  assert.match(installedVerifier, /GITHUB_ACTIONS/);
+  assert.match(installedVerifier, /TEST_HOME="\$HOME"/);
+  assert.doesNotMatch(installedVerifier, /security (?:create|delete|unlock)-keychain/);
+  assert.doesNotMatch(installedVerifier, /security (?:list|default)-keychains?.*-s/);
   assert.match(installedVerifier, /clean-install verification refuses to replace running service/);
   assert.match(installedVerifier, /SERVICES_STARTED=1/);
   assert.match(installedVerifier, /installed workflow diagnostics/);
@@ -242,14 +243,16 @@ test('installed release identity and CLI runtime remain self-contained', () => {
   assert.match(installedVerifier, /CURSEM bundled-Node smoke/);
 });
 
-test('clean-install contract exercises the mandatory internal browser', () => {
+test('clean-install contract tests the automatically opened UI before the additional browser feature', () => {
   assert.match(readme, /Google Chrome/);
   assert.match(workflow, /Google Chrome\.app\/Contents\/MacOS\/Google Chrome/);
   assert.match(frameServer, /\/api\/action\/open-chrome/);
   assert.match(frameServer, /\/api\/action\/close-chrome/);
   assert.match(installedVerifier, /CHROME_BIN="\/Applications\/Google Chrome\.app\/Contents\/MacOS\/Google Chrome"/);
   assert.match(installedVerifier, /\/api\/action\/open-chrome/);
-  assert.match(installedVerifier, /FLOYD_INTERNAL_BROWSER_HEADLESS=1/);
+  assert.doesNotMatch(installedVerifier, /FLOYD_INTERNAL_BROWSER_HEADLESS=1/);
+  assert.match(installedVerifier, /installed-ui\.mjs" verify/);
+  assert.ok(installedVerifier.indexOf('installed-ui.mjs" verify') < installedVerifier.indexOf('BROWSER_RESPONSE='));
   assert.match(installer, /FLOYD_INTERNAL_BROWSER_HEADLESS/);
   assert.match(frameServer, /FLOYD_INTERNAL_BROWSER_HEADLESS === "1"/);
   assert.match(frameServer, /--headless=new/);
