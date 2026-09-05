@@ -79,8 +79,11 @@ enter or rotate provider keys only in the Frame Keys panel.
 
 - Testing: use `npm test` plus each managed surface's local suite; final
   receipts are produced from the current checkout rather than a stale count.
-- Dogfood: frame daily-driver verified on desktop and mobile viewports;
-  rendered-browser visual proof and reboot survival remain manual checks.
+- Clean-Mac installation: the cloud-built 0.2.2 package passed the
+  [installed-application check](https://github.com/LegacyAI-FloydsLabs/FLOYD-The_Hole_Damn_SWEET/actions/runs/33990940821):
+  automatic browser opening, all six screens, a typed terminal command,
+  persistent screens when switching apps, and both internal-browser extensions.
+  Reboot survival and signed/notarized distribution remain separate checks.
 - Credential authority: the Vault is the single in-FLOYD provider credential
   proxy, including HTTP and Google Live WebSocket transports.
 
