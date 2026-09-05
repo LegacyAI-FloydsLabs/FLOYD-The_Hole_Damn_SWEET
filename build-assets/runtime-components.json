@@ -11,8 +11,18 @@
     "terminals": ["Contents/Resources/workstation/intake/surfaces/pty/src/server.js", "Contents/Resources/workstation/intake/surfaces/pty/public/index.html", "Contents/Resources/workstation/intake/surfaces/ff/launch.sh", "Contents/Resources/workstation/intake/surfaces/ff/bin/floyd-ff-real", "Contents/Resources/workstation/intake/surfaces/omf/launch.sh", "Contents/Resources/workstation/intake/surfaces/omf/bin/omp"],
     "harness-launcher": ["Contents/Resources/workstation/intake/surfaces/launcher/src/server.js", "Contents/Resources/workstation/intake/surfaces/launcher/public/index.html", "Contents/Resources/workstation/intake/surfaces/launcher/agents/bin/floyd-agent", "Contents/Resources/workstation/intake/surfaces/launcher/agents/lib/merge-config.mjs"],
     "browser-extensions": ["Contents/Resources/workstation/apps/frame/extensions/open-anvil/manifest.json", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/manifest.json", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-fit/lib/addon-fit.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-webgl/lib/addon-webgl.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-canvas/lib/addon-canvas.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-search/lib/addon-search.js", "Contents/Resources/workstation/apps/frame/extensions/floyd-tty-bridge/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"],
-    "runtime-helpers": ["Contents/Resources/workstation/scripts/run-with-vault-environment.mjs", "Contents/Resources/workstation/scripts/vault-provider-handoff.mjs", "Contents/Resources/workstation/scripts/run-omf-with-vault.mjs", "Contents/Resources/workstation/lib/vault-routing.mjs", "Contents/Resources/workstation/lib/shell-quote.mjs"]
+    "runtime-helpers": ["Contents/Resources/workstation/scripts/register-user-launch-agent.mjs", "Contents/Resources/workstation/scripts/run-with-vault-environment.mjs", "Contents/Resources/workstation/scripts/vault-provider-handoff.mjs", "Contents/Resources/workstation/scripts/run-omf-with-vault.mjs", "Contents/Resources/workstation/lib/vault-routing.mjs", "Contents/Resources/workstation/lib/shell-quote.mjs"]
   },
+  "required_executables": [
+    "Contents/MacOS/FLOYD Desktop Suite",
+    "Contents/Resources/node/bin/node",
+    "Contents/Resources/engine/opencode",
+    "Contents/Resources/workstation/intake/surfaces/ff/bin/floyd-ff-real",
+    "Contents/Resources/workstation/intake/surfaces/omf/bin/omp",
+    "Contents/Resources/workstation/intake/surfaces/ide/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper",
+    "Contents/Resources/workstation/intake/surfaces/launcher/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper",
+    "Contents/Resources/workstation/intake/surfaces/pty/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper"
+  ],
   "external_optional_features": {
     "internal_browser": "Google Chrome with the two packaged extensions; separate from the default browser used to display FLOYD.",
     "chrono": "Python 3 and a writable Git workspace.",

@@ -59,6 +59,7 @@ rm -rf "$WS/intake/surfaces" # recopied below with runtime-only exclusions
 mkdir -p "$WS/scripts/lib"
 for f in \
   scripts/run-with-vault-environment.mjs \
+  scripts/register-user-launch-agent.mjs \
   scripts/vault-provider-handoff.mjs \
   scripts/update-floyd-providers-with-vault.mjs \
   scripts/lib/floyd-provider-update.mjs \
@@ -192,6 +193,7 @@ fi
 plist() { # label program-args...
   label=$1; shift
   target="$AGENT_DIR/$label.plist"
+  candidate=$(mktemp "$AGENT_DIR/.$label.XXXXXX")
   {
     printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n'
     printf '<key>Label</key><string>%s</string>\n<key>ProgramArguments</key><array>\n' "$label"
@@ -207,10 +209,9 @@ plist() { # label program-args...
     printf '<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n'
     printf '<key>StandardOutPath</key><string>%s/%s.log</string>\n<key>StandardErrorPath</key><string>%s/%s.log</string>\n' "$LOG_DIR" "$label" "$LOG_DIR" "$label"
     printf '</dict></plist>\n'
-  } > "$target"
-  chmod 600 "$target"
-  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$target"
+  } > "$candidate"
+  chmod 600 "$candidate"
+  "$NODE" "$WS/scripts/register-user-launch-agent.mjs" "$label" "$candidate" "$target"
 }
 
 plist com.floyd.frame "$NODE" "$WS/apps/frame/server/frame-server.mjs"

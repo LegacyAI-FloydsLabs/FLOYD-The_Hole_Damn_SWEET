@@ -52,6 +52,9 @@ export async function verifyPayload(app, { inventory, create = false } = {}) {
   for (const [component, paths] of Object.entries(expected.inventory.components)) {
     for (const path of paths) if (!actual[path]) throw new Error(`Missing ${component}: ${path}`);
   }
+  for (const path of expected.inventory.required_executables || []) {
+    if (actual[path]?.executable !== true) throw new Error(`Required package executable is not runnable: ${path}`);
+  }
   if (!create) {
     for (const [path, entry] of Object.entries(expected.files)) {
       if (JSON.stringify(actual[path]) !== JSON.stringify(entry)) throw new Error(`Package content mismatch: ${path}`);

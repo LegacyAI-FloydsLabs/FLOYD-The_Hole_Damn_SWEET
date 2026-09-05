@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { isExpectedNonGitFolder } from './expected-response.mjs';
 
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'macOS') {
   throw new Error('This test changes the disposable cloud Mac browser settings; run it only in GitHub Actions.');
@@ -78,7 +79,9 @@ return "waiting for browser confirmation"
   const browser = await chromium.connectOverCDP(endpoint);
   const failures = [];
   const terminalOutput = [];
-  const receipt = { source_commit: process.env.FLOYD_EXPECTED_SOURCE_COMMIT || process.env.GITHUB_SHA, test_commit: process.env.GITHUB_SHA, automatically_opened: false, surfaces: [], failures };
+  const responseChecks = [];
+  const expectedNotices = [];
+  const receipt = { source_commit: process.env.FLOYD_EXPECTED_SOURCE_COMMIT || process.env.GITHUB_SHA, test_commit: process.env.GITHUB_SHA, automatically_opened: false, surfaces: [], failures, expected_notices: expectedNotices };
   let page;
   try {
     page = await until(() => browser.contexts().flatMap(c => c.pages()).find(p => p.url() === 'http://127.0.0.1:13030/'), 'FLOYD did not open its interface in the default browser');
@@ -97,7 +100,12 @@ return "waiting for browser confirmation"
     });
     page.on('response', response => {
       if (response.url().startsWith('http://127.0.0.1:') && response.status() >= 400) {
-        failures.push({ kind: 'http', url: response.url().split('?')[0], status: response.status() });
+        responseChecks.push((async () => {
+          const body = await response.json().catch(() => null);
+          const record = { kind: 'http', url: response.url().split('?')[0], status: response.status() };
+          if (isExpectedNonGitFolder(response.url(), response.status(), body)) expectedNotices.push({ ...record, message: body.error.message });
+          else failures.push(record);
+        })());
       }
     });
     // Observe a complete asset load in the very same page FLOYD opened.
@@ -145,6 +153,7 @@ return "waiting for browser confirmation"
     const images = await page.evaluate(() => Array.from(document.images).filter(image => image.getClientRects().length && image.complete && !image.naturalWidth).map(image => image.src));
     assert.deepEqual(images, [], 'Visible FLOYD image failed to load');
     await page.screenshot({ path: join(output, '02-return-home.png') });
+    await Promise.all(responseChecks);
     assert.deepEqual(failures, [], 'Installed interface had JavaScript or local resource failures');
     receipt.result = 'pass';
     console.log(`FLOYD_INSTALLED_UI PASS automatically_opened=true rendered_surfaces=${receipt.surfaces.length} terminal_command=pass state_preserved=true`);

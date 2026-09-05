@@ -44,6 +44,20 @@ test('payload verification detects missing, changed and extra installed files', 
   await assert.rejects(verifyPayload(root), /Missing desktop/);
 });
 
+test('a required native helper must be executable even when its bytes match', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'floyd-required-executable-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'Contents/Resources'), { recursive: true });
+  const path = 'Contents/Resources/spawn-helper';
+  await writeFile(join(root, path), 'helper', { mode: 0o644 });
+  const inventory = { components: { terminal: [path] }, required_executables: [path] };
+  await assert.rejects(verifyPayload(root, { create: true, inventory }), /Required package executable/);
+  await chmod(join(root, path), 0o755);
+  await verifyPayload(root, { create: true, inventory });
+  await chmod(join(root, path), 0o644);
+  await assert.rejects(verifyPayload(root), /Required package executable/);
+});
+
 test('a dependency symlink must remain inside the installed application', async t => {
   const root = await mkdtemp(join(tmpdir(), 'floyd-payload-link-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));

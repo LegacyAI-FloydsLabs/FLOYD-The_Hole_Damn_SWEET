@@ -72,6 +72,9 @@ for project in intake/surfaces/desktop \
   (cd "$ROOT/$project" && npm prune --omit=dev $NPM_FLAGS)
 done
 
+echo "==> preparing and executing each production terminal runtime"
+node "$ROOT/scripts/prepare-terminal-runtime.mjs" "$ROOT"
+
 echo "==> acquiring pinned OpenCode executable"
 mkdir -p "$BUILD_ROOT/downloads" "$BUILD_ROOT/opencode"
 read_lock() {
