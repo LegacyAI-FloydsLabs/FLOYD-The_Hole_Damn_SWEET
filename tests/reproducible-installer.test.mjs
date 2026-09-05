@@ -228,7 +228,7 @@ test('installed release identity and CLI runtime remain self-contained', () => {
   assert.match(frameServer, /requested\.FLOYD_SOURCE_COMMIT = PACKAGED_SOURCE_COMMIT/);
   assert.match(coreHttp, /RELEASE_IDENTITY\.source === "runtime-release"/);
   assert.match(coreHttp, /return RELEASE_IDENTITY\.source_commit/);
-  assert.match(installedVerifier, /EXPECTED_SOURCE_COMMIT=\$\(git -C "\$ROOT" rev-parse HEAD\)/);
+  assert.ok(installedVerifier.includes('EXPECTED_SOURCE_COMMIT=${FLOYD_EXPECTED_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}'));
   assert.match(installedVerifier, /installed release identity mismatch/);
   assert.match(installedVerifier, /\/api\/surfaces/);
   for (const surface of ['desktop', 'ide', 'pty', 'launcher']) {

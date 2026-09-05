@@ -25,18 +25,29 @@ async function until(check, message, timeout = 30000) {
 if (mode === 'prepare') {
   // Configure a normal GUI browser on this disposable account. FLOYD's own
   // unchanged `open` command must subsequently deliver its URL to this browser.
-  execFileSync('/usr/bin/xcrun', ['swift', '-e', 'import CoreServices; import Foundation; for scheme in ["http", "https"] { let result = LSSetDefaultHandlerForURLScheme(scheme as CFString, "com.google.Chrome" as CFString); if result != 0 { exit(1) } }'], { stdio: 'inherit' });
   execFileSync('/usr/bin/open', ['-na', 'Google Chrome', '--args',
     `--user-data-dir=${join(process.env.RUNNER_TEMP, 'floyd-default-browser')}`,
     '--remote-debugging-port=19222', '--remote-debugging-address=127.0.0.1',
     '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'inherit' });
   await until(async () => (await fetch(`${endpoint}/json/version`)).ok, 'Cloud default browser did not start');
+  execFileSync('/usr/bin/xcrun', ['swift', '-e', `
+import CoreServices
+import Foundation
+let chrome = URL(fileURLWithPath: "/Applications/Google Chrome.app")
+print("Chrome registration OSStatus:", LSRegisterURL(chrome as CFURL, true))
+for scheme in ["http", "https"] {
+  let status = LSSetDefaultHandlerForURLScheme(scheme as CFString, "com.google.Chrome" as CFString)
+  let handler = LSCopyDefaultHandlerForURLScheme(scheme as CFString)?.takeRetainedValue() as String? ?? "none"
+  print("Default browser:", scheme, "OSStatus:", status, "actual handler:", handler)
+  if handler != "com.google.Chrome" { exit(1) }
+}
+`], { stdio: 'inherit' });
   console.log('FLOYD_UI_BROWSER_READY');
 } else if (mode === 'verify') {
   const browser = await chromium.connectOverCDP(endpoint);
   const failures = [];
   const terminalOutput = [];
-  const receipt = { source_commit: process.env.GITHUB_SHA, automatically_opened: false, surfaces: [], failures };
+  const receipt = { source_commit: process.env.FLOYD_EXPECTED_SOURCE_COMMIT || process.env.GITHUB_SHA, test_commit: process.env.GITHUB_SHA, automatically_opened: false, surfaces: [], failures };
   let page;
   try {
     page = await until(() => browser.contexts().flatMap(c => c.pages()).find(p => p.url() === 'http://127.0.0.1:13030/'), 'FLOYD did not open its interface in the default browser');

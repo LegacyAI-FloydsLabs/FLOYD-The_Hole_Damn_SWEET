@@ -82,7 +82,7 @@ done
   exit 1
 }
 
-EXPECTED_SOURCE_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
+EXPECTED_SOURCE_COMMIT=${FLOYD_EXPECTED_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}
 INSTALLED_SOURCE_COMMIT=$(python3 -c "import json;print(json.load(open('$WS/release.json'))['source_commit'])")
 [ "$INSTALLED_SOURCE_COMMIT" = "$EXPECTED_SOURCE_COMMIT" ] || {
   echo "FAIL: installed release identity mismatch ($INSTALLED_SOURCE_COMMIT != $EXPECTED_SOURCE_COMMIT)" >&2
