@@ -240,6 +240,8 @@ cp "$SOURCE/build-assets/FLOYD.icns" "$APP/Contents/Resources/FLOYD.icns"
 # extraction. This catches truncation anywhere, not only three entrypoints.
 cp "$SOURCE/scripts/verify-package-payload.mjs" "$RES/verify-package-payload.mjs"
 "$RES/node/bin/node" "$RES/verify-package-payload.mjs" create "$APP" "$SOURCE/build-assets/runtime-components.json"
+[ -s "$RES/payload-manifest.json" ] || { echo 'FATAL: payload manifest was not created' >&2; exit 1; }
+"$RES/node/bin/node" "$RES/verify-package-payload.mjs" verify "$APP"
 
 echo "==> secret scan (fail closed)"
 SCAN_FAIL=0

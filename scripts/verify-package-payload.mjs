@@ -61,7 +61,9 @@ export async function verifyPayload(app, { inventory, create = false } = {}) {
   return { components: Object.keys(expected.inventory.components), files: Object.keys(actual).length };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node resolves the entry module to its real path. macOS /tmp and /var are
+// aliases; compare real paths so command-line verification cannot silently skip.
+if (process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url))) {
   try {
     const [mode, app, inventoryFile] = process.argv.slice(2);
     if (!['create', 'verify'].includes(mode) || !app) throw new Error('Usage: verify-package-payload.mjs create|verify application.app [inventory.json]');

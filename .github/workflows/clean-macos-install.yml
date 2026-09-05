@@ -3,7 +3,11 @@ name: Clean macOS installer
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, codex/complete-installer]
+    paths-ignore:
+      - '.github/workflows/verify-existing-installer.yml'
+      - 'scripts/verification/**'
+      - 'scripts/verify-installed-application.sh'
 
 permissions:
   contents: read
@@ -28,29 +32,52 @@ jobs:
           file intake/surfaces/ff/bin/floyd-ff-real | grep -q 'Mach-O 64-bit executable arm64'
           file intake/surfaces/omf/bin/omp | grep -q 'Mach-O 64-bit executable arm64'
 
-      - name: Install locked browser verification tools
-        run: npm ci --prefix scripts/verification --no-audit --no-fund
-
-      - name: Prepare the cloud account's default browser
-        run: node scripts/verification/installed-ui.mjs prepare
-
       - name: Build unsigned installer from clean inputs
         run: ./scripts/build-installer.sh
+
+      - name: Preserve verified app for personal installation
+        uses: actions/upload-artifact@v7
+        with:
+          name: floyd-user-app
+          compression-level: 0
+          path: |
+            dist/FLOYD-*.app.zip
+            dist/manifest.json
+            scripts/install-for-user.sh
+
+      - name: Preserve system installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: floyd-system-package
+          compression-level: 0
+          path: |
+            dist/FLOYD-*.pkg
+            dist/manifest.json
 
       - name: Install package on clean hosted macOS
         run: sudo installer -pkg "dist/FLOYD-$(tr -d '[:space:]' < VERSION).pkg" -target /
 
+      - name: Install locked browser verification tools
+        run: npm ci --prefix scripts/verification --no-audit --no-fund
+
+      - name: Prepare the cloud account's default browser
+        timeout-minutes: 2
+        run: node scripts/verification/installed-ui.mjs prepare
+
       - name: Verify installed services, actual interface and terminal
         run: ./scripts/verify-installed-application.sh
+
+      - name: Capture cloud failure state
+        if: failure()
+        run: |
+          mkdir -p dist/installed-ui-evidence
+          /usr/sbin/screencapture -x dist/installed-ui-evidence/cloud-screen.png || true
+          pgrep -fal 'Google Chrome|FLOYD' || true
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: floyd-clean-macos-installer
+          name: installed-application-evidence
           path: |
-            dist/FLOYD-*.pkg
-            dist/manifest.json
-            dist/FLOYD-*.app.zip
             dist/installed-ui-evidence/
-            scripts/install-for-user.sh
-          if-no-files-found: error
+          if-no-files-found: warn

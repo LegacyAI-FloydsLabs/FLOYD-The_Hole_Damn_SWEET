@@ -25,11 +25,14 @@ async function until(check, message, timeout = 30000) {
 if (mode === 'prepare') {
   // Configure a normal GUI browser on this disposable account. FLOYD's own
   // unchanged `open` command must subsequently deliver its URL to this browser.
+  console.log('Starting the disposable cloud Chrome profile through LaunchServices.');
   execFileSync('/usr/bin/open', ['-na', 'Google Chrome', '--args',
     `--user-data-dir=${join(process.env.RUNNER_TEMP, 'floyd-default-browser')}`,
     '--remote-debugging-port=19222', '--remote-debugging-address=127.0.0.1',
-    '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'inherit' });
+    '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'inherit', timeout: 30000 });
+  console.log('Chrome launch request returned; checking its debugging endpoint.');
   await until(async () => (await fetch(`${endpoint}/json/version`)).ok, 'Cloud default browser did not start');
+  console.log('Chrome is reachable; registering and checking the default browser.');
   execFileSync('/usr/bin/xcrun', ['swift', '-e', `
 import CoreServices
 import Foundation
@@ -41,7 +44,7 @@ for scheme in ["http", "https"] {
   print("Default browser:", scheme, "OSStatus:", status, "actual handler:", handler)
   if handler != "com.google.Chrome" { exit(1) }
 }
-`], { stdio: 'inherit' });
+`], { stdio: 'inherit', timeout: 30000 });
   console.log('FLOYD_UI_BROWSER_READY');
 } else if (mode === 'verify') {
   const browser = await chromium.connectOverCDP(endpoint);

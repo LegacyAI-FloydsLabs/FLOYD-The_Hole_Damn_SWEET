@@ -1,11 +1,6 @@
 name: Verify preserved FLOYD installer
 on:
-  push:
-    branches: [codex/complete-installer]
-    paths:
-      - '.github/workflows/verify-existing-installer.yml'
-      - 'scripts/verification/**'
-      - 'scripts/verify-installed-application.sh'
+  workflow_dispatch:
 permissions:
   contents: read
   actions: read
@@ -44,6 +39,7 @@ jobs:
             dist/manifest.json
       - run: npm ci --prefix scripts/verification --no-audit --no-fund
       - name: Prepare disposable default browser
+        timeout-minutes: 2
         run: node scripts/verification/installed-ui.mjs prepare
       - name: Install preserved package
         run: sudo installer -pkg dist/FLOYD-0.2.2.pkg -target /
