@@ -130,7 +130,12 @@ return "waiting for browser confirmation"
     }
     await page.locator('#edgeLeft').hover();
     await page.locator('#appList .app').filter({ hasText: 'CURSEM-IDE' }).first().click();
-    const ide = await (await page.locator('iframe.stage-frame.active').elementHandle()).contentFrame();
+    // openApp awaits its launch response before changing the active screen.
+    // Do not capture the previously active app immediately after the click.
+    const ideScreen = page.locator('iframe.stage-frame.active[title="CURSEM-IDE"]');
+    await ideScreen.waitFor({ state: 'visible' });
+    const ide = await (await ideScreen.elementHandle()).contentFrame();
+    assert.equal(new URL(ide.url()).port, '13012', 'Terminal check must target the IDE');
     const terminal = ide.locator('section[aria-label="TerminalOne"]');
     if (!await terminal.isVisible()) await ide.getByRole('button', { name: 'Toggle terminal', exact: true }).click();
     const input = terminal.locator('.xterm-helper-textarea').first();
@@ -145,6 +150,7 @@ return "waiting for browser confirmation"
     const desktopBefore = page.frames().find(frame => frame.url() === 'http://127.0.0.1:13010/');
     await page.locator('#edgeLeft').hover();
     await page.locator('#appList .app').filter({ hasText: 'FLOYD DESKTOP' }).first().click();
+    await page.locator('iframe.stage-frame.active[title="FLOYD DESKTOP"]').waitFor({ state: 'visible' });
     assert.ok(page.frames().includes(desktopBefore), 'Switching surfaces replaced the desktop session');
     await page.locator('#edgeTop').hover();
     await page.locator('#chipBg').click();

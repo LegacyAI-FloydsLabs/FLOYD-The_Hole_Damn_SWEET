@@ -8,6 +8,10 @@ on:
       source_commit:
         description: Source commit recorded in that package
         required: true
+  push:
+    branches: [codex/complete-installer]
+    paths:
+      - 'scripts/verification/**'
 permissions:
   contents: read
   actions: read
@@ -16,7 +20,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 12
     env:
-      FLOYD_EXPECTED_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      FLOYD_EXPECTED_SOURCE_COMMIT: ${{ inputs.source_commit || '924a8c137f7c8bf3a7370b598e646a65b108a56c' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -26,7 +30,7 @@ jobs:
         with:
           name: floyd-system-package
           path: dist
-          run-id: ${{ inputs.run_id }}
+          run-id: ${{ inputs.run_id || '33990275442' }}
           github-token: ${{ github.token }}
       - run: npm ci --prefix scripts/verification --no-audit --no-fund
       - name: Prepare disposable default browser
