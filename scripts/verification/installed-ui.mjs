@@ -25,6 +25,14 @@ async function until(check, message, timeout = 30000) {
 if (mode === 'prepare') {
   // Configure a normal GUI browser on this disposable account. FLOYD's own
   // unchanged `open` command must subsequently deliver its URL to this browser.
+  // The runner's Homebrew Chrome is quarantined and otherwise blocks `open`
+  // behind a first-launch confirmation. Assess the signed app, then approve
+  // that specific copy on this disposable machine; never disable Gatekeeper.
+  const chromeApp = '/Applications/Google Chrome.app';
+  console.log('Checking the cloud Chrome signature and Gatekeeper assessment.');
+  execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', chromeApp], { stdio: 'inherit', timeout: 30000 });
+  execFileSync('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=4', chromeApp], { stdio: 'inherit', timeout: 30000 });
+  execFileSync('/usr/bin/sudo', ['-n', '/usr/bin/xattr', '-dr', 'com.apple.quarantine', chromeApp], { stdio: 'inherit', timeout: 30000 });
   console.log('Starting the disposable cloud Chrome profile through LaunchServices.');
   execFileSync('/usr/bin/open', ['-na', 'Google Chrome', '--args',
     `--user-data-dir=${join(process.env.RUNNER_TEMP, 'floyd-default-browser')}`,

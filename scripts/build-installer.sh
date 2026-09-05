@@ -47,6 +47,9 @@ echo "==> recreating dependencies, production bundles, and pinned engine"
 
 echo "==> staging repo (tracked source + freshly generated inputs)"
 rsync -a --exclude ".floyd-build/" --exclude "node_modules/" "$SOURCE/" "$WS/"
+# rsync copies the private mktemp source-root mode as well as its contents.
+# Installed runtime code must remain readable by the Mac account using the app.
+chmod 755 "$WS"
 rm -rf "$WS/scripts"   # build tooling never ships
 rm -rf "$WS/plans" "$WS/.agents"   # repo planning docs + agent harness tooling never ship
 rm -rf "$WS/intake/surfaces" # recopied below with runtime-only exclusions

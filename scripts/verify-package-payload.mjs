@@ -31,8 +31,11 @@ async function entries(root, directory = root) {
       if (!inside(root, resolved)) throw new Error(`Link resolves outside application: ${key}`);
       result[key] = { link: target };
     } else if (stat.isDirectory()) {
+      if ((stat.mode & 0o555) !== 0o555) throw new Error(`Package directory is not readable by every Mac user: ${key}`);
       Object.assign(result, await entries(root, path));
     } else if (stat.isFile()) {
+      if ((stat.mode & 0o444) !== 0o444) throw new Error(`Package file is not readable by every Mac user: ${key}`);
+      if ((stat.mode & 0o111) !== 0 && (stat.mode & 0o111) !== 0o111) throw new Error(`Package executable is not runnable by every Mac user: ${key}`);
       result[key] = { sha256: await digest(path), size: stat.size, executable: Boolean(stat.mode & 0o111) };
     } else {
       throw new Error(`Unsupported package entry: ${key}`);
