@@ -40,19 +40,39 @@ if (mode === 'prepare') {
     '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'inherit', timeout: 30000 });
   console.log('Chrome launch request returned; checking its debugging endpoint.');
   await until(async () => (await fetch(`${endpoint}/json/version`)).ok, 'Cloud default browser did not start');
-  console.log('Chrome is reachable; registering and checking the default browser.');
-  execFileSync('/usr/bin/xcrun', ['swift', '-e', `
-import CoreServices
-import Foundation
-let chrome = URL(fileURLWithPath: "/Applications/Google Chrome.app")
-print("Chrome registration OSStatus:", LSRegisterURL(chrome as CFURL, true))
-for scheme in ["http", "https"] {
-  let status = LSSetDefaultHandlerForURLScheme(scheme as CFString, "com.google.Chrome" as CFString)
-  let handler = LSCopyDefaultHandlerForURLScheme(scheme as CFString)?.takeRetainedValue() as String? ?? "none"
-  print("Default browser:", scheme, "OSStatus:", status, "actual handler:", handler)
-  if handler != "com.google.Chrome" { exit(1) }
-}
-`], { stdio: 'inherit', timeout: 30000 });
+  console.log('Chrome is reachable; confirming the disposable account default browser.');
+  const helper = join(process.env.RUNNER_TEMP, 'floyd-browser-handler');
+  execFileSync('/usr/bin/xcrun', ['swiftc', new URL('./browser-handler.swift', import.meta.url).pathname, '-o', helper], { stdio: 'inherit', timeout: 30000 });
+  for (const scheme of ['http', 'https']) {
+    const current = () => execFileSync(helper, ['read', scheme], { encoding: 'utf8', timeout: 5000 }).trim();
+    if (current() === 'com.google.Chrome') continue;
+    execFileSync(helper, ['request', scheme], { stdio: 'inherit', timeout: 5000 });
+    // The system returns success before the user confirms its visible dialog.
+    // Approve only the observed "Use Chrome" button on this disposable Mac.
+    for (let attempt = 0; attempt < 20 && current() !== 'com.google.Chrome'; attempt++) {
+      const result = execFileSync('/usr/bin/osascript', ['-e', `
+tell application "System Events"
+  if exists process "CoreServicesUIAgent" then
+    tell process "CoreServicesUIAgent"
+      repeat with dialogWindow in windows
+        repeat with dialogButton in buttons of dialogWindow
+          set buttonName to name of dialogButton
+          if buttonName starts with "Use " and buttonName contains "Chrome" then
+            click dialogButton
+            return "approved Chrome default-browser confirmation"
+          end if
+        end repeat
+      end repeat
+    end tell
+  end if
+end tell
+return "waiting for browser confirmation"
+`], { encoding: 'utf8', timeout: 5000 }).trim();
+      if (result.startsWith('approved')) console.log(result);
+      await pause(250);
+    }
+    assert.equal(current(), 'com.google.Chrome', `Cloud ${scheme} default browser was not confirmed`);
+  }
   console.log('FLOYD_UI_BROWSER_READY');
 } else if (mode === 'verify') {
   const browser = await chromium.connectOverCDP(endpoint);
@@ -83,13 +103,14 @@ for scheme in ["http", "https"] {
     // Observe a complete asset load in the very same page FLOYD opened.
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('#appList .app').first().waitFor();
+    await page.locator('#splash').waitFor({ state: 'detached' });
     assert.equal(await page.title(), 'FLOYD');
     await page.screenshot({ path: join(output, '01-floyd-opened.png') });
     const registry = await page.evaluate(async () => (await (await fetch('/api/registry')).json()).apps);
     const expected = ['floyd-code-cli', 'cursem-ide', 'floyd-desktop', 'ohmyfloyd', 'browork', 'harness-launcher'];
     assert.deepEqual(registry.map(app => app.id).sort(), expected.sort());
     for (const app of registry) {
-      await page.locator('#drawer').hover();
+      await page.locator('#edgeLeft').hover();
       await page.locator('#appList .app').filter({ hasText: app.name }).first().click();
       const iframe = page.locator('iframe.stage-frame.active');
       await until(async () => await iframe.getAttribute('title') === app.name, `${app.name} did not become active`);
@@ -99,7 +120,7 @@ for scheme in ["http", "https"] {
       await page.screenshot({ path: join(output, `${app.id}.png`) });
       receipt.surfaces.push({ id: app.id, url: frame.url(), rendered: true });
     }
-    await page.locator('#drawer').hover();
+    await page.locator('#edgeLeft').hover();
     await page.locator('#appList .app').filter({ hasText: 'CURSEM-IDE' }).first().click();
     const ide = await (await page.locator('iframe.stage-frame.active').elementHandle()).contentFrame();
     const terminal = ide.locator('section[aria-label="TerminalOne"]');
@@ -114,11 +135,12 @@ for scheme in ["http", "https"] {
     await page.screenshot({ path: join(output, 'cursem-terminal-command.png') });
     // Returning to an already-open surface must preserve its browser instance.
     const desktopBefore = page.frames().find(frame => frame.url() === 'http://127.0.0.1:13010/');
-    await page.locator('#drawer').hover();
+    await page.locator('#edgeLeft').hover();
     await page.locator('#appList .app').filter({ hasText: 'FLOYD DESKTOP' }).first().click();
     assert.ok(page.frames().includes(desktopBefore), 'Switching surfaces replaced the desktop session');
-    await page.locator('#chipHome').click();
+    await page.locator('#edgeTop').hover();
     await page.locator('#chipBg').click();
+    await page.locator('#chipHome').click();
     await page.waitForFunction(() => document.querySelector('#stageBg').style.backgroundImage.includes('/backgrounds/'));
     const images = await page.evaluate(() => Array.from(document.images).filter(image => image.getClientRects().length && image.complete && !image.naturalWidth).map(image => image.src));
     assert.deepEqual(images, [], 'Visible FLOYD image failed to load');
